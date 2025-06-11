@@ -283,7 +283,6 @@ class CommentRequest(BaseModel):
 class ProcessedComment(BaseModel):
     postId: str
     original_comment: str
-    customer_avatar: str
     category: str
     urgency: str
     action: str  # respond, react, delete, leave_alone
@@ -353,7 +352,6 @@ async def process_comment(request: CommentRequest):
         return ProcessedComment(
             postId=request.postId,
             original_comment=request.comment,
-            customer_avatar="simplified",  # Simplified - no avatar needed
             category=sentiment.lower(),    # Use sentiment as category
             urgency="high" if high_intent else "medium",
             action=mapped_action,
@@ -369,7 +367,6 @@ async def process_comment(request: CommentRequest):
         return ProcessedComment(
             postId=request.postId,
             original_comment=request.comment,
-            customer_avatar="error",
             category="error",
             urgency="low",
             action="leave_alone",
