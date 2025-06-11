@@ -1,12 +1,9 @@
-from dotenv import load_dotenv
-load_dotenv()
-
 from fastapi import FastAPI, Request
 import os
 from anthropic import Anthropic
 import dspy
 
-# Load API key from environment variable
+# Load API key from environment variable (set in Railway dashboard)
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 if not ANTHROPIC_API_KEY:
     raise ValueError("ANTHROPIC_API_KEY environment variable not set")
@@ -102,3 +99,9 @@ async def generate_reply(request: Request):
             "reply": "Sorry, I encountered an error while generating a reply.",
             "error": str(e)
         }
+
+# Railway-specific server startup
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
