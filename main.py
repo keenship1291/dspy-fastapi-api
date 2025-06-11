@@ -1,5 +1,7 @@
 from fastapi import FastAPI, Request
 import os
+import csv
+from datetime import datetime, timezone
 from anthropic import Anthropic
 import dspy
 from pydantic import BaseModel
@@ -9,7 +11,31 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 if not ANTHROPIC_API_KEY:
     raise ValueError("ANTHROPIC_API_KEY environment variable not set")
 
-# Custom Anthropic LM for DSPy with better response handling
+# Lease End Brand Context
+BRAND_CONTEXT = {
+    "power_words": {
+        "trust_building": ["transparent", "guaranteed", "reliable", "honest"],
+        "convenience": ["effortless", "hassle-free", "quick", "simple", "online"],
+        "value": ["save", "affordable", "competitive", "best deal", "no hidden fees"],
+        "urgency": ["limited time", "act now", "lock in", "before rates change"]
+    },
+    
+    "competitive_advantages": {
+        "vs_dealerships": "No pressure, transparent pricing, 100% online process",
+        "vs_credit_unions": "No membership required, flexible, fast online",
+        "vs_banks": "Competitive rates, simple process, customer-centric"
+    },
+    
+    "objection_responses": {
+        "time_concerns": "Our online process takes minutes, not hours at a dealership",
+        "hidden_fees": "We're completely transparent - no hidden fees, guaranteed",
+        "best_deal_doubts": "We work with multiple lenders to get you the best rate",
+        "complexity": "We handle all the paperwork - you just sign and we do the rest",
+        "dealership_offers": "Dealerships often have hidden fees and pressure tactics"
+    }
+}
+
+# Custom Anthropic LM for DSPy
 class CustomAnthropic(dspy.LM):
     def __init__(self, api_key):
         self.client = Anthropic(api_key=api_key)
@@ -58,23 +84,175 @@ try:
 except Exception as e:
     raise ValueError(f"Failed to configure DSPy: {str(e)}")
 
-# DSPy Signatures with fallback handling
-class CommentClassification(dspy.Signature):
-    """Classify a social media comment for automotive lease company"""
-    comment = dspy.InputField(desc="The customer comment to classify")
-    comment_age = dspy.InputField(desc="How old the comment is")
+# Load training data from CSV
+def load_training_data():
+    """Load training examples from CSV file"""
+    training_examples = []
     
-    category = dspy.OutputField(desc="primary_inquiry, complaint, praise, spam, general")
-    urgency = dspy.OutputField(desc="low, medium, high")
-    requires_response = dspy.OutputField(desc="true or false")
+    try:
+        with open('training_data.csv', 'r', encoding='utf-8') as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                training_examples.append({
+                    'comment': row['comment'],
+                    'category': row['category'],
+                    'urgency': row['urgency'],
+                    'requires_response': row['requires_response'].lower() == 'true',
+                    'reply': row['reply']
+                })
+        print(f"✅ Loaded {len(training_examples)} training examples")
+    except FileNotFoundError:
+        print("⚠️ No training_data.csv found, using fallback classification")
+        training_examples = []
+    except Exception as e:
+        print(f"❌ Error loading training data: {e}")
+        training_examples = []
+    
+    return training_examples
 
-class LeaseResponseGeneration(dspy.Signature):
-    """Generate professional response to automotive lease inquiry"""
-    comment = dspy.InputField(desc="Original customer comment")
-    category = dspy.InputField(desc="Classified category")
-    urgency = dspy.InputField(desc="Urgency level")
+# Global training data
+TRAINING_DATA = load_training_data()
+
+# Customer Avatar Detection
+def identify_customer_avatar(comment):
+    """Identify customer avatar based on comment content"""
+    comment_lower = comment.lower()
     
-    reply = dspy.OutputField(desc="Professional, helpful response")
+    # Anna (Busy Professional) - time/efficiency focused
+    anna_keywords = ["busy", "quick", "time", "efficient", "fast", "hassle", "simple", "easy"]
+    
+    # Mike (Cost-Conscious) - price/value focused  
+    mike_keywords = ["cost", "price", "rate", "save", "money", "cheap", "expensive", "fee", "payment"]
+    
+    # Sarah (Family-Oriented) - stability/simplicity focused
+    sarah_keywords = ["family", "kids", "reliable", "stable", "safe", "secure", "trust", "worry"]
+    
+    anna_score = sum(1 for word in anna_keywords if word in comment_lower)
+    mike_score = sum(1 for word in mike_keywords if word in comment_lower)
+    sarah_score = sum(1 for word in sarah_keywords if word in comment_lower)
+    
+    if mike_score > anna_score and mike_score > sarah_score:
+        return "mike_cost_conscious"
+    elif sarah_score > anna_score and sarah_score > mike_score:
+        return "sarah_family"
+    elif anna_score > 0:
+        return "anna_professional"
+    else:
+        return "general"
+
+# Enhanced classification using training data + brand context
+def smart_classify_comment(comment, comment_age="recent"):
+    """Classify comment using training data patterns and brand context"""
+    comment_lower = comment.lower()
+    
+    # First, check training data for similar patterns
+    best_match = None
+    max_similarity = 0
+    
+    for example in TRAINING_DATA:
+        example_lower = example['comment'].lower()
+        # Simple similarity check (could be enhanced with embeddings)
+        common_words = set(comment_lower.split()) & set(example_lower.split())
+        if len(common_words) >= 2:  # At least 2 words in common
+            similarity = len(common_words)
+            if similarity > max_similarity:
+                max_similarity = similarity
+                best_match = example
+    
+    # If we found a good match, use its classification
+    if best_match and max_similarity >= 2:
+        return {
+            'category': best_match['category'],
+            'urgency': best_match['urgency'],
+            'requires_response': best_match['requires_response']
+        }
+    
+    # Fallback: Brand-aligned classification logic
+    if any(word in comment_lower for word in ['rate', 'cost', 'price', 'expensive', 'fee', 'payment', 'money']):
+        return {'category': 'price_objection', 'urgency': 'medium', 'requires_response': True}
+    elif any(word in comment_lower for word in ['dealership', 'bank', 'credit union', 'better', 'vs', 'compare']):
+        return {'category': 'competitor_comparison', 'urgency': 'medium', 'requires_response': True}
+    elif any(word in comment_lower for word in ['process', 'how', 'steps', 'time', 'quick', 'easy', 'hassle']):
+        return {'category': 'process_concern', 'urgency': 'medium', 'requires_response': True}
+    elif any(word in comment_lower for word in ['terrible', 'awful', 'bad', 'worst', 'hate', 'scam']):
+        return {'category': 'complaint', 'urgency': 'high', 'requires_response': True}
+    elif '?' in comment or any(word in comment_lower for word in ['can i', 'do you', 'how do', 'what']):
+        return {'category': 'primary_inquiry', 'urgency': 'medium', 'requires_response': True}
+    else:
+        return {'category': 'general', 'urgency': 'low', 'requires_response': False}
+
+# Brand-aligned response generation
+def generate_brand_aligned_response(comment, avatar, category, urgency):
+    """Generate response using training data + brand alignment"""
+    comment_lower = comment.lower()
+    
+    # First, try to find matching response from training data
+    best_match = None
+    max_similarity = 0
+    
+    for example in TRAINING_DATA:
+        if example['category'] == category:
+            example_lower = example['comment'].lower()
+            common_words = set(comment_lower.split()) & set(example_lower.split())
+            similarity = len(common_words)
+            
+            if similarity > max_similarity:
+                max_similarity = similarity
+                best_match = example
+    
+    # If we found a good match, use it as base
+    if best_match and max_similarity >= 1:
+        base_response = best_match['reply']
+        
+        # Enhance with avatar-specific messaging
+        if avatar == "anna_professional" and category == "process_concern":
+            return f"{base_response} Our 100% online process saves you time - no dealership visits required!"
+        elif avatar == "mike_cost_conscious" and category == "price_objection":
+            return f"{base_response} No hidden fees, guaranteed - you'll know exactly what you're paying upfront."
+        elif avatar == "sarah_family" and any(word in comment_lower for word in ["worry", "decision", "family"]):
+            return f"{base_response} We're here to guide you through every step with no pressure."
+        else:
+            return base_response
+    
+    # Fallback: Brand-aligned response templates
+    templates = {
+        "price_objection": {
+            "mike_cost_conscious": "We work with multiple lenders to get you the most competitive rates available. No hidden fees, guaranteed - you'll know exactly what you're paying upfront.",
+            "general": "Our transparent pricing means no surprises. We shop multiple lenders to find you the best rate, often beating dealership offers."
+        },
+        "process_concern": {
+            "anna_professional": "Our 100% online process takes just minutes to complete. No dealership visits, no pressure, no wasted time - we handle everything digitally.",
+            "sarah_family": "We've made the process simple and stress-free. Our team guides you through every step, so you can make the right decision for your family with confidence.",
+            "general": "Skip the dealership hassle! Our online process is quick, transparent, and completely pressure-free."
+        },
+        "competitor_comparison": {
+            "general": "Unlike dealerships with hidden fees and pressure tactics, we offer transparent pricing and a no-pressure, 100% online experience. Many customers save both time and money with us."
+        },
+        "primary_inquiry": {
+            "mike_cost_conscious": "Great question! We specialize in competitive lease buyout financing with transparent pricing. Let us shop multiple lenders to find you the best rate - no hidden fees guaranteed.",
+            "anna_professional": "We can help! Our streamlined online process gets you pre-approved quickly, often with better rates than dealerships. No time wasted, no pressure.",
+            "sarah_family": "We're here to help make this decision easy for you. Our transparent process and dedicated support team ensure you get the best deal without any stress or pressure.",
+            "general": "We'd love to help! Our transparent, no-pressure process often gets customers better rates than dealerships, all handled online for your convenience."
+        },
+        "complaint": {
+            "general": "We understand your concern, and transparency is core to everything we do. We're here to make the lease buyout process stress-free and honest - no hidden fees, no pressure, guaranteed."
+        }
+    }
+    
+    # Get appropriate template
+    category_templates = templates.get(category, templates["primary_inquiry"])
+    response = category_templates.get(avatar, category_templates.get("general", "Thank you for your interest! We're here to help make your lease buyout transparent and hassle-free."))
+    
+    # Add urgency elements
+    if urgency == "high":
+        urgency_phrases = [
+            " Don't wait - lease-end dates approach quickly!",
+            " Lock in your rate before it changes!",
+            " Get your free quote today!"
+        ]
+        response += urgency_phrases[0]
+    
+    return response
 
 # Request/Response models
 class CommentRequest(BaseModel):
@@ -86,27 +264,33 @@ class CommentRequest(BaseModel):
 class ProcessedComment(BaseModel):
     postId: str
     original_comment: str
+    customer_avatar: str
     category: str
     urgency: str
     requires_response: bool
     reply: str
     should_post: bool
     needs_review: bool
+    confidence_score: float
 
 app = FastAPI()
 
 @app.get("/")
 def read_root():
-    return {"message": "Lease End DSPy API with Classification + Response"}
+    return {
+        "message": "Lease End AI Assistant - Production Ready",
+        "version": "2.0",
+        "training_examples": len(TRAINING_DATA),
+        "features": ["Customer Avatar Detection", "Brand-Aligned Responses", "Training Data Integration"]
+    }
 
 @app.post("/process-comment", response_model=ProcessedComment)
 async def process_comment(request: CommentRequest):
-    """Full comment processing: classification + response generation"""
+    """Enhanced comment processing with brand alignment and training data"""
     try:
         # Calculate comment age
         comment_age = "recent"
         if request.created_time:
-            from datetime import datetime, timezone
             try:
                 created = datetime.fromisoformat(request.created_time.replace('Z', '+00:00'))
                 now = datetime.now(timezone.utc)
@@ -121,96 +305,57 @@ async def process_comment(request: CommentRequest):
             except:
                 comment_age = "unknown"
         
-        # Step 1: Classify the comment with fallback
-        try:
-            classifier = dspy.Predict(CommentClassification)
-            classification = classifier(
-                comment=request.comment,
-                comment_age=comment_age
-            )
-            
-            category = getattr(classification, 'category', 'general')
-            urgency = getattr(classification, 'urgency', 'medium')
-            requires_response_str = getattr(classification, 'requires_response', 'true')
-            requires_response = requires_response_str.lower() == "true"
-            
-        except Exception as e:
-            print(f"Classification error: {e}")
-            # Fallback classification logic
-            comment_lower = request.comment.lower()
-            if any(word in comment_lower for word in ['complaint', 'terrible', 'awful', 'hate', 'sucks']):
-                category = "complaint"
-                urgency = "high"
-                requires_response = True
-            elif any(word in comment_lower for word in ['thank', 'great', 'love', 'awesome']):
-                category = "praise"
-                urgency = "low"
-                requires_response = True
-            elif '?' in request.comment:
-                category = "primary_inquiry"
-                urgency = "medium"
-                requires_response = True
-            else:
-                category = "general"
-                urgency = "low"
-                requires_response = False
+        # Identify customer avatar
+        avatar = identify_customer_avatar(request.comment)
         
-        # Step 2: Generate response if needed
+        # Use smart classification (training data + brand context)
+        classification = smart_classify_comment(request.comment, comment_age)
+        
+        category = classification['category']
+        urgency = classification['urgency']
+        requires_response = classification['requires_response']
+        
+        # Generate brand-aligned response if needed
         reply_text = ""
-        if requires_response:
-            try:
-                responder = dspy.Predict(LeaseResponseGeneration)
-                response = responder(
-                    comment=request.comment,
-                    category=category,
-                    urgency=urgency
-                )
-                reply_text = getattr(response, 'reply', '')
-                
-            except Exception as e:
-                print(f"Response generation error: {e}")
-                # Fallback response generation
-                claude_client = Anthropic(api_key=ANTHROPIC_API_KEY)
-                
-                prompt = f"""You are a professional customer service representative for a car lease company called "Lease End."
-
-Customer comment: "{request.comment}"
-Comment category: {category}
-Urgency: {urgency}
-
-Generate a helpful, professional response. Be friendly, informative, and address their concern directly. Keep it concise but helpful.
-
-Response:"""
-
-                claude_response = claude_client.messages.create(
-                    model="claude-sonnet-4-20250514",
-                    max_tokens=500,
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                reply_text = claude_response.content[0].text.strip()
+        confidence_score = 0.8  # Base confidence
         
-        # Decision logic for automation
+        if requires_response:
+            reply_text = generate_brand_aligned_response(request.comment, avatar, category, urgency)
+            
+            # Adjust confidence based on training data match
+            comment_lower = request.comment.lower()
+            for example in TRAINING_DATA:
+                example_lower = example['comment'].lower()
+                common_words = set(comment_lower.split()) & set(example_lower.split())
+                if len(common_words) >= 2:
+                    confidence_score = min(0.95, confidence_score + (len(common_words) * 0.05))
+                    break
+        
+        # Enhanced decision logic with brand context
         should_post = (
             requires_response and 
             urgency != "high" and
             comment_age != "days_old" and
-            category != "complaint"
+            category not in ["complaint"] and
+            confidence_score > 0.75
         )
         
         needs_review = (
             requires_response and 
-            (urgency == "high" or comment_age == "days_old" or category == "complaint")
+            (urgency == "high" or comment_age == "days_old" or category == "complaint" or confidence_score <= 0.75)
         )
         
         return ProcessedComment(
             postId=request.postId,
             original_comment=request.comment,
+            customer_avatar=avatar,
             category=category,
             urgency=urgency,
             requires_response=requires_response,
             reply=reply_text,
             should_post=should_post,
-            needs_review=needs_review
+            needs_review=needs_review,
+            confidence_score=confidence_score
         )
         
     except Exception as e:
@@ -218,40 +363,37 @@ Response:"""
         return ProcessedComment(
             postId=request.postId,
             original_comment=request.comment,
+            customer_avatar="general",
             category="error",
             urgency="low",
             requires_response=False,
-            reply="Thank you for your comment. We appreciate your feedback.",
+            reply="Thank you for your comment. We appreciate your feedback and will get back to you soon.",
             should_post=False,
-            needs_review=True
+            needs_review=True,
+            confidence_score=0.0
         )
 
-# Keep the simple endpoint for backwards compatibility
+# Keep backwards compatibility
 @app.post("/generate-reply")
 async def generate_reply(request: Request):
-    """Simple reply generation"""
+    """Simple reply generation for backwards compatibility"""
     data = await request.json()
     comment = data.get("comment", "")
     postId = data.get("postId", "")
 
     try:
-        claude_client = Anthropic(api_key=ANTHROPIC_API_KEY)
+        # Use enhanced processing
+        avatar = identify_customer_avatar(comment)
+        classification = smart_classify_comment(comment)
         
-        prompt = f"""You are a professional customer service representative for a car lease company.
-
-Customer comment: "{comment}"
-
-Generate a helpful, professional response:"""
-
-        response = claude_client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=500,
-            messages=[{"role": "user", "content": prompt}]
-        )
+        if classification['requires_response']:
+            reply = generate_brand_aligned_response(comment, avatar, classification['category'], classification['urgency'])
+        else:
+            reply = "Thank you for your comment."
         
         return {
             "postId": postId,
-            "reply": response.content[0].text.strip()
+            "reply": reply
         }
         
     except Exception as e:
@@ -260,6 +402,20 @@ Generate a helpful, professional response:"""
             "reply": "Thank you for your comment. We appreciate your feedback.",
             "error": str(e)
         }
+
+# Debug endpoint for testing
+@app.post("/debug-comment")
+async def debug_comment(request: CommentRequest):
+    """Debug endpoint to see all classification details"""
+    avatar = identify_customer_avatar(request.comment)
+    classification = smart_classify_comment(request.comment)
+    
+    return {
+        "comment": request.comment,
+        "customer_avatar": avatar,
+        "classification": classification,
+        "brand_context": "Customer avatar and brand-aligned classification applied"
+    }
 
 # Railway-specific server startup
 if __name__ == "__main__":
