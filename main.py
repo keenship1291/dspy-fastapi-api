@@ -262,78 +262,75 @@ def smart_classify_comment(comment, comment_age="recent"):
     else:
         return {'category': 'general', 'urgency': 'low', 'action': 'leave_alone', 'requires_response': False}
 
-# Brand-aligned response generation
-def generate_brand_aligned_response(comment, avatar, category, urgency):
-    """Generate response using training data + brand alignment"""
-    comment_lower = comment.lower()
+# AI-powered response generation using Claude
+def generate_ai_response(comment, avatar, category, urgency):
+    """
+    Generate contextual response using Claude AI with training data context.
     
-    # First, try to find matching response from training data
-    best_match = None
-    max_similarity = 0
+    This replaces template-based responses with dynamic AI generation that:
+    - Uses training data as examples/context for Claude
+    - Incorporates customer avatar preferences  
+    - Maintains brand voice and values
+    - Generates natural, contextual responses
+    """
     
+    # Get relevant training examples for context
+    relevant_examples = []
     for example in TRAINING_DATA:
-        if example['category'] == category and example['action'] == 'respond':
-            example_lower = example['comment'].lower()
-            common_words = set(comment_lower.split()) & set(example_lower.split())
-            similarity = len(common_words)
-            
-            if similarity > max_similarity:
-                max_similarity = similarity
-                best_match = example
+        if example['action'] == 'respond' and example['reply']:
+            # Include examples from same category or similar patterns
+            if (example['category'] == category or 
+                any(word in example['comment'].lower() for word in comment.lower().split()[:3])):
+                relevant_examples.append(f"Comment: \"{example['comment']}\"\nReply: \"{example['reply']}\"")
     
-    # If we found a good match, use it as base
-    if best_match and max_similarity >= 1 and best_match['reply']:
-        base_response = best_match['reply']
-        
-        # Enhance with avatar-specific messaging
-        if avatar == "anna_professional" and category == "process_concern":
-            return f"{base_response} Our 100% online process saves you time - no dealership visits required!"
-        elif avatar == "mike_cost_conscious" and category == "price_objection":
-            return f"{base_response} No hidden fees, guaranteed - you'll know exactly what you're paying upfront."
-        elif avatar == "sarah_family" and any(word in comment_lower for word in ["worry", "decision", "family"]):
-            return f"{base_response} We're here to guide you through every step with no pressure."
-        else:
-            return base_response
+    # Limit to top 3 most relevant examples to avoid token limits
+    context_examples = "\n\n".join(relevant_examples[:3])
     
-    # Fallback: Brand-aligned response templates
-    templates = {
-        "price_objection": {
-            "mike_cost_conscious": "We work with multiple lenders to get you the most competitive rates available. No hidden fees, guaranteed - you'll know exactly what you're paying upfront.",
-            "general": "Our transparent pricing means no surprises. We shop multiple lenders to find you the best rate, often beating dealership offers."
-        },
-        "process_concern": {
-            "anna_professional": "Our 100% online process takes just minutes to complete. No dealership visits, no pressure, no wasted time - we handle everything digitally.",
-            "sarah_family": "We've made the process simple and stress-free. Our team guides you through every step, so you can make the right decision for your family with confidence.",
-            "general": "Skip the dealership hassle! Our online process is quick, transparent, and completely pressure-free."
-        },
-        "competitor_comparison": {
-            "general": "Unlike dealerships with hidden fees and pressure tactics, we offer transparent pricing and a no-pressure, 100% online experience. Many customers save both time and money with us."
-        },
-        "primary_inquiry": {
-            "mike_cost_conscious": "Great question! We specialize in competitive lease buyout financing with transparent pricing. Let us shop multiple lenders to find you the best rate - no hidden fees guaranteed.",
-            "anna_professional": "We can help! Our streamlined online process gets you pre-approved quickly, often with better rates than dealerships. No time wasted, no pressure.",
-            "sarah_family": "We're here to help make this decision easy for you. Our transparent process and dedicated support team ensure you get the best deal without any stress or pressure.",
-            "general": "We'd love to help! Our transparent, no-pressure process often gets customers better rates than dealerships, all handled online for your convenience."
-        },
-        "complaint": {
-            "general": "We understand your concern, and transparency is core to everything we do. We're here to make the lease buyout process stress-free and honest - no hidden fees, no pressure, guaranteed."
-        }
+    # Build avatar context
+    avatar_context = {
+        "mike_cost_conscious": "This customer is cost-conscious and wants to know about pricing, savings, and value. Focus on transparent pricing and competitive rates.",
+        "anna_professional": "This customer is a busy professional who values efficiency and convenience. Emphasize quick, online processes and time-saving benefits.",
+        "sarah_family": "This customer is family-oriented and wants stability and trust. Focus on reliability, no-pressure approach, and guidance through the process.",
+        "general": "This customer needs helpful, professional service information."
     }
     
-    # Get appropriate template
-    category_templates = templates.get(category, templates["primary_inquiry"])
-    response = category_templates.get(avatar, category_templates.get("general", "Thank you for your interest! We're here to help make your lease buyout transparent and hassle-free."))
-    
-    # Add urgency elements
-    if urgency == "high":
-        urgency_phrases = [
-            " Don't wait - lease-end dates approach quickly!",
-            " Lock in your rate before it changes!",
-            " Get your free quote today!"
-        ]
-        response += urgency_phrases[0]
-    
-    return response
+    # Create prompt for Claude
+    prompt = f"""You are responding to a Facebook comment for Lease End, a lease buyout financing company. Generate a helpful, professional response that matches our brand voice.
+
+BRAND VALUES:
+- Transparent pricing (no hidden fees)
+- 100% online process (no dealership visits)
+- No pressure, customer-focused
+- Competitive rates through multiple lenders
+- Professional, helpful, and trustworthy
+
+CUSTOMER AVATAR: {avatar_context.get(avatar, avatar_context['general'])}
+
+COMMENT CATEGORY: {category}
+URGENCY: {urgency}
+
+ORIGINAL COMMENT: "{comment}"
+
+EXAMPLES OF GOOD RESPONSES:
+{context_examples}
+
+Generate a natural, helpful response that:
+1. Directly addresses their specific comment/concern
+2. Reflects Lease End's brand voice and values
+3. Is conversational but professional
+4. Includes relevant information without being pushy
+5. Matches the tone and urgency level
+
+Keep the response concise (1-3 sentences) and personalized to their specific comment."""
+
+    try:
+        # Use Claude to generate the response
+        response = claude.basic_request(prompt)
+        return response.strip()
+    except Exception as e:
+        print(f"Error generating AI response: {e}")
+        # Fallback to a simple, safe response
+        return "Thank you for your comment! We'd be happy to help you with your lease buyout questions. Feel free to reach out for more information."
 
 # Request/Response models - Enhanced for 4-action system
 class CommentRequest(BaseModel):
@@ -360,11 +357,12 @@ app = FastAPI()
 @app.get("/")
 def read_root():
     return {
-        "message": "Lease End AI Assistant - 4-Action System",
-        "version": "3.0",
+        "message": "Lease End AI Assistant - Claude AI Powered",
+        "version": "3.1",
         "training_examples": len(TRAINING_DATA),
         "actions": ["respond", "react", "delete", "leave_alone"],
-        "features": ["Customer Avatar Detection", "Brand-Aligned Responses", "4-Action Classification", "Training Data Integration"]
+        "features": ["Customer Avatar Detection", "Claude AI Dynamic Responses", "4-Action Classification", "Contextual Training Data"],
+        "response_method": "Claude AI generates responses using training data as context (no rigid templates)"
     }
 
 @app.post("/process-comment", response_model=ProcessedComment)
@@ -404,7 +402,7 @@ async def process_comment(request: CommentRequest):
         confidence_score = 0.8  # Base confidence
         
         if action == 'respond':
-            reply_text = generate_brand_aligned_response(request.comment, avatar, category, urgency)
+            reply_text = generate_ai_response(request.comment, avatar, category, urgency)
             
             # Adjust confidence based on training data match
             comment_lower = request.comment.lower()
@@ -477,7 +475,7 @@ async def generate_reply(request: Request):
         classification = smart_classify_comment(comment)
         
         if classification['action'] == 'respond':
-            reply = generate_brand_aligned_response(comment, avatar, classification['category'], classification['urgency'])
+            reply = generate_ai_response(comment, avatar, classification['category'], classification['urgency'])
         else:
             reply = "Thank you for your comment."
         
@@ -502,13 +500,72 @@ async def debug_comment(request: CommentRequest):
     avatar = identify_customer_avatar(request.comment)
     classification = smart_classify_comment(request.comment)
     
-    return {
+    # Show what prompt would be sent to Claude
+    debug_response = {
         "comment": request.comment,
         "customer_avatar": avatar,
         "classification": classification,
         "training_examples_loaded": len(TRAINING_DATA),
-        "brand_context": "Customer avatar and 4-action classification applied"
+        "ai_context": "Using Claude AI for dynamic response generation with training data context"
     }
+    
+    # If it's a respond action, show the AI prompt that would be generated
+    if classification['action'] == 'respond':
+        # Get relevant training examples for context
+        relevant_examples = []
+        for example in TRAINING_DATA:
+            if example['action'] == 'respond' and example['reply']:
+                if (example['category'] == classification['category'] or 
+                    any(word in example['comment'].lower() for word in request.comment.lower().split()[:3])):
+                    relevant_examples.append(f"Comment: \"{example['comment']}\"\nReply: \"{example['reply']}\"")
+        
+        context_examples = "\n\n".join(relevant_examples[:3])
+        
+        avatar_context = {
+            "mike_cost_conscious": "This customer is cost-conscious and wants to know about pricing, savings, and value. Focus on transparent pricing and competitive rates.",
+            "anna_professional": "This customer is a busy professional who values efficiency and convenience. Emphasize quick, online processes and time-saving benefits.",
+            "sarah_family": "This customer is family-oriented and wants stability and trust. Focus on reliability, no-pressure approach, and guidance through the process.",
+            "general": "This customer needs helpful, professional service information."
+        }
+        
+        debug_response["ai_prompt_preview"] = f"""Customer Avatar: {avatar_context.get(avatar, avatar_context['general'])}
+Category: {classification['category']}
+Training Examples Used: {len(relevant_examples[:3])}
+AI will generate contextual response based on this information."""
+    
+    return debug_response
+
+# Test AI response generation
+@app.post("/test-ai-response")
+async def test_ai_response(request: CommentRequest):
+    """Test endpoint to see AI-generated response in real-time"""
+    try:
+        avatar = identify_customer_avatar(request.comment)
+        classification = smart_classify_comment(request.comment)
+        
+        if classification['action'] == 'respond':
+            ai_response = generate_ai_response(request.comment, avatar, classification['category'], classification['urgency'])
+            
+            return {
+                "original_comment": request.comment,
+                "customer_avatar": avatar,
+                "category": classification['category'],
+                "urgency": classification['urgency'],
+                "ai_generated_response": ai_response,
+                "method": "Claude AI with training data context"
+            }
+        else:
+            return {
+                "original_comment": request.comment,
+                "action": classification['action'],
+                "message": f"No response needed - action is '{classification['action']}'"
+            }
+            
+    except Exception as e:
+        return {
+            "error": str(e),
+            "fallback": "AI response generation failed"
+        }
 
 # New endpoint for action statistics
 @app.get("/stats")
