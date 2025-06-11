@@ -147,190 +147,131 @@ def load_training_data():
 # Global training data
 TRAINING_DATA = load_training_data()
 
-# Customer Avatar Detection
-def identify_customer_avatar(comment):
-    """Identify customer avatar based on comment content"""
-    comment_lower = comment.lower()
+# Simplified classification using business-focused approach
+def classify_comment_with_ai(comment, postId=""):
+    """Use Claude AI to classify comment with business logic, similar to original n8n approach"""
     
-    # Anna (Busy Professional) - time/efficiency focused
-    anna_keywords = ["busy", "quick", "time", "efficient", "fast", "hassle", "simple", "easy"]
-    
-    # Mike (Cost-Conscious) - price/value focused  
-    mike_keywords = ["cost", "price", "rate", "save", "money", "cheap", "expensive", "fee", "payment"]
-    
-    # Sarah (Family-Oriented) - stability/simplicity focused
-    sarah_keywords = ["family", "kids", "reliable", "stable", "safe", "secure", "trust", "worry"]
-    
-    anna_score = sum(1 for word in anna_keywords if word in comment_lower)
-    mike_score = sum(1 for word in mike_keywords if word in comment_lower)
-    sarah_score = sum(1 for word in sarah_keywords if word in comment_lower)
-    
-    if mike_score > anna_score and mike_score > sarah_score:
-        return "mike_cost_conscious"
-    elif sarah_score > anna_score and sarah_score > mike_score:
-        return "sarah_family"
-    elif anna_score > 0:
-        return "anna_professional"
-    else:
-        return "general"
+    prompt = f"""You are analyzing comments for LeaseEnd.com, which specializes in lease buyout services. 
 
-# Enhanced 4-action classification using training data + brand context
-def smart_classify_comment(comment, comment_age="recent"):
-    """Classify comment using training data patterns and determine appropriate action"""
-    comment_lower = comment.lower()
-    
-    # First, check for spam/inappropriate content
-    spam_indicators = [
-        "free money", "click here", "get rich", "scam", "virus", "mlm", "onlyfans",
-        "hot singles", "lottery", "nigerian prince", "urgent!!!", "buy my course"
-    ]
-    if any(indicator in comment_lower for indicator in spam_indicators):
-        return {
-            'category': 'spam',
-            'urgency': 'high',
-            'action': 'delete',
-            'requires_response': False
-        }
-    
-    # Check for inappropriate content
-    inappropriate_indicators = ["f***", "stupid", "idiot", "hate", "racist", "sexist"]
-    if any(indicator in comment_lower for indicator in inappropriate_indicators):
-        return {
-            'category': 'inappropriate',
-            'urgency': 'high', 
-            'action': 'delete',
-            'requires_response': False
-        }
-    
-    # Check for off-topic content
-    off_topic_indicators = [
-        "mcdonald", "plumber", "cat", "dog", "game tonight", "girlfriend",
-        "dinner", "weather", "testing", "first!", "random"
-    ]
-    if any(indicator in comment_lower for indicator in off_topic_indicators):
-        return {
-            'category': 'off_topic',
-            'urgency': 'low',
-            'action': 'leave_alone', 
-            'requires_response': False
-        }
-    
-    # Check for praise/positive reactions
-    praise_indicators = ["thank you", "awesome", "great", "love", "perfect", "❤️", "👍"]
-    if any(indicator in comment_lower for indicator in praise_indicators) and len(comment) < 50:
-        return {
-            'category': 'praise',
-            'urgency': 'low',
-            'action': 'react',
-            'requires_response': False
-        }
-    
-    # Check training data for similar patterns
-    best_match = None
-    max_similarity = 0
-    
-    for example in TRAINING_DATA:
-        example_lower = example['comment'].lower()
-        # Simple similarity check (could be enhanced with embeddings)
-        common_words = set(comment_lower.split()) & set(example_lower.split())
-        if len(common_words) >= 2:  # At least 2 words in common
-            similarity = len(common_words)
-            if similarity > max_similarity:
-                max_similarity = similarity
-                best_match = example
-    
-    # If we found a good match, use its classification
-    if best_match and max_similarity >= 2:
-        return {
-            'category': best_match['category'],
-            'urgency': best_match['urgency'],
-            'action': best_match['action'],
-            'requires_response': best_match['action'] == 'respond'
-        }
-    
-    # Fallback: Brand-aligned classification logic with actions
-    if any(word in comment_lower for word in ['rate', 'cost', 'price', 'expensive', 'fee', 'payment', 'money']):
-        return {'category': 'price_objection', 'urgency': 'medium', 'action': 'respond', 'requires_response': True}
-    elif any(word in comment_lower for word in ['dealership', 'bank', 'credit union', 'better', 'vs', 'compare']):
-        return {'category': 'competitor_comparison', 'urgency': 'medium', 'action': 'respond', 'requires_response': True}
-    elif any(word in comment_lower for word in ['process', 'how', 'steps', 'time', 'quick', 'easy', 'hassle']):
-        return {'category': 'process_concern', 'urgency': 'medium', 'action': 'respond', 'requires_response': True}
-    elif any(word in comment_lower for word in ['terrible', 'awful', 'bad', 'worst', 'hate', 'scam']):
-        return {'category': 'complaint', 'urgency': 'high', 'action': 'respond', 'requires_response': True}
-    elif '?' in comment or any(word in comment_lower for word in ['can i', 'do you', 'how do', 'what']):
-        return {'category': 'primary_inquiry', 'urgency': 'medium', 'action': 'respond', 'requires_response': True}
-    else:
-        return {'category': 'general', 'urgency': 'low', 'action': 'leave_alone', 'requires_response': False}
+BUSINESS LOGIC:
+- Comments that negatively mention leasing alternatives (e.g., 'Trading in a lease is bad', 'Dealerships rip you off') should be classified as Positive, as they imply LeaseEnd's services are better
+- Comments asking questions about lease buyouts, rates, or process are high-intent prospects
+- Comments from people who clearly don't lease vehicles should be ignored/deleted
+- Spam, irrelevant, or off-topic comments should be deleted
 
-# AI-powered response generation using Claude
-def generate_ai_response(comment, avatar, category, urgency):
-    """
-    Generate contextual response using Claude AI with training data context.
-    
-    This replaces template-based responses with dynamic AI generation that:
-    - Uses training data as examples/context for Claude
-    - Incorporates customer avatar preferences  
-    - Maintains brand voice and values
-    - Generates natural, contextual responses
-    """
+Analyze this comment and classify its sentiment as Positive, Neutral, or Negative. Then recommend one action: REPLY, REACT, DELETE, or IGNORE.
+
+ACTIONS:
+- REPLY: For questions, objections, or potential customers (generate helpful response)
+- REACT: For positive comments, praise, or simple acknowledgments  
+- DELETE: For spam, inappropriate content, or clearly non-prospects
+- IGNORE: For off-topic but harmless comments
+
+COMMENT: "{comment}"
+
+Respond in this JSON format: {{"sentiment": "...", "action": "...", "reasoning": "...", "high_intent": true/false}}"""
+
+    try:
+        response = claude.basic_request(prompt)
+        # Parse the JSON response
+        import json
+        
+        # Clean the response to extract JSON
+        response_clean = response.strip()
+        if response_clean.startswith('```'):
+            # Remove code block markers
+            lines = response_clean.split('\n')
+            response_clean = '\n'.join([line for line in lines if not line.startswith('```')])
+        
+        # Try to parse JSON
+        try:
+            result = json.loads(response_clean)
+            return {
+                'sentiment': result.get('sentiment', 'Neutral'),
+                'action': result.get('action', 'IGNORE'),
+                'reasoning': result.get('reasoning', 'No reasoning provided'),
+                'high_intent': result.get('high_intent', False)
+            }
+        except json.JSONDecodeError:
+            # Fallback parsing if JSON fails
+            if 'DELETE' in response.upper():
+                action = 'DELETE'
+            elif 'REPLY' in response.upper():
+                action = 'REPLY'
+            elif 'REACT' in response.upper():
+                action = 'REACT'
+            else:
+                action = 'IGNORE'
+                
+            return {
+                'sentiment': 'Neutral',
+                'action': action,
+                'reasoning': 'Fallback classification',
+                'high_intent': False
+            }
+            
+    except Exception as e:
+        print(f"Error in AI classification: {e}")
+        return {
+            'sentiment': 'Neutral',
+            'action': 'IGNORE',
+            'reasoning': 'Classification error',
+            'high_intent': False
+        }
+
+# Simplified AI response generation 
+def generate_response(comment, sentiment, high_intent=False):
+    """Generate natural response using Claude with simplified approach"""
     
     # Get relevant training examples for context
     relevant_examples = []
     for example in TRAINING_DATA:
         if example['action'] == 'respond' and example['reply']:
-            # Include examples from same category or similar patterns
-            if (example['category'] == category or 
-                any(word in example['comment'].lower() for word in comment.lower().split()[:3])):
+            # Simple keyword matching for relevance
+            if any(word in example['comment'].lower() for word in comment.lower().split()[:4]):
                 relevant_examples.append(f"Comment: \"{example['comment']}\"\nReply: \"{example['reply']}\"")
     
-    # Limit to top 3 most relevant examples to avoid token limits
     context_examples = "\n\n".join(relevant_examples[:3])
     
-    # Build avatar context
-    avatar_context = {
-        "mike_cost_conscious": "This customer is cost-conscious and wants to know about pricing, savings, and value. Focus on transparent pricing and competitive rates.",
-        "anna_professional": "This customer is a busy professional who values efficiency and convenience. Emphasize quick, online processes and time-saving benefits.",
-        "sarah_family": "This customer is family-oriented and wants stability and trust. Focus on reliability, no-pressure approach, and guidance through the process.",
-        "general": "This customer needs helpful, professional service information."
-    }
+    # Add CTA instructions for high-intent comments
+    cta_instruction = ""
+    if high_intent:
+        cta_instruction = "\nFor high-intent prospects, end with: 'To see your options just fill out the form on our site, we're happy to help'"
     
-    # Create prompt for Claude
-    prompt = f"""You are responding to a Facebook comment for Lease End, a lease buyout financing company. Generate a helpful, professional response that matches our brand voice.
+    prompt = f"""You are responding to a Facebook comment for LeaseEnd.com, a lease buyout financing company.
 
-BRAND VALUES:
-- Transparent pricing (no hidden fees)
-- 100% online process (no dealership visits)
-- No pressure, customer-focused
-- Competitive rates through multiple lenders
-- Professional, helpful, and trustworthy
-
-CUSTOMER AVATAR: {avatar_context.get(avatar, avatar_context['general'])}
-
-COMMENT CATEGORY: {category}
-URGENCY: {urgency}
+COMMENT SENTIMENT: {sentiment}
+HIGH INTENT PROSPECT: {high_intent}
 
 ORIGINAL COMMENT: "{comment}"
+
+BRAND VOICE:
+- Professional but conversational
+- Transparent about pricing (no hidden fees)
+- Helpful, not pushy
+- Emphasize online process convenience
+
+RESPONSE STYLE:
+- Sound natural and human
+- Start responses naturally: "Actually..." "That's a good point..." "Not exactly..."
+- Use commas, never dashes (- or --)
+- Maximum 1 exclamation point
+- Keep concise (1-2 sentences usually)
+- Address their specific concern directly
 
 EXAMPLES OF GOOD RESPONSES:
 {context_examples}
 
-Generate a natural, helpful response that:
-1. Directly addresses their specific comment/concern
-2. Reflects Lease End's brand voice and values
-3. Is conversational but professional
-4. Includes relevant information without being pushy
-5. Matches the tone and urgency level
+{cta_instruction}
 
-Keep the response concise (1-3 sentences) and personalized to their specific comment."""
+Generate a helpful, natural response that addresses their comment directly:"""
 
     try:
-        # Use Claude to generate the response
         response = claude.basic_request(prompt)
         return response.strip()
     except Exception as e:
-        print(f"Error generating AI response: {e}")
-        # Fallback to a simple, safe response
-        return "Thank you for your comment! We'd be happy to help you with your lease buyout questions. Feel free to reach out for more information."
+        print(f"Error generating response: {e}")
+        return "Thank you for your comment! We'd be happy to help with any lease buyout questions."
 
 # Request/Response models - Enhanced for 4-action system
 class CommentRequest(BaseModel):
@@ -357,87 +298,65 @@ app = FastAPI()
 @app.get("/")
 def read_root():
     return {
-        "message": "Lease End AI Assistant - Claude AI Powered",
-        "version": "3.1",
+        "message": "Lease End AI Assistant - Simplified AI Classification",
+        "version": "4.0",
         "training_examples": len(TRAINING_DATA),
-        "actions": ["respond", "react", "delete", "leave_alone"],
-        "features": ["Customer Avatar Detection", "Claude AI Dynamic Responses", "4-Action Classification", "Contextual Training Data"],
-        "response_method": "Claude AI generates responses using training data as context (no rigid templates)"
+        "actions": ["reply", "react", "delete", "ignore"],
+        "features": ["AI Sentiment Analysis", "Business Logic Classification", "High-Intent Detection", "CTA Integration"],
+        "approach": "Simplified classification using proven prompt pattern + Claude AI responses"
     }
 
 @app.post("/process-comment", response_model=ProcessedComment)
 async def process_comment(request: CommentRequest):
-    """Enhanced comment processing with 4-action classification system"""
+    """Simplified comment processing using AI classification approach"""
     try:
-        # Calculate comment age
-        comment_age = "recent"
-        if request.created_time:
-            try:
-                created = datetime.fromisoformat(request.created_time.replace('Z', '+00:00'))
-                now = datetime.now(timezone.utc)
-                age_hours = (now - created).total_seconds() / 3600
-                
-                if age_hours < 2:
-                    comment_age = "recent"
-                elif age_hours < 24:
-                    comment_age = "hours_old"
-                else:
-                    comment_age = "days_old"
-            except:
-                comment_age = "unknown"
+        # Use AI to classify the comment (like original n8n approach)
+        ai_classification = classify_comment_with_ai(request.comment, request.postId)
         
-        # Identify customer avatar
-        avatar = identify_customer_avatar(request.comment)
+        sentiment = ai_classification['sentiment']
+        action = ai_classification['action'].lower()  # Convert to lowercase for consistency
+        reasoning = ai_classification['reasoning']
+        high_intent = ai_classification['high_intent']
         
-        # Use smart classification with 4-action system
-        classification = smart_classify_comment(request.comment, comment_age)
+        # Map actions to our system
+        action_mapping = {
+            'reply': 'respond',
+            'react': 'react', 
+            'delete': 'delete',
+            'ignore': 'leave_alone'
+        }
         
-        category = classification['category']
-        urgency = classification['urgency']
-        action = classification['action']
-        requires_response = classification['requires_response']
+        mapped_action = action_mapping.get(action, 'leave_alone')
+        requires_response = mapped_action == 'respond'
         
-        # Generate brand-aligned response only if action is 'respond'
+        # Generate response only if action is 'respond'
         reply_text = ""
-        confidence_score = 0.8  # Base confidence
+        confidence_score = 0.85  # Higher confidence for AI-based classification
         
-        if action == 'respond':
-            reply_text = generate_ai_response(request.comment, avatar, category, urgency)
-            
-            # Adjust confidence based on training data match
-            comment_lower = request.comment.lower()
-            for example in TRAINING_DATA:
-                if example['action'] == 'respond':
-                    example_lower = example['comment'].lower()
-                    common_words = set(comment_lower.split()) & set(example_lower.split())
-                    if len(common_words) >= 2:
-                        confidence_score = min(0.95, confidence_score + (len(common_words) * 0.05))
-                        break
-        elif action in ['react', 'delete', 'leave_alone']:
-            # High confidence for clear non-response actions
-            confidence_score = 0.9
+        if mapped_action == 'respond':
+            reply_text = generate_response(request.comment, sentiment, high_intent)
+            confidence_score = 0.9  # High confidence for AI-generated responses
         
-        # Enhanced decision logic with 4-action system
+        # Simplified decision logic
         should_post = (
-            action == 'respond' and 
-            urgency != "high" and
-            comment_age != "days_old" and
-            category not in ["complaint"] and
-            confidence_score > 0.75
+            mapped_action == 'respond' and 
+            sentiment != 'Negative' and  # Don't auto-post negative sentiment
+            confidence_score > 0.8
         )
         
         needs_review = (
-            action == 'respond' and 
-            (urgency == "high" or comment_age == "days_old" or category == "complaint" or confidence_score <= 0.75)
-        ) or action == 'delete'  # Always review delete actions
+            mapped_action == 'delete' or  # Always review deletes
+            sentiment == 'Negative' or    # Review negative sentiment
+            confidence_score < 0.8
+        )
         
         return ProcessedComment(
             postId=request.postId,
             original_comment=request.comment,
-            customer_avatar=avatar,
-            category=category,
-            urgency=urgency,
-            action=action,
+            customer_avatar="simplified",  # Simplified - no avatar needed
+            category=sentiment.lower(),    # Use sentiment as category
+            urgency="high" if high_intent else "medium",
+            action=mapped_action,
             requires_response=requires_response,
             reply=reply_text,
             should_post=should_post,
@@ -450,12 +369,12 @@ async def process_comment(request: CommentRequest):
         return ProcessedComment(
             postId=request.postId,
             original_comment=request.comment,
-            customer_avatar="general",
+            customer_avatar="error",
             category="error",
             urgency="low",
             action="leave_alone",
             requires_response=False,
-            reply="Thank you for your comment. We appreciate your feedback and will get back to you soon.",
+            reply="Thank you for your comment. We appreciate your feedback.",
             should_post=False,
             needs_review=True,
             confidence_score=0.0
@@ -470,102 +389,109 @@ async def generate_reply(request: Request):
     postId = data.get("postId", "")
 
     try:
-        # Use enhanced processing
-        avatar = identify_customer_avatar(comment)
-        classification = smart_classify_comment(comment)
+        # Use simplified AI classification
+        ai_classification = classify_comment_with_ai(comment, postId)
         
-        if classification['action'] == 'respond':
-            reply = generate_ai_response(comment, avatar, classification['category'], classification['urgency'])
+        if ai_classification['action'].lower() == 'reply':
+            reply = generate_response(comment, ai_classification['sentiment'], ai_classification['high_intent'])
         else:
             reply = "Thank you for your comment."
         
         return {
             "postId": postId,
             "reply": reply,
-            "action": classification['action']
+            "action": ai_classification['action'].lower()
         }
         
     except Exception as e:
         return {
             "postId": postId,
             "reply": "Thank you for your comment. We appreciate your feedback.",
-            "action": "respond",
+            "action": "ignore",
             "error": str(e)
         }
 
-# Debug endpoint for testing
+# Debug endpoint for single comment testing
 @app.post("/debug-comment")
 async def debug_comment(request: CommentRequest):
-    """Debug endpoint to see all classification details"""
-    avatar = identify_customer_avatar(request.comment)
-    classification = smart_classify_comment(request.comment)
-    
-    # Show what prompt would be sent to Claude
-    debug_response = {
-        "comment": request.comment,
-        "customer_avatar": avatar,
-        "classification": classification,
-        "training_examples_loaded": len(TRAINING_DATA),
-        "ai_context": "Using Claude AI for dynamic response generation with training data context"
-    }
-    
-    # If it's a respond action, show the AI prompt that would be generated
-    if classification['action'] == 'respond':
-        # Get relevant training examples for context
-        relevant_examples = []
-        for example in TRAINING_DATA:
-            if example['action'] == 'respond' and example['reply']:
-                if (example['category'] == classification['category'] or 
-                    any(word in example['comment'].lower() for word in request.comment.lower().split()[:3])):
-                    relevant_examples.append(f"Comment: \"{example['comment']}\"\nReply: \"{example['reply']}\"")
+    """Debug endpoint to see AI classification details for a single comment"""
+    try:
+        ai_classification = classify_comment_with_ai(request.comment, request.postId)
         
-        context_examples = "\n\n".join(relevant_examples[:3])
-        
-        avatar_context = {
-            "mike_cost_conscious": "This customer is cost-conscious and wants to know about pricing, savings, and value. Focus on transparent pricing and competitive rates.",
-            "anna_professional": "This customer is a busy professional who values efficiency and convenience. Emphasize quick, online processes and time-saving benefits.",
-            "sarah_family": "This customer is family-oriented and wants stability and trust. Focus on reliability, no-pressure approach, and guidance through the process.",
-            "general": "This customer needs helpful, professional service information."
+        debug_response = {
+            "comment": request.comment,
+            "ai_classification": ai_classification,
+            "training_examples_loaded": len(TRAINING_DATA),
+            "approach": "Simplified AI classification (business-focused like original n8n prompt)"
         }
         
-        debug_response["ai_prompt_preview"] = f"""Customer Avatar: {avatar_context.get(avatar, avatar_context['general'])}
-Category: {classification['category']}
-Training Examples Used: {len(relevant_examples[:3])}
-AI will generate contextual response based on this information."""
-    
-    return debug_response
-
-# Test AI response generation
-@app.post("/test-ai-response")
-async def test_ai_response(request: CommentRequest):
-    """Test endpoint to see AI-generated response in real-time"""
-    try:
-        avatar = identify_customer_avatar(request.comment)
-        classification = smart_classify_comment(request.comment)
+        # Show what response would be generated if it's a reply
+        if ai_classification['action'].lower() == 'reply':
+            response_text = generate_response(
+                request.comment, 
+                ai_classification['sentiment'], 
+                ai_classification['high_intent']
+            )
+            debug_response["generated_response"] = response_text
+            debug_response["includes_cta"] = "fill out the form" in response_text.lower()
         
-        if classification['action'] == 'respond':
-            ai_response = generate_ai_response(request.comment, avatar, classification['category'], classification['urgency'])
-            
-            return {
-                "original_comment": request.comment,
-                "customer_avatar": avatar,
-                "category": classification['category'],
-                "urgency": classification['urgency'],
-                "ai_generated_response": ai_response,
-                "method": "Claude AI with training data context"
-            }
-        else:
-            return {
-                "original_comment": request.comment,
-                "action": classification['action'],
-                "message": f"No response needed - action is '{classification['action']}'"
-            }
-            
+        return debug_response
+        
     except Exception as e:
         return {
             "error": str(e),
-            "fallback": "AI response generation failed"
+            "comment": request.comment,
+            "fallback": "Debug failed"
         }
+
+# Validate AI performance against training data
+@app.post("/validate-training-accuracy")
+async def validate_training_accuracy():
+    """Test AI classification accuracy against actual training data"""
+    if not TRAINING_DATA:
+        return {"error": "No training data loaded"}
+    
+    # Test a sample of training data (first 10 examples)
+    sample_size = min(10, len(TRAINING_DATA))
+    results = []
+    
+    for i in range(sample_size):
+        example = TRAINING_DATA[i]
+        try:
+            ai_classification = classify_comment_with_ai(example['comment'])
+            
+            # Map training actions to AI actions
+            expected_action = example['action']
+            if expected_action == 'respond':
+                expected_action = 'reply'
+            elif expected_action == 'leave_alone':
+                expected_action = 'ignore'
+                
+            actual_action = ai_classification['action'].lower()
+            
+            results.append({
+                "comment": example['comment'][:50] + "...",
+                "expected_action": expected_action,
+                "actual_action": actual_action,
+                "match": expected_action == actual_action,
+                "training_category": example['category']
+            })
+            
+        except Exception as e:
+            results.append({
+                "comment": example['comment'][:50] + "...",
+                "error": str(e),
+                "match": False
+            })
+    
+    accuracy = sum(1 for r in results if r.get('match', False)) / len(results)
+    
+    return {
+        "sample_size": len(results),
+        "accuracy": f"{accuracy:.2%}",
+        "results": results,
+        "note": "Testing AI classification against actual training data"
+    }
 
 # New endpoint for action statistics
 @app.get("/stats")
@@ -586,11 +512,13 @@ async def get_stats():
         "action_distribution": action_counts,
         "category_distribution": category_counts,
         "supported_actions": {
-            "respond": "Generate professional reply",
+            "reply": "Generate helpful response (with CTA for high-intent)",
             "react": "Add thumbs up or heart reaction", 
-            "delete": "Remove spam/inappropriate content",
-            "leave_alone": "Ignore off-topic comments"
-        }
+            "delete": "Remove spam/inappropriate/non-prospect content",
+            "ignore": "Leave harmless off-topic comments alone"
+        },
+        "approach": "Simplified AI classification based on business logic and sentiment",
+        "features": ["Sentiment Analysis", "High-Intent Detection", "Automatic CTA", "Business Logic"]
     }
 
 # Railway-specific server startup
