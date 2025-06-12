@@ -553,6 +553,34 @@ async def get_stats():
         "features": ["Sentiment Analysis", "High-Intent Detection", "Automatic CTA", "Business Logic", "Facebook Token Management"]
     }
 
+# Add this debug endpoint HERE ↓
+@app.get("/debug-facebook-config")
+async def debug_facebook_config():
+    return {
+        "app_id": os.getenv("FACEBOOK_APP_ID"),
+        "app_secret_exists": bool(os.getenv("FACEBOOK_APP_SECRET")),
+        "page_id": os.getenv("FACEBOOK_PAGE_ID"), 
+        "page_token_exists": bool(os.getenv("FACEBOOK_PAGE_TOKEN")),
+        "app_secret_preview": os.getenv("FACEBOOK_APP_SECRET", "")[:10] + "..." if os.getenv("FACEBOOK_APP_SECRET") else "Missing"
+    }
+
+# Add this debug endpoint HERE ↓
+@app.get("/debug-facebook-config")
+async def debug_facebook_config():
+    return {
+        "app_id": os.getenv("FACEBOOK_APP_ID"),
+        "app_secret_exists": bool(os.getenv("FACEBOOK_APP_SECRET")),
+        "page_id": os.getenv("FACEBOOK_PAGE_ID"), 
+        "page_token_exists": bool(os.getenv("FACEBOOK_PAGE_TOKEN")),
+        "app_secret_preview": os.getenv("FACEBOOK_APP_SECRET", "")[:10] + "..." if os.getenv("FACEBOOK_APP_SECRET") else "Missing"
+    }
+
+# Railway-specific server startup  ← Keep this at the very bottom
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)   
+
 # Railway-specific server startup
 if __name__ == "__main__":
     import uvicorn
