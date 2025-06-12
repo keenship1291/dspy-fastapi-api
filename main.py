@@ -5,11 +5,17 @@ from datetime import datetime, timezone
 from anthropic import Anthropic
 import dspy
 from pydantic import BaseModel
+from facebook_auth import FacebookTokenManager
 
 # Load API key from environment variable (set in Railway dashboard)
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 if not ANTHROPIC_API_KEY:
     raise ValueError("ANTHROPIC_API_KEY environment variable not set")
+
+# Facebook Config
+FACEBOOK_APP_ID = os.getenv("FACEBOOK_APP_ID")
+FACEBOOK_APP_SECRET = os.getenv("FACEBOOK_APP_SECRET") 
+FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID")
 
 # Lease End Brand Context
 BRAND_CONTEXT = {
@@ -294,6 +300,9 @@ class ProcessedComment(BaseModel):
 
 app = FastAPI()
 
+# Initialize Facebook token manager
+fb_manager = FacebookTokenManager()
+
 @app.get("/")
 def read_root():
     return {
@@ -301,7 +310,7 @@ def read_root():
         "version": "4.0",
         "training_examples": len(TRAINING_DATA),
         "actions": ["reply", "react", "delete", "ignore"],
-        "features": ["AI Sentiment Analysis", "Business Logic Classification", "High-Intent Detection", "CTA Integration"],
+        "features": ["AI Sentiment Analysis", "Business Logic Classification", "High-Intent Detection", "CTA Integration", "Facebook Token Management"],
         "approach": "Simplified classification using proven prompt pattern + Claude AI responses"
     }
 
@@ -490,6 +499,32 @@ async def validate_training_accuracy():
         "note": "Testing AI classification against actual training data"
     }
 
+# Facebook Token Management Endpoints
+@app.post("/refresh-facebook-token")
+async def refresh_facebook_token_endpoint():
+    """Manual endpoint to refresh Facebook token"""
+    result = fb_manager.refresh_page_token()
+    
+    if result.get("success"):
+        return {
+            "status": "success",
+            "message": "Token refreshed successfully",
+            "refreshed_at": result["refreshed_at"],
+            "new_token_preview": result["new_token"][:20] + "...",
+            "note": "Update FACEBOOK_PAGE_TOKEN environment variable with the new token"
+        }
+    else:
+        return {
+            "status": "error", 
+            "error": result.get("error"),
+            "details": result.get("details")
+        }
+
+@app.get("/facebook-token-status")
+async def check_facebook_token_status():
+    """Check when Facebook token expires"""
+    return fb_manager.check_token_status()
+
 # New endpoint for action statistics
 @app.get("/stats")
 async def get_stats():
@@ -515,7 +550,7 @@ async def get_stats():
             "ignore": "Leave harmless off-topic comments alone"
         },
         "approach": "Simplified AI classification based on business logic and sentiment",
-        "features": ["Sentiment Analysis", "High-Intent Detection", "Automatic CTA", "Business Logic"]
+        "features": ["Sentiment Analysis", "High-Intent Detection", "Automatic CTA", "Business Logic", "Facebook Token Management"]
     }
 
 # Railway-specific server startup
