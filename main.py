@@ -520,10 +520,52 @@ async def refresh_facebook_token_endpoint():
             "details": result.get("details")
         }
 
+@app.get("/refresh-facebook-token-browser")
+async def refresh_facebook_token_browser():
+    """GET version for easy browser access"""
+    result = fb_manager.refresh_page_token()
+    
+    if result.get("success"):
+        return {
+            "status": "success", 
+            "message": "Token refreshed successfully",
+            "new_token": result["new_token"],
+            "expires_info": "New token should last ~60 days",
+            "note": "Copy the new_token value and update FACEBOOK_PAGE_TOKEN in Railway",
+            "next_steps": [
+                "1. Copy the new_token value above",
+                "2. Go to Railway dashboard → Variables", 
+                "3. Update FACEBOOK_PAGE_TOKEN with the new value",
+                "4. Your automation will now work for ~60 days"
+            ]
+        }
+    else:
+        return {
+            "status": "error",
+            "error": result.get("error"),
+            "details": result.get("details", "No additional details"),
+            "troubleshooting": [
+                "Check that all Facebook environment variables are set correctly",
+                "Verify your Facebook app credentials",
+                "Make sure your current token isn't completely expired"
+            ]
+        }
+
 @app.get("/facebook-token-status")
 async def check_facebook_token_status():
     """Check when Facebook token expires"""
     return fb_manager.check_token_status()
+
+# Debug Facebook configuration
+@app.get("/debug-facebook-config")
+async def debug_facebook_config():
+    return {
+        "app_id": os.getenv("FACEBOOK_APP_ID"),
+        "app_secret_exists": bool(os.getenv("FACEBOOK_APP_SECRET")),
+        "page_id": os.getenv("FACEBOOK_PAGE_ID"), 
+        "page_token_exists": bool(os.getenv("FACEBOOK_PAGE_TOKEN")),
+        "app_secret_preview": os.getenv("FACEBOOK_APP_SECRET", "")[:10] + "..." if os.getenv("FACEBOOK_APP_SECRET") else "Missing"
+    }
 
 # New endpoint for action statistics
 @app.get("/stats")
@@ -551,17 +593,6 @@ async def get_stats():
         },
         "approach": "Simplified AI classification based on business logic and sentiment",
         "features": ["Sentiment Analysis", "High-Intent Detection", "Automatic CTA", "Business Logic", "Facebook Token Management"]
-    }
-
-# Add this debug endpoint HERE ↓
-@app.get("/debug-facebook-config")
-async def debug_facebook_config():
-    return {
-        "app_id": os.getenv("FACEBOOK_APP_ID"),
-        "app_secret_exists": bool(os.getenv("FACEBOOK_APP_SECRET")),
-        "page_id": os.getenv("FACEBOOK_PAGE_ID"), 
-        "page_token_exists": bool(os.getenv("FACEBOOK_PAGE_TOKEN")),
-        "app_secret_preview": os.getenv("FACEBOOK_APP_SECRET", "")[:10] + "..." if os.getenv("FACEBOOK_APP_SECRET") else "Missing"
     }
 
 # Railway-specific server startup
