@@ -111,8 +111,7 @@ def load_training_data():
                             'category': row['category'],
                             'urgency': row['urgency'],
                             'action': row['action'],  # respond, react, delete, leave_alone
-                            'reply': row['reply'],
-                            'requires_response': row['action'] == 'respond'  # Backwards compatibility
+                            'reply': row['reply']
                         })
                     else:
                         # Old format - convert to new action system
@@ -134,8 +133,7 @@ def load_training_data():
                             'category': category,
                             'urgency': row.get('urgency', 'medium'),
                             'action': action,
-                            'reply': row.get('reply', ''),
-                            'requires_response': requires_response
+                            'reply': row.get('reply', '')
                         })
             print(f"✅ Loaded {len(training_examples)} training examples from {csv_file}")
             break  # Stop after successfully loading from first available file
@@ -279,31 +277,32 @@ Generate a helpful, natural response that addresses their comment directly:"""
         print(f"Error generating response: {e}")
         return "Thank you for your comment! We'd be happy to help with any lease buyout questions."
 
-# Request/Response models - Enhanced for 4-action system
+# Request/Response models - Streamlined for clean Google Sheets structure
 class CommentRequest(BaseModel):
     comment: str
     postId: str
     created_time: str = ""
     memory_context: str = ""
 
+# Streamlined response model matching Google Sheets structure
 class ProcessedComment(BaseModel):
     postId: str
     original_comment: str
     category: str
     urgency: str
     action: str  # respond, react, delete, leave_alone
-    requires_response: bool
     reply: str
-    needs_review: bool
     confidence_score: float
+    approved: str  # "pending", "yes", "no"
 
-# NEW: Feedback processing model
+# Feedback processing model
 class FeedbackRequest(BaseModel):
     original_comment: str
     original_response: str
     original_action: str
     feedback_text: str
     postId: str
+    current_version: str = "v1"
 
 app = FastAPI()
 
@@ -313,12 +312,12 @@ fb_manager = FacebookTokenManager()
 @app.get("/")
 def read_root():
     return {
-        "message": "Lease End AI Assistant - Simplified AI Classification with Feedback Loop",
-        "version": "4.1",
+        "message": "Lease End AI Assistant - Streamlined with Clean Feedback Loop",
+        "version": "5.0",
         "training_examples": len(TRAINING_DATA),
         "actions": ["reply", "react", "delete", "ignore"],
-        "features": ["AI Sentiment Analysis", "Business Logic Classification", "High-Intent Detection", "CTA Integration", "Facebook Token Management", "Human Feedback Loop"],
-        "approach": "Simplified classification using proven prompt pattern + Claude AI responses + iterative improvement"
+        "features": ["AI Sentiment Analysis", "Business Logic Classification", "High-Intent Detection", "CTA Integration", "Facebook Token Management", "Streamlined Feedback Loop"],
+        "approach": "Clean workflow with minimal fields and efficient iteration"
     }
 
 @app.post("/process-comment", response_model=ProcessedComment)
@@ -342,7 +341,6 @@ async def process_comment(request: CommentRequest):
         }
         
         mapped_action = action_mapping.get(action, 'leave_alone')
-        requires_response = mapped_action == 'respond'
         
         # Generate response only if action is 'respond'
         reply_text = ""
@@ -352,19 +350,15 @@ async def process_comment(request: CommentRequest):
             reply_text = generate_response(request.comment, sentiment, high_intent)
             confidence_score = 0.9  # High confidence for AI-generated responses
         
-        # Force all reviews for now
-        needs_review = True
-        
         return ProcessedComment(
             postId=request.postId,
             original_comment=request.comment,
             category=sentiment.lower(),    # Use sentiment as category
             urgency="high" if high_intent else "medium",
             action=mapped_action,
-            requires_response=requires_response,
             reply=reply_text,
-            needs_review=needs_review,
-            confidence_score=confidence_score
+            confidence_score=confidence_score,
+            approved="pending"  # Always starts as pending for human review
         )
         
     except Exception as e:
@@ -375,16 +369,15 @@ async def process_comment(request: CommentRequest):
             category="error",
             urgency="low",
             action="leave_alone",
-            requires_response=False,
             reply="Thank you for your comment. We appreciate your feedback.",
-            needs_review=True,
-            confidence_score=0.0
+            confidence_score=0.0,
+            approved="pending"
         )
 
-# NEW: Feedback processing endpoint
+# Streamlined feedback processing endpoint
 @app.post("/process-feedback")
 async def process_feedback(request: FeedbackRequest):
-    """Use human feedback to improve DSPy response"""
+    """Use human feedback to improve DSPy response - returns data for overwriting original fields"""
     try:
         # Enhanced prompt that includes human feedback
         feedback_prompt = f"""You are improving a response based on human feedback for LeaseEnd.com.
@@ -436,33 +429,57 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
             
             improved_action = action_mapping.get(result.get('action', 'ignore').lower(), 'leave_alone')
             
+            # Calculate new version number
+            current_version_num = int(request.current_version.replace('v', '')) if request.current_version.startswith('v') else 1
+            new_version = f"v{current_version_num + 1}"
+            
             return {
+                # Data structure for overwriting original Google Sheets fields
                 "postId": request.postId,
                 "original_comment": request.original_comment,
-                "improved_category": result.get('sentiment', 'neutral').lower(),
-                "improved_action": improved_action,
-                "improved_reply": result.get('reply', ''),
-                "improvements_made": result.get('improvements_made', 'Applied human feedback'),
+                "category": result.get('sentiment', 'neutral').lower(),
+                "urgency": "medium",  # Keep consistent
+                "action": improved_action,
+                "reply": result.get('reply', ''),
                 "confidence_score": result.get('confidence', 0.85),
-                "needs_review": True,  # Still needs human approval of the improvement
-                "feedback_processed": True,
-                "learning_note": "Response improved using human feedback"
+                "approved": "pending",  # Reset for re-review
+                "feedback_text": "",  # Clear after processing
+                "version": new_version,
+                "improvements_made": result.get('improvements_made', 'Applied human feedback'),
+                "feedback_processed": True
             }
             
         except json.JSONDecodeError:
             # Fallback if JSON parsing fails
+            new_version_num = int(request.current_version.replace('v', '')) + 1 if request.current_version.startswith('v') else 2
             return {
                 "postId": request.postId,
-                "error": "Could not parse improved response",
-                "fallback_reply": "Thank you for your comment. We appreciate your feedback.",
+                "error": "Could not parse improved response, using fallback",
+                "category": "neutral",
+                "urgency": "medium",
+                "action": "leave_alone",
+                "reply": "Thank you for your comment. We appreciate your feedback.",
+                "confidence_score": 0.5,
+                "approved": "pending",
+                "feedback_text": "",
+                "version": f"v{new_version_num}",
                 "needs_manual_review": True,
                 "raw_response": improved_response
             }
             
     except Exception as e:
+        new_version_num = int(request.current_version.replace('v', '')) + 1 if request.current_version.startswith('v') else 2
         return {
             "postId": request.postId,
             "error": str(e),
+            "category": "error",
+            "urgency": "low", 
+            "action": "leave_alone",
+            "reply": "Thank you for your comment. We appreciate your feedback.",
+            "confidence_score": 0.0,
+            "approved": "pending",
+            "feedback_text": "",
+            "version": f"v{new_version_num}",
             "needs_manual_review": True
         }
 
@@ -508,7 +525,7 @@ async def debug_comment(request: CommentRequest):
             "comment": request.comment,
             "ai_classification": ai_classification,
             "training_examples_loaded": len(TRAINING_DATA),
-            "approach": "Simplified AI classification (business-focused like original n8n prompt)"
+            "approach": "Streamlined AI classification with clean feedback loop"
         }
         
         # Show what response would be generated if it's a reply
@@ -529,55 +546,6 @@ async def debug_comment(request: CommentRequest):
             "comment": request.comment,
             "fallback": "Debug failed"
         }
-
-# Validate AI performance against training data
-@app.post("/validate-training-accuracy")
-async def validate_training_accuracy():
-    """Test AI classification accuracy against actual training data"""
-    if not TRAINING_DATA:
-        return {"error": "No training data loaded"}
-    
-    # Test a sample of training data (first 10 examples)
-    sample_size = min(10, len(TRAINING_DATA))
-    results = []
-    
-    for i in range(sample_size):
-        example = TRAINING_DATA[i]
-        try:
-            ai_classification = classify_comment_with_ai(example['comment'])
-            
-            # Map training actions to AI actions
-            expected_action = example['action']
-            if expected_action == 'respond':
-                expected_action = 'reply'
-            elif expected_action == 'leave_alone':
-                expected_action = 'ignore'
-                
-            actual_action = ai_classification['action'].lower()
-            
-            results.append({
-                "comment": example['comment'][:50] + "...",
-                "expected_action": expected_action,
-                "actual_action": actual_action,
-                "match": expected_action == actual_action,
-                "training_category": example['category']
-            })
-            
-        except Exception as e:
-            results.append({
-                "comment": example['comment'][:50] + "...",
-                "error": str(e),
-                "match": False
-            })
-    
-    accuracy = sum(1 for r in results if r.get('match', False)) / len(results)
-    
-    return {
-        "sample_size": len(results),
-        "accuracy": f"{accuracy:.2%}",
-        "results": results,
-        "note": "Testing AI classification against actual training data"
-    }
 
 # Facebook Token Management Endpoints
 @app.post("/refresh-facebook-token")
@@ -671,8 +639,8 @@ async def get_stats():
             "delete": "Remove spam/inappropriate/non-prospect content",
             "ignore": "Leave harmless off-topic comments alone"
         },
-        "approach": "Simplified AI classification based on business logic and sentiment",
-        "features": ["Sentiment Analysis", "High-Intent Detection", "Automatic CTA", "Business Logic", "Facebook Token Management", "Human Feedback Loop"]
+        "approach": "Streamlined AI classification with clean feedback loop",
+        "features": ["Sentiment Analysis", "High-Intent Detection", "Automatic CTA", "Business Logic", "Facebook Token Management", "Streamlined Feedback Loop"]
     }
 
 # Railway-specific server startup
