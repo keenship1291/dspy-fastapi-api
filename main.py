@@ -5,17 +5,17 @@ from datetime import datetime, timezone
 from anthropic import Anthropic
 import dspy
 from pydantic import BaseModel
-from facebook_auth import FacebookTokenManager
 
 # Load API key from environment variable (set in Railway dashboard)
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 if not ANTHROPIC_API_KEY:
     raise ValueError("ANTHROPIC_API_KEY environment variable not set")
 
-# Facebook Config
+# Facebook Config (simplified - token is now unlimited)
 FACEBOOK_APP_ID = os.getenv("FACEBOOK_APP_ID")
 FACEBOOK_APP_SECRET = os.getenv("FACEBOOK_APP_SECRET") 
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID")
+FACEBOOK_PAGE_TOKEN = os.getenv("FACEBOOK_PAGE_TOKEN")
 
 # Lease End Brand Context
 BRAND_CONTEXT = {
@@ -310,22 +310,19 @@ class FeedbackRequest(BaseModel):
 
 app = FastAPI()
 
-# Initialize Facebook token manager
-fb_manager = FacebookTokenManager()
-
 @app.get("/")
 def read_root():
     return {
-        "message": "Lease End AI Assistant - Self-Learning System with Human Feedback Loop",
-        "version": "6.0",
+        "message": "Lease End AI Assistant - Self-Learning System with Bulletproof Setup",
+        "version": "7.0",
         "training_examples": len(TRAINING_DATA),
         "actions": ["reply", "react", "delete", "ignore"],
-        "features": ["AI Sentiment Analysis", "Business Logic Classification", "High-Intent Detection", "CTA Integration", "Facebook Token Management", "Self-Learning Training Data", "Human Feedback Loop", "Enhanced Error Handling"],
-        "approach": "Self-improving AI system that learns from human-approved examples",
+        "features": ["AI Sentiment Analysis", "Business Logic Classification", "High-Intent Detection", "CTA Integration", "Self-Learning Training Data", "Human Feedback Loop", "Bulletproof Field Handling"],
+        "approach": "Self-improving AI system with robust data handling and unlimited Facebook token",
         "endpoints": {
             "/process-comment": "Initial comment processing",
             "/process-feedback": "Human feedback processing (production)",
-            "/save-approved-example": "Save human-approved responses to training data",
+            "/save-approved-example": "Save human-approved responses to training data (bulletproof)",
             "/test-feedback": "Debug endpoint for testing n8n integration",
             "/stats": "View training data statistics and learning progress"
         },
@@ -333,6 +330,10 @@ def read_root():
             "description": "Automatically saves approved responses to enhanced_training_data.csv",
             "benefits": ["Continuous improvement", "Domain-specific learning", "Human-guided AI training"],
             "workflow": "Human approves → Saves to CSV → Reloads training data → Better future responses"
+        },
+        "facebook_integration": {
+            "token_status": "Unlimited (never expires)",
+            "automation_ready": True
         }
     }
 
@@ -541,9 +542,9 @@ class ApprovedExample(BaseModel):
     original_comment: str
     approved_category: str
     approved_action: str
-    approved_reply: str
+    approved_reply: str = ""  # Made optional with default empty string
     approved_urgency: str = "medium"
-    postId: str
+    postId: str = ""  # Made optional with default
     confidence_score: float = 0.9
     version: str = "v1"
     human_feedback: str = ""
@@ -695,63 +696,6 @@ async def debug_comment(request: CommentRequest):
             "fallback": "Debug failed"
         }
 
-# Facebook Token Management Endpoints
-@app.post("/refresh-facebook-token")
-async def refresh_facebook_token_endpoint():
-    """Manual endpoint to refresh Facebook token"""
-    result = fb_manager.refresh_page_token()
-    
-    if result.get("success"):
-        return {
-            "status": "success",
-            "message": "Token refreshed successfully",
-            "refreshed_at": result["refreshed_at"],
-            "new_token_preview": result["new_token"][:20] + "...",
-            "note": "Update FACEBOOK_PAGE_TOKEN environment variable with the new token"
-        }
-    else:
-        return {
-            "status": "error", 
-            "error": result.get("error"),
-            "details": result.get("details")
-        }
-
-@app.get("/refresh-facebook-token-browser")
-async def refresh_facebook_token_browser():
-    """GET version for easy browser access"""
-    result = fb_manager.refresh_page_token()
-    
-    if result.get("success"):
-        return {
-            "status": "success", 
-            "message": "Token refreshed successfully",
-            "new_token": result["new_token"],
-            "expires_info": "New token should last ~60 days",
-            "note": "Copy the new_token value and update FACEBOOK_PAGE_TOKEN in Railway",
-            "next_steps": [
-                "1. Copy the new_token value above",
-                "2. Go to Railway dashboard → Variables", 
-                "3. Update FACEBOOK_PAGE_TOKEN with the new value",
-                "4. Your automation will now work for ~60 days"
-            ]
-        }
-    else:
-        return {
-            "status": "error",
-            "error": result.get("error"),
-            "details": result.get("details", "No additional details"),
-            "troubleshooting": [
-                "Check that all Facebook environment variables are set correctly",
-                "Verify your Facebook app credentials",
-                "Make sure your current token isn't completely expired"
-            ]
-        }
-
-@app.get("/facebook-token-status")
-async def check_facebook_token_status():
-    """Check when Facebook token expires"""
-    return fb_manager.check_token_status()
-
 # Debug Facebook configuration
 @app.get("/debug-facebook-config")
 async def debug_facebook_config():
@@ -760,6 +704,7 @@ async def debug_facebook_config():
         "app_secret_exists": bool(os.getenv("FACEBOOK_APP_SECRET")),
         "page_id": os.getenv("FACEBOOK_PAGE_ID"), 
         "page_token_exists": bool(os.getenv("FACEBOOK_PAGE_TOKEN")),
+        "token_status": "Unlimited (never expires)",
         "app_secret_preview": os.getenv("FACEBOOK_APP_SECRET", "")[:10] + "..." if os.getenv("FACEBOOK_APP_SECRET") else "Missing"
     }
 
@@ -791,8 +736,8 @@ async def get_stats():
             "delete": "Remove spam/inappropriate/non-prospect content",
             "ignore": "Leave harmless off-topic comments alone"
         },
-        "approach": "Self-learning AI with human feedback loop and automatic training data updates",
-        "features": ["Sentiment Analysis", "High-Intent Detection", "Automatic CTA", "Business Logic", "Facebook Token Management", "Self-Learning Training Data", "Human-Approved Examples"],
+        "approach": "Self-learning AI with human feedback loop and bulletproof data handling",
+        "features": ["Sentiment Analysis", "High-Intent Detection", "Automatic CTA", "Business Logic", "Self-Learning Training Data", "Human-Approved Examples", "Robust Field Handling"],
         "learning_system": {
             "human_approved_examples": source_counts.get('human_approved', 0),
             "original_training_data": source_counts.get('original', len(TRAINING_DATA)),
