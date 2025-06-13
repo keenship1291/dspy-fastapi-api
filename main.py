@@ -294,7 +294,6 @@ class ProcessedComment(BaseModel):
     action: str  # respond, react, delete, leave_alone
     requires_response: bool
     reply: str
-    should_post: bool
     needs_review: bool
     confidence_score: float
 
@@ -345,18 +344,8 @@ async def process_comment(request: CommentRequest):
             reply_text = generate_response(request.comment, sentiment, high_intent)
             confidence_score = 0.9  # High confidence for AI-generated responses
         
-        # Simplified decision logic
-        should_post = (
-            mapped_action == 'respond' and 
-            sentiment != 'Negative' and  # Don't auto-post negative sentiment
-            confidence_score > 0.8
-        )
-        
-        needs_review = (
-            mapped_action == 'delete' or  # Always review deletes
-            sentiment == 'Negative' or    # Review negative sentiment
-            confidence_score < 0.8
-        )
+        # Force all reviews for now
+        needs_review = True
         
         return ProcessedComment(
             postId=request.postId,
@@ -366,7 +355,6 @@ async def process_comment(request: CommentRequest):
             action=mapped_action,
             requires_response=requires_response,
             reply=reply_text,
-            should_post=should_post,
             needs_review=needs_review,
             confidence_score=confidence_score
         )
@@ -381,7 +369,6 @@ async def process_comment(request: CommentRequest):
             action="leave_alone",
             requires_response=False,
             reply="Thank you for your comment. We appreciate your feedback.",
-            should_post=False,
             needs_review=True,
             confidence_score=0.0
         )
