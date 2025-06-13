@@ -295,14 +295,18 @@ class ProcessedComment(BaseModel):
     confidence_score: float
     approved: str  # "pending", "yes", "no"
 
-# Feedback processing model
+# Feedback processing model - Made more flexible for n8n data
 class FeedbackRequest(BaseModel):
     original_comment: str
-    original_response: str
+    original_response: str = ""  # Allow empty responses
     original_action: str
     feedback_text: str
     postId: str
     current_version: str = "v1"
+    
+    # Allow extra fields from n8n without failing
+    class Config:
+        extra = "ignore"
 
 app = FastAPI()
 
@@ -312,12 +316,17 @@ fb_manager = FacebookTokenManager()
 @app.get("/")
 def read_root():
     return {
-        "message": "Lease End AI Assistant - Streamlined with Clean Feedback Loop",
-        "version": "5.0",
+        "message": "Lease End AI Assistant - Robust Feedback Processing",
+        "version": "5.1",
         "training_examples": len(TRAINING_DATA),
         "actions": ["reply", "react", "delete", "ignore"],
-        "features": ["AI Sentiment Analysis", "Business Logic Classification", "High-Intent Detection", "CTA Integration", "Facebook Token Management", "Streamlined Feedback Loop"],
-        "approach": "Clean workflow with minimal fields and efficient iteration"
+        "features": ["AI Sentiment Analysis", "Business Logic Classification", "High-Intent Detection", "CTA Integration", "Facebook Token Management", "Robust Feedback Loop", "Enhanced Error Handling"],
+        "approach": "Clean workflow with robust n8n integration and detailed logging",
+        "endpoints": {
+            "/process-comment": "Initial comment processing",
+            "/process-feedback": "Human feedback processing (production)",
+            "/test-feedback": "Debug endpoint for testing n8n integration"
+        }
     }
 
 @app.post("/process-comment", response_model=ProcessedComment)
@@ -374,19 +383,30 @@ async def process_comment(request: CommentRequest):
             approved="pending"
         )
 
-# Streamlined feedback processing endpoint
+# Streamlined feedback processing endpoint - More robust for n8n
 @app.post("/process-feedback")
 async def process_feedback(request: FeedbackRequest):
     """Use human feedback to improve DSPy response - returns data for overwriting original fields"""
     try:
+        # Clean and validate input data
+        original_comment = request.original_comment.strip()
+        original_response = request.original_response.strip() if request.original_response else "No response was generated"
+        original_action = request.original_action.strip().lower()
+        feedback_text = request.feedback_text.strip()
+        
+        # Log what we received for debugging
+        print(f"🔄 Processing feedback for postId: {request.postId}")
+        print(f"📝 Feedback: {feedback_text[:100]}...")
+        print(f"🎯 Original action: {original_action}")
+        
         # Enhanced prompt that includes human feedback
         feedback_prompt = f"""You are improving a response based on human feedback for LeaseEnd.com.
 
-ORIGINAL COMMENT: "{request.original_comment}"
-YOUR ORIGINAL RESPONSE: "{request.original_response}"
-YOUR ORIGINAL ACTION: "{request.original_action}"
+ORIGINAL COMMENT: "{original_comment}"
+YOUR ORIGINAL RESPONSE: "{original_response}"
+YOUR ORIGINAL ACTION: "{original_action}"
 
-HUMAN FEEDBACK: "{request.feedback_text}"
+HUMAN FEEDBACK: "{feedback_text}"
 
 LEARN FROM THIS FEEDBACK:
 - If the feedback mentions tone (too formal/pushy/etc), adjust your response style accordingly
@@ -394,6 +414,7 @@ LEARN FROM THIS FEEDBACK:
 - If the feedback mentions business logic (wrong action), reconsider the classification
 - If the feedback mentions missing CTA, add appropriate call-to-action
 - If the feedback says "delete this" or "don't respond", change action accordingly
+- If the feedback says "address objection" or "respond to this", change action to REPLY
 
 Generate an IMPROVED response that incorporates this feedback. 
 
@@ -402,13 +423,15 @@ IMPORTANT:
 - If human says "add CTA" or mentions "high intent", include call-to-action
 - If human says "too formal", make it more conversational
 - If human says "too pushy", make it more helpful and less sales-y
+- If human says "address objection" or "respond to this", recommend REPLY action
 
-Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE/IGNORE", "reply": "...", "improvements_made": "...", "confidence": 0.0}}"""
+Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE/IGNORE", "reply": "...", "improvements_made": "...", "confidence": 0.85}}"""
 
         # Get improved response from Claude
+        print("🤖 Calling Claude for improvement...")
         improved_response = claude.basic_request(feedback_prompt)
         
-        # Parse the improved response
+        # Parse the improved response with better error handling
         import json
         try:
             # Clean response
@@ -417,7 +440,16 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
                 lines = response_clean.split('\n')
                 response_clean = '\n'.join([line for line in lines if not line.startswith('```')])
             
+            # Handle case where Claude doesn't return JSON
+            if not response_clean.startswith('{'):
+                # Try to extract JSON from the response
+                json_start = response_clean.find('{')
+                json_end = response_clean.rfind('}') + 1
+                if json_start != -1 and json_end != 0:
+                    response_clean = response_clean[json_start:json_end]
+            
             result = json.loads(response_clean)
+            print(f"✅ Successfully parsed Claude response")
             
             # Map actions to our system
             action_mapping = {
@@ -430,31 +462,42 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
             improved_action = action_mapping.get(result.get('action', 'ignore').lower(), 'leave_alone')
             
             # Calculate new version number
-            current_version_num = int(request.current_version.replace('v', '')) if request.current_version.startswith('v') else 1
+            try:
+                current_version_num = int(request.current_version.replace('v', '')) if request.current_version.startswith('v') else 1
+            except:
+                current_version_num = 1
             new_version = f"v{current_version_num + 1}"
             
-            return {
+            # Prepare response data for Google Sheets update
+            response_data = {
                 # Data structure for overwriting original Google Sheets fields
                 "postId": request.postId,
-                "original_comment": request.original_comment,
+                "original_comment": original_comment,
                 "category": result.get('sentiment', 'neutral').lower(),
                 "urgency": "medium",  # Keep consistent
                 "action": improved_action,
                 "reply": result.get('reply', ''),
-                "confidence_score": result.get('confidence', 0.85),
+                "confidence_score": float(result.get('confidence', 0.85)),
                 "approved": "pending",  # Reset for re-review
                 "feedback_text": "",  # Clear after processing
                 "version": new_version,
                 "improvements_made": result.get('improvements_made', 'Applied human feedback'),
-                "feedback_processed": True
+                "feedback_processed": True,
+                "success": True
             }
             
-        except json.JSONDecodeError:
-            # Fallback if JSON parsing fails
+            print(f"✅ Feedback processed successfully - new version: {new_version}")
+            return response_data
+            
+        except json.JSONDecodeError as e:
+            print(f"❌ JSON parsing failed: {e}")
+            print(f"Raw response: {improved_response[:200]}...")
+            
+            # Fallback response
             new_version_num = int(request.current_version.replace('v', '')) + 1 if request.current_version.startswith('v') else 2
             return {
                 "postId": request.postId,
-                "error": "Could not parse improved response, using fallback",
+                "original_comment": original_comment,
                 "category": "neutral",
                 "urgency": "medium",
                 "action": "leave_alone",
@@ -463,15 +506,17 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
                 "approved": "pending",
                 "feedback_text": "",
                 "version": f"v{new_version_num}",
-                "needs_manual_review": True,
-                "raw_response": improved_response
+                "error": f"JSON parsing failed: {str(e)}",
+                "raw_response": improved_response[:300] + "..." if len(improved_response) > 300 else improved_response,
+                "success": False
             }
             
     except Exception as e:
+        print(f"❌ Feedback processing error: {e}")
         new_version_num = int(request.current_version.replace('v', '')) + 1 if request.current_version.startswith('v') else 2
         return {
             "postId": request.postId,
-            "error": str(e),
+            "original_comment": request.original_comment,
             "category": "error",
             "urgency": "low", 
             "action": "leave_alone",
@@ -480,8 +525,25 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
             "approved": "pending",
             "feedback_text": "",
             "version": f"v{new_version_num}",
-            "needs_manual_review": True
+            "error": str(e),
+            "success": False
         }
+
+# Test endpoint for debugging n8n issues
+@app.post("/test-feedback")
+async def test_feedback(request: dict):
+    """Simple endpoint to test what n8n is actually sending"""
+    print("🔍 Test endpoint received data:")
+    print(f"Request type: {type(request)}")
+    print(f"Request data: {request}")
+    
+    return {
+        "status": "success",
+        "message": "Test endpoint working",
+        "received_data": request,
+        "data_types": {key: str(type(value)) for key, value in request.items()},
+        "timestamp": datetime.now().isoformat()
+    }
 
 # Keep backwards compatibility
 @app.post("/generate-reply")
