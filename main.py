@@ -316,16 +316,23 @@ fb_manager = FacebookTokenManager()
 @app.get("/")
 def read_root():
     return {
-        "message": "Lease End AI Assistant - Robust Feedback Processing",
-        "version": "5.1",
+        "message": "Lease End AI Assistant - Self-Learning System with Human Feedback Loop",
+        "version": "6.0",
         "training_examples": len(TRAINING_DATA),
         "actions": ["reply", "react", "delete", "ignore"],
-        "features": ["AI Sentiment Analysis", "Business Logic Classification", "High-Intent Detection", "CTA Integration", "Facebook Token Management", "Robust Feedback Loop", "Enhanced Error Handling"],
-        "approach": "Clean workflow with robust n8n integration and detailed logging",
+        "features": ["AI Sentiment Analysis", "Business Logic Classification", "High-Intent Detection", "CTA Integration", "Facebook Token Management", "Self-Learning Training Data", "Human Feedback Loop", "Enhanced Error Handling"],
+        "approach": "Self-improving AI system that learns from human-approved examples",
         "endpoints": {
             "/process-comment": "Initial comment processing",
             "/process-feedback": "Human feedback processing (production)",
-            "/test-feedback": "Debug endpoint for testing n8n integration"
+            "/save-approved-example": "Save human-approved responses to training data",
+            "/test-feedback": "Debug endpoint for testing n8n integration",
+            "/stats": "View training data statistics and learning progress"
+        },
+        "learning_system": {
+            "description": "Automatically saves approved responses to enhanced_training_data.csv",
+            "benefits": ["Continuous improvement", "Domain-specific learning", "Human-guided AI training"],
+            "workflow": "Human approves → Saves to CSV → Reloads training data → Better future responses"
         }
     }
 
@@ -529,7 +536,86 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
             "success": False
         }
 
-# Test endpoint for debugging n8n issues
+# Save approved examples to training data
+class ApprovedExample(BaseModel):
+    original_comment: str
+    approved_category: str
+    approved_action: str
+    approved_reply: str
+    approved_urgency: str = "medium"
+    postId: str
+    confidence_score: float = 0.9
+    version: str = "v1"
+    human_feedback: str = ""
+    
+@app.post("/save-approved-example")
+async def save_approved_example(request: ApprovedExample):
+    """Save human-approved examples to enhanced_training_data.csv for future learning"""
+    try:
+        # Prepare the training data row
+        training_row = {
+            'comment': request.original_comment.strip(),
+            'category': request.approved_category.lower(),
+            'urgency': request.approved_urgency,
+            'action': request.approved_action,
+            'reply': request.approved_reply.strip(),
+            'human_feedback': request.human_feedback,
+            'confidence': request.confidence_score,
+            'postId': request.postId,
+            'version': request.version,
+            'date_added': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'source': 'human_approved'
+        }
+        
+        print(f"💾 Saving approved example to training data:")
+        print(f"   Comment: {request.original_comment[:50]}...")
+        print(f"   Action: {request.approved_action}")
+        print(f"   Reply: {request.approved_reply[:50]}...")
+        
+        # Append to enhanced_training_data.csv
+        file_exists = os.path.isfile('enhanced_training_data.csv')
+        
+        with open('enhanced_training_data.csv', 'a', newline='', encoding='utf-8') as csvfile:
+            fieldnames = ['comment', 'category', 'urgency', 'action', 'reply', 'human_feedback', 
+                         'confidence', 'postId', 'version', 'date_added', 'source']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            
+            # Write header if file is new
+            if not file_exists:
+                writer.writeheader()
+                print("📝 Created new enhanced_training_data.csv with headers")
+            
+            writer.writerow(training_row)
+        
+        # Reload training data to include new example
+        global TRAINING_DATA
+        TRAINING_DATA = load_training_data()
+        
+        print(f"✅ Successfully saved approved example to training data")
+        print(f"📊 Total training examples now: {len(TRAINING_DATA)}")
+        
+        return {
+            "status": "success",
+            "message": "Approved example saved to training data",
+            "training_examples_count": len(TRAINING_DATA),
+            "saved_data": {
+                "comment_preview": request.original_comment[:100] + "..." if len(request.original_comment) > 100 else request.original_comment,
+                "action": request.approved_action,
+                "reply_preview": request.approved_reply[:100] + "..." if len(request.approved_reply) > 100 else request.approved_reply,
+                "category": request.approved_category,
+                "date_added": training_row['date_added']
+            }
+        }
+        
+    except Exception as e:
+        print(f"❌ Error saving approved example: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "message": "Failed to save approved example to training data"
+        }
+
+# Test endpoint for debugging n8n issues  
 @app.post("/test-feedback")
 async def test_feedback(request: dict):
     """Simple endpoint to test what n8n is actually sending"""
@@ -680,29 +766,39 @@ async def debug_facebook_config():
 # New endpoint for action statistics
 @app.get("/stats")
 async def get_stats():
-    """Get training data and action statistics"""
+    """Get training data and action statistics including recent additions"""
     action_counts = {}
     category_counts = {}
+    source_counts = {}
     
     for example in TRAINING_DATA:
         action = example.get('action', 'unknown')
         category = example.get('category', 'unknown')
+        source = example.get('source', 'original')
         
         action_counts[action] = action_counts.get(action, 0) + 1
         category_counts[category] = category_counts.get(category, 0) + 1
+        source_counts[source] = source_counts.get(source, 0) + 1
     
     return {
         "total_training_examples": len(TRAINING_DATA),
         "action_distribution": action_counts,
         "category_distribution": category_counts,
+        "source_distribution": source_counts,
         "supported_actions": {
             "reply": "Generate helpful response (with CTA for high-intent)",
             "react": "Add thumbs up or heart reaction", 
             "delete": "Remove spam/inappropriate/non-prospect content",
             "ignore": "Leave harmless off-topic comments alone"
         },
-        "approach": "Streamlined AI classification with clean feedback loop",
-        "features": ["Sentiment Analysis", "High-Intent Detection", "Automatic CTA", "Business Logic", "Facebook Token Management", "Streamlined Feedback Loop"]
+        "approach": "Self-learning AI with human feedback loop and automatic training data updates",
+        "features": ["Sentiment Analysis", "High-Intent Detection", "Automatic CTA", "Business Logic", "Facebook Token Management", "Self-Learning Training Data", "Human-Approved Examples"],
+        "learning_system": {
+            "human_approved_examples": source_counts.get('human_approved', 0),
+            "original_training_data": source_counts.get('original', len(TRAINING_DATA)),
+            "csv_file": "enhanced_training_data.csv",
+            "auto_reload": True
+        }
     }
 
 # Railway-specific server startup
