@@ -297,6 +297,14 @@ class ProcessedComment(BaseModel):
     needs_review: bool
     confidence_score: float
 
+# NEW: Feedback processing model
+class FeedbackRequest(BaseModel):
+    original_comment: str
+    original_response: str
+    original_action: str
+    feedback_text: str
+    postId: str
+
 app = FastAPI()
 
 # Initialize Facebook token manager
@@ -305,12 +313,12 @@ fb_manager = FacebookTokenManager()
 @app.get("/")
 def read_root():
     return {
-        "message": "Lease End AI Assistant - Simplified AI Classification",
-        "version": "4.0",
+        "message": "Lease End AI Assistant - Simplified AI Classification with Feedback Loop",
+        "version": "4.1",
         "training_examples": len(TRAINING_DATA),
         "actions": ["reply", "react", "delete", "ignore"],
-        "features": ["AI Sentiment Analysis", "Business Logic Classification", "High-Intent Detection", "CTA Integration", "Facebook Token Management"],
-        "approach": "Simplified classification using proven prompt pattern + Claude AI responses"
+        "features": ["AI Sentiment Analysis", "Business Logic Classification", "High-Intent Detection", "CTA Integration", "Facebook Token Management", "Human Feedback Loop"],
+        "approach": "Simplified classification using proven prompt pattern + Claude AI responses + iterative improvement"
     }
 
 @app.post("/process-comment", response_model=ProcessedComment)
@@ -372,6 +380,91 @@ async def process_comment(request: CommentRequest):
             needs_review=True,
             confidence_score=0.0
         )
+
+# NEW: Feedback processing endpoint
+@app.post("/process-feedback")
+async def process_feedback(request: FeedbackRequest):
+    """Use human feedback to improve DSPy response"""
+    try:
+        # Enhanced prompt that includes human feedback
+        feedback_prompt = f"""You are improving a response based on human feedback for LeaseEnd.com.
+
+ORIGINAL COMMENT: "{request.original_comment}"
+YOUR ORIGINAL RESPONSE: "{request.original_response}"
+YOUR ORIGINAL ACTION: "{request.original_action}"
+
+HUMAN FEEDBACK: "{request.feedback_text}"
+
+LEARN FROM THIS FEEDBACK:
+- If the feedback mentions tone (too formal/pushy/etc), adjust your response style accordingly
+- If the feedback mentions accuracy, focus on factual correctness
+- If the feedback mentions business logic (wrong action), reconsider the classification
+- If the feedback mentions missing CTA, add appropriate call-to-action
+- If the feedback says "delete this" or "don't respond", change action accordingly
+
+Generate an IMPROVED response that incorporates this feedback. 
+
+IMPORTANT: 
+- If human says "this should be deleted" or "don't respond to this", recommend DELETE or IGNORE action
+- If human says "add CTA" or mentions "high intent", include call-to-action
+- If human says "too formal", make it more conversational
+- If human says "too pushy", make it more helpful and less sales-y
+
+Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE/IGNORE", "reply": "...", "improvements_made": "...", "confidence": 0.0}}"""
+
+        # Get improved response from Claude
+        improved_response = claude.basic_request(feedback_prompt)
+        
+        # Parse the improved response
+        import json
+        try:
+            # Clean response
+            response_clean = improved_response.strip()
+            if response_clean.startswith('```'):
+                lines = response_clean.split('\n')
+                response_clean = '\n'.join([line for line in lines if not line.startswith('```')])
+            
+            result = json.loads(response_clean)
+            
+            # Map actions to our system
+            action_mapping = {
+                'reply': 'respond',
+                'react': 'react', 
+                'delete': 'delete',
+                'ignore': 'leave_alone'
+            }
+            
+            improved_action = action_mapping.get(result.get('action', 'ignore').lower(), 'leave_alone')
+            
+            return {
+                "postId": request.postId,
+                "original_comment": request.original_comment,
+                "improved_category": result.get('sentiment', 'neutral').lower(),
+                "improved_action": improved_action,
+                "improved_reply": result.get('reply', ''),
+                "improvements_made": result.get('improvements_made', 'Applied human feedback'),
+                "confidence_score": result.get('confidence', 0.85),
+                "needs_review": True,  # Still needs human approval of the improvement
+                "feedback_processed": True,
+                "learning_note": "Response improved using human feedback"
+            }
+            
+        except json.JSONDecodeError:
+            # Fallback if JSON parsing fails
+            return {
+                "postId": request.postId,
+                "error": "Could not parse improved response",
+                "fallback_reply": "Thank you for your comment. We appreciate your feedback.",
+                "needs_manual_review": True,
+                "raw_response": improved_response
+            }
+            
+    except Exception as e:
+        return {
+            "postId": request.postId,
+            "error": str(e),
+            "needs_manual_review": True
+        }
 
 # Keep backwards compatibility
 @app.post("/generate-reply")
@@ -579,7 +672,7 @@ async def get_stats():
             "ignore": "Leave harmless off-topic comments alone"
         },
         "approach": "Simplified AI classification based on business logic and sentiment",
-        "features": ["Sentiment Analysis", "High-Intent Detection", "Automatic CTA", "Business Logic", "Facebook Token Management"]
+        "features": ["Sentiment Analysis", "High-Intent Detection", "Automatic CTA", "Business Logic", "Facebook Token Management", "Human Feedback Loop"]
     }
 
 # Railway-specific server startup
