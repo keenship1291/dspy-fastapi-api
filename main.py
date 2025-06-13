@@ -22,7 +22,7 @@ FACEBOOK_PAGE_TOKEN = os.getenv("FACEBOOK_PAGE_TOKEN")
 # Google Sheets Configuration
 GOOGLE_SHEETS_API_KEY = os.getenv("GOOGLE_SHEETS_API_KEY")
 TRAINING_DATA_SHEET_ID = "1YFAoRzfxOiH96GZfVqX9MaCC91FNFPLQEBEaG_EfbJQ"
-TRAINING_DATA_RANGE = "Sheet1!A:K"  # Adjust range as needed
+TRAINING_DATA_RANGE = "Sheet1!A:E"  # Simple 5-field structure: comment,category,urgency,action,reply
 
 # Lease End Brand Context
 BRAND_CONTEXT = {
@@ -140,8 +140,7 @@ def load_training_data_from_sheets():
                     'category': example.get('category', 'neutral'),
                     'urgency': example.get('urgency', 'medium'),
                     'action': example.get('action', 'leave_alone'),
-                    'reply': example.get('reply', ''),
-                    'source': example.get('source', 'google_sheets')
+                    'reply': example.get('reply', '')
                 })
         
         print(f"✅ Loaded {len(training_examples)} training examples from Google Sheets")
@@ -152,32 +151,26 @@ def load_training_data_from_sheets():
         return []
 
 def append_to_google_sheets(training_data):
-    """Append new training data to Google Sheets"""
+    """Append new training data to Google Sheets - simplified 5-field structure"""
     try:
         if not GOOGLE_SHEETS_API_KEY:
             print("⚠️ No Google Sheets API key, cannot append to sheets")
             return False
             
-        # Prepare row data matching sheet structure
+        # Prepare row data matching simple 5-field structure
         row_data = [
             training_data.get('comment', ''),
             training_data.get('category', ''),
             training_data.get('urgency', ''),
             training_data.get('action', ''),
-            training_data.get('reply', ''),
-            training_data.get('human_feedback', ''),
-            training_data.get('confidence', 0.9),
-            training_data.get('postId', ''),
-            training_data.get('version', 'v1'),
-            training_data.get('date_added', ''),
-            training_data.get('source', 'human_approved')
+            training_data.get('reply', '')
         ]
         
         # Google Sheets API append URL
-        url = f"https://sheets.googleapis.com/v4/spreadsheets/{TRAINING_DATA_SHEET_ID}/values/{TRAINING_DATA_RANGE}:append"
+        url = f"https://sheets.googleapis.com/v4/spreadsheets/{TRAINING_DATA_SHEET_ID}/values/A:E:append"
         
         payload = {
-            "range": TRAINING_DATA_RANGE,
+            "range": "A:E",
             "majorDimension": "ROWS",
             "values": [row_data]
         }
@@ -225,8 +218,7 @@ def load_training_data_from_csv():
                             'category': row['category'],
                             'urgency': row['urgency'],
                             'action': row['action'],  # respond, react, delete, leave_alone
-                            'reply': row['reply'],
-                            'source': 'csv_fallback'
+                            'reply': row['reply']
                         })
                     else:
                         # Old format - convert to new action system
@@ -248,8 +240,7 @@ def load_training_data_from_csv():
                             'category': category,
                             'urgency': row.get('urgency', 'medium'),
                             'action': action,
-                            'reply': row.get('reply', ''),
-                            'source': 'csv_fallback'
+                            'reply': row.get('reply', '')
                         })
             print(f"✅ Loaded {len(training_examples)} training examples from {csv_file}")
             break  # Stop after successfully loading from first available file
@@ -264,7 +255,7 @@ def load_training_data_from_csv():
     
     return training_examples
 
-# Hybrid training data loading - Google Sheets primary, CSV fallback
+# Hybrid training data loading - Google Sheets primary, CSV fallback (simplified)
 def load_training_data():
     """Load training examples from Google Sheets first, CSV as fallback"""
     print("🔄 Loading training data...")
@@ -278,7 +269,7 @@ def load_training_data():
     # Combine both sources
     all_examples = sheets_examples + csv_examples
     
-    # Remove duplicates based on comment content (keep sheets version if duplicate)
+    # Remove duplicates based on comment content (keep first occurrence)
     seen_comments = set()
     deduplicated_examples = []
     
@@ -460,28 +451,30 @@ app = FastAPI()
 @app.get("/")
 def read_root():
     return {
-        "message": "Lease End AI Assistant - Hybrid Training Data System with Google Sheets",
-        "version": "8.0",
+        "message": "Lease End AI Assistant - Simplified Training Data System",
+        "version": "9.0",
         "training_examples": len(TRAINING_DATA),
         "actions": ["reply", "react", "delete", "ignore"],
-        "features": ["AI Sentiment Analysis", "Business Logic Classification", "High-Intent Detection", "CTA Integration", "Real-time Learning", "Google Sheets Integration", "Human Feedback Loop", "Hybrid Data Storage"],
-        "approach": "Self-improving AI system with Google Sheets primary storage and CSV fallback",
+        "features": ["AI Sentiment Analysis", "Business Logic Classification", "High-Intent Detection", "CTA Integration", "Real-time Learning", "Google Sheets Integration", "5-Field Simplicity"],
+        "approach": "Clean, simple AI system with essential training data only",
         "endpoints": {
             "/process-comment": "Initial comment processing",
             "/process-feedback": "Human feedback processing (production)",
-            "/save-approved-example": "Save human-approved responses to Google Sheets",
+            "/save-approved-example": "Save approved responses to Google Sheets (simplified)",
             "/test-feedback": "Debug endpoint for testing n8n integration",
-            "/stats": "View training data statistics and source breakdown",
+            "/stats": "View training data statistics",
             "/debug-sheets-connection": "Test Google Sheets API connection"
         },
         "training_data_system": {
+            "fields": ["comment", "category", "urgency", "action", "reply"],
+            "field_count": 5,
             "primary_source": "Google Sheets",
             "fallback_source": "CSV files",
             "sheet_id": TRAINING_DATA_SHEET_ID,
             "real_time_updates": True,
             "collaborative_editing": True,
-            "description": "Live training data in Google Sheets with automatic fallback to CSV",
-            "benefits": ["Real-time collaboration", "Business stakeholder access", "Version history", "Easy review/editing"]
+            "description": "Ultra-simplified training data with only essential fields",
+            "benefits": ["Easy to understand", "Fast processing", "Clean data structure", "Real-time collaboration"]
         },
         "facebook_integration": {
             "token_status": "Unlimited (never expires)",
@@ -863,30 +856,27 @@ async def debug_facebook_config():
 # New endpoint for action statistics
 @app.get("/stats")
 async def get_stats():
-    """Get training data and action statistics including source breakdown"""
+    """Get training data and action statistics"""
     action_counts = {}
     category_counts = {}
-    source_counts = {}
     
     for example in TRAINING_DATA:
         action = example.get('action', 'unknown')
         category = example.get('category', 'unknown')
-        source = example.get('source', 'unknown')
         
         action_counts[action] = action_counts.get(action, 0) + 1
         category_counts[category] = category_counts.get(category, 0) + 1
-        source_counts[source] = source_counts.get(source, 0) + 1
     
     return {
         "total_training_examples": len(TRAINING_DATA),
         "action_distribution": action_counts,
         "category_distribution": category_counts,
-        "source_distribution": source_counts,
-        "data_sources": {
-            "primary": "Google Sheets",
-            "fallback": "CSV files",
+        "data_structure": {
+            "fields": ["comment", "category", "urgency", "action", "reply"],
+            "primary_source": "Google Sheets",
+            "fallback_source": "CSV files",
             "sheet_id": TRAINING_DATA_SHEET_ID,
-            "hybrid_loading": True
+            "simplified_structure": True
         },
         "supported_actions": {
             "reply": "Generate helpful response (with CTA for high-intent)",
@@ -894,15 +884,8 @@ async def get_stats():
             "delete": "Remove spam/inappropriate/non-prospect content",
             "ignore": "Leave harmless off-topic comments alone"
         },
-        "approach": "Hybrid training data system with Google Sheets primary and CSV fallback",
-        "features": ["Sentiment Analysis", "High-Intent Detection", "Automatic CTA", "Business Logic", "Real-time Learning", "Google Sheets Integration", "Human-Approved Examples"],
-        "learning_system": {
-            "google_sheets_examples": source_counts.get('google_sheets', 0),
-            "human_approved_examples": source_counts.get('human_approved', 0),
-            "csv_fallback_examples": source_counts.get('csv_fallback', 0),
-            "real_time_updates": True,
-            "collaborative_training": True
-        }
+        "approach": "Simplified hybrid training data system with essential fields only",
+        "features": ["Sentiment Analysis", "High-Intent Detection", "Automatic CTA", "Business Logic", "Real-time Learning", "Google Sheets Integration"]
     }
 
 # Debug endpoint to test Google Sheets connection
