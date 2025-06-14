@@ -483,7 +483,7 @@ app = FastAPI()
 def read_root():
     return {
         "message": "Lease End AI Assistant - Ultra-Minimal Training Data System",
-        "version": "11.0",
+        "version": "12.0",
         "training_examples": len(TRAINING_DATA),
         "actions": ["respond", "react", "delete", "leave_alone"],
         "features": ["Pure AI Classification", "Ultra-Minimal Data", "Real-time Learning", "Google Sheets Integration", "Zero Metadata Bloat"],
@@ -496,7 +496,8 @@ def read_root():
             "/stats": "View training data statistics",
             "/debug-sheets-connection": "Test Google Sheets API connection",
             "/debug-sheet-ranges": "Test different sheet ranges",
-            "/debug-sheet-metadata": "Get sheet metadata and tab names"
+            "/debug-sheet-metadata": "Get sheet metadata and tab names",
+            "/debug-api-key": "Test API key configuration step by step"
         },
         "training_data_system": {
             "fields": ["comment", "action", "reply"],
@@ -1089,51 +1090,50 @@ async def debug_sheets_connection():
             "api_key_configured": bool(GOOGLE_SHEETS_API_KEY)
         }
 
-    # Add this endpoint to your main.py (before the if __name__ == "__main__": line)
-
-    @app.get("/debug-api-key")
-    async def debug_api_key():
-        """Test the API key configuration step by step"""
+# FIXED: Debug API key endpoint (properly placed as separate endpoint)
+@app.get("/debug-api-key")
+async def debug_api_key():
+    """Test the API key configuration step by step"""
+    try:
+        api_key = os.getenv("GOOGLE_SHEETS_API_KEY")
+        sheet_id = os.getenv("TRAINING_DATA_SHEET_ID", TRAINING_DATA_SHEET_ID)
+        range_val = os.getenv("TRAINING_DATA_RANGE", TRAINING_DATA_RANGE)
+        
+        if not api_key:
+            return {"error": "No GOOGLE_SHEETS_API_KEY found in environment variables"}
+        
+        # Test the exact URL our app would use
+        test_url = f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/{range_val}?key={api_key}"
+        
         try:
-            api_key = os.getenv("GOOGLE_SHEETS_API_KEY")
-            sheet_id = os.getenv("TRAINING_DATA_SHEET_ID", TRAINING_DATA_SHEET_ID)
-            range_val = os.getenv("TRAINING_DATA_RANGE", TRAINING_DATA_RANGE)
+            response = requests.get(test_url)
             
-            if not api_key:
-                return {"error": "No GOOGLE_SHEETS_API_KEY found in environment variables"}
-            
-            # Test the exact URL our app would use
-            test_url = f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/{range_val}?key={api_key}"
-            
-            try:
-                response = requests.get(test_url)
-                
-                return {
-                    "api_key_exists": True,
-                    "api_key_preview": api_key[:12] + "..." + api_key[-4:],
-                    "sheet_id": sheet_id,
-                    "range": range_val,
-                    "test_url": test_url,
-                    "response_code": response.status_code,
-                    "success": response.status_code == 200,
-                    "response_data": response.json() if response.status_code == 200 else response.text[:500],
-                    "environment_variables": {
-                        "GOOGLE_SHEETS_API_KEY": bool(os.getenv("GOOGLE_SHEETS_API_KEY")),
-                        "TRAINING_DATA_SHEET_ID": bool(os.getenv("TRAINING_DATA_SHEET_ID")),
-                        "TRAINING_DATA_RANGE": bool(os.getenv("TRAINING_DATA_RANGE"))
-                    }
+            return {
+                "api_key_exists": True,
+                "api_key_preview": api_key[:12] + "..." + api_key[-4:],
+                "sheet_id": sheet_id,
+                "range": range_val,
+                "test_url": test_url,
+                "response_code": response.status_code,
+                "success": response.status_code == 200,
+                "response_data": response.json() if response.status_code == 200 else response.text[:500],
+                "environment_variables": {
+                    "GOOGLE_SHEETS_API_KEY": bool(os.getenv("GOOGLE_SHEETS_API_KEY")),
+                    "TRAINING_DATA_SHEET_ID": bool(os.getenv("TRAINING_DATA_SHEET_ID")),
+                    "TRAINING_DATA_RANGE": bool(os.getenv("TRAINING_DATA_RANGE"))
                 }
-                
-            except Exception as e:
-                return {
-                    "error": f"Request failed: {str(e)}",
-                    "api_key_exists": True,
-                    "sheet_id": sheet_id,
-                    "range": range_val
-                }
-                
+            }
+            
         except Exception as e:
-            return {"error": str(e)}
+            return {
+                "error": f"Request failed: {str(e)}",
+                "api_key_exists": True,
+                "sheet_id": sheet_id,
+                "range": range_val
+            }
+            
+    except Exception as e:
+        return {"error": str(e)}
 
 # Railway-specific server startup
 if __name__ == "__main__":
