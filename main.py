@@ -378,7 +378,6 @@ class ProcessedComment(BaseModel):
     postId: str
     original_comment: str
     category: str
-    urgency: str
     action: str  # respond, react, delete, leave_alone
     reply: str
     confidence_score: float
@@ -401,7 +400,7 @@ app = FastAPI()
 def read_root():
     return {
         "message": "Lease End AI Assistant - Core AI System",
-        "version": "13.0",
+        "version": "13.1",
         "training_examples": len(TRAINING_DATA),
         "actions": ["respond", "react", "delete", "leave_alone"],
         "features": ["Pure AI Classification", "Real-time Learning", "Google Sheets Integration"],
@@ -413,6 +412,7 @@ def read_root():
             "/stats": "View training data statistics",
             "/generate-reply": "Backwards compatibility endpoint"
         },
+        "comment_fields": ["postId", "original_comment", "category", "action", "reply", "confidence_score", "approved"],
         "training_data_system": {
             "fields": ["comment", "action", "reply"],
             "field_count": 3,
@@ -459,7 +459,6 @@ async def process_comment(request: CommentRequest):
             postId=request.postId,
             original_comment=request.comment,
             category=sentiment.lower(),
-            urgency="high" if high_intent else "medium",
             action=mapped_action,
             reply=reply_text,
             confidence_score=confidence_score,
@@ -472,7 +471,6 @@ async def process_comment(request: CommentRequest):
             postId=request.postId,
             original_comment=request.comment,
             category="error",
-            urgency="low",
             action="leave_alone",
             reply="Thank you for your comment. We appreciate your feedback.",
             confidence_score=0.0,
@@ -558,7 +556,6 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
                 "postId": request.postId,
                 "original_comment": original_comment,
                 "category": result.get('sentiment', 'neutral').lower(),
-                "urgency": "medium",
                 "action": improved_action,
                 "reply": result.get('reply', ''),
                 "confidence_score": float(result.get('confidence', 0.85)),
@@ -577,7 +574,6 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
                 "postId": request.postId,
                 "original_comment": original_comment,
                 "category": "neutral",
-                "urgency": "medium",
                 "action": "leave_alone",
                 "reply": "Thank you for your comment. We appreciate your feedback.",
                 "confidence_score": 0.5,
@@ -595,7 +591,6 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
             "postId": request.postId,
             "original_comment": request.original_comment,
             "category": "error",
-            "urgency": "low",
             "action": "leave_alone",
             "reply": "Thank you for your comment. We appreciate your feedback.",
             "confidence_score": 0.0,
