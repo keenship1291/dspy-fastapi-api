@@ -19,10 +19,10 @@ FACEBOOK_APP_SECRET = os.getenv("FACEBOOK_APP_SECRET")
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID")
 FACEBOOK_PAGE_TOKEN = os.getenv("FACEBOOK_PAGE_TOKEN")
 
-# Google Sheets Configuration
+# Google Sheets Configuration - Ultra-minimal 3-field structure
 GOOGLE_SHEETS_API_KEY = os.getenv("GOOGLE_SHEETS_API_KEY")
-TRAINING_DATA_SHEET_ID = "1YFAoRzfxOiH96GZfVqX9MaCC91FNFPLQEBEaG_EfbJQ"
-TRAINING_DATA_RANGE = "Sheet1!A:E"  # Simple 5-field structure: comment,category,urgency,action,reply
+TRAINING_DATA_SHEET_ID = "1YFAoRzfxOiH96GZfVqX9MaCC91FNFPLQEBEaG_EfbJQ"  # Update this after renaming sheet
+TRAINING_DATA_RANGE = "Sheet1!A:C"  # Ultra-minimal: comment,action,reply
 
 # Lease End Brand Context
 BRAND_CONTEXT = {
@@ -134,11 +134,9 @@ def load_training_data_from_sheets():
                     else:
                         example[header.lower()] = ""
                 
-                # Ensure required fields exist
+                # Ensure required fields exist (3-field structure)
                 training_examples.append({
                     'comment': example.get('comment', ''),
-                    'category': example.get('category', 'neutral'),
-                    'urgency': example.get('urgency', 'medium'),
                     'action': example.get('action', 'leave_alone'),
                     'reply': example.get('reply', '')
                 })
@@ -151,26 +149,24 @@ def load_training_data_from_sheets():
         return []
 
 def append_to_google_sheets(training_data):
-    """Append new training data to Google Sheets - simplified 5-field structure"""
+    """Append new training data to Google Sheets - ultra-minimal 3-field structure"""
     try:
         if not GOOGLE_SHEETS_API_KEY:
             print("⚠️ No Google Sheets API key, cannot append to sheets")
             return False
             
-        # Prepare row data matching simple 5-field structure
+        # Prepare row data matching ultra-minimal 3-field structure
         row_data = [
             training_data.get('comment', ''),
-            training_data.get('category', ''),
-            training_data.get('urgency', ''),
             training_data.get('action', ''),
             training_data.get('reply', '')
         ]
         
         # Google Sheets API append URL
-        url = f"https://sheets.googleapis.com/v4/spreadsheets/{TRAINING_DATA_SHEET_ID}/values/A:E:append"
+        url = f"https://sheets.googleapis.com/v4/spreadsheets/{TRAINING_DATA_SHEET_ID}/values/A:C:append"
         
         payload = {
-            "range": "A:E",
+            "range": "A:C",
             "majorDimension": "ROWS",
             "values": [row_data]
         }
@@ -212,11 +208,9 @@ def load_training_data_from_csv():
                 for row in reader:
                     # Handle both old and new CSV formats
                     if 'action' in row:
-                        # New format with 4-action classification
+                        # New format with 3-field classification
                         training_examples.append({
                             'comment': row['comment'],
-                            'category': row['category'],
-                            'urgency': row['urgency'],
                             'action': row['action'],  # respond, react, delete, leave_alone
                             'reply': row['reply']
                         })
@@ -237,8 +231,6 @@ def load_training_data_from_csv():
                         
                         training_examples.append({
                             'comment': row['comment'],
-                            'category': category,
-                            'urgency': row.get('urgency', 'medium'),
                             'action': action,
                             'reply': row.get('reply', '')
                         })
@@ -451,35 +443,37 @@ app = FastAPI()
 @app.get("/")
 def read_root():
     return {
-        "message": "Lease End AI Assistant - Simplified Training Data System",
-        "version": "9.0",
+        "message": "Lease End AI Assistant - Ultra-Minimal Training Data System",
+        "version": "10.0",
         "training_examples": len(TRAINING_DATA),
-        "actions": ["reply", "react", "delete", "ignore"],
-        "features": ["AI Sentiment Analysis", "Business Logic Classification", "High-Intent Detection", "CTA Integration", "Real-time Learning", "Google Sheets Integration", "5-Field Simplicity"],
-        "approach": "Clean, simple AI system with essential training data only",
+        "actions": ["respond", "react", "delete", "leave_alone"],
+        "features": ["Pure AI Classification", "Ultra-Minimal Data", "Real-time Learning", "Google Sheets Integration", "Zero Metadata Bloat"],
+        "approach": "Stripped-down AI system with only essential training data - comment, action, reply",
         "endpoints": {
             "/process-comment": "Initial comment processing",
             "/process-feedback": "Human feedback processing (production)",
-            "/save-approved-example": "Save approved responses to Google Sheets (simplified)",
+            "/save-approved-example": "Save approved responses to Google Sheets (3 fields only)",
             "/test-feedback": "Debug endpoint for testing n8n integration",
             "/stats": "View training data statistics",
             "/debug-sheets-connection": "Test Google Sheets API connection"
         },
         "training_data_system": {
-            "fields": ["comment", "category", "urgency", "action", "reply"],
-            "field_count": 5,
+            "fields": ["comment", "action", "reply"],
+            "field_count": 3,
+            "sheet_name": "base_training_data",
             "primary_source": "Google Sheets",
             "fallback_source": "CSV files",
             "sheet_id": TRAINING_DATA_SHEET_ID,
             "real_time_updates": True,
             "collaborative_editing": True,
-            "description": "Ultra-simplified training data with only essential fields",
-            "benefits": ["Easy to understand", "Fast processing", "Clean data structure", "Real-time collaboration"]
+            "description": "Ultra-minimal training data - pure input/output patterns with no metadata",
+            "benefits": ["Maximum simplicity", "Fastest processing", "Zero redundancy", "Pure AI learning patterns"]
         },
         "facebook_integration": {
             "token_status": "Unlimited (never expires)",
             "automation_ready": True
-        }
+        },
+        "philosophy": "Let Claude do what it does best - understand context. No human-imposed metadata required."
     }
 
 @app.post("/process-comment", response_model=ProcessedComment)
@@ -856,36 +850,32 @@ async def debug_facebook_config():
 # New endpoint for action statistics
 @app.get("/stats")
 async def get_stats():
-    """Get training data and action statistics"""
+    """Get training data and action statistics - ultra-minimal structure"""
     action_counts = {}
-    category_counts = {}
     
     for example in TRAINING_DATA:
         action = example.get('action', 'unknown')
-        category = example.get('category', 'unknown')
-        
         action_counts[action] = action_counts.get(action, 0) + 1
-        category_counts[category] = category_counts.get(category, 0) + 1
     
     return {
         "total_training_examples": len(TRAINING_DATA),
         "action_distribution": action_counts,
-        "category_distribution": category_counts,
         "data_structure": {
-            "fields": ["comment", "category", "urgency", "action", "reply"],
-            "primary_source": "Google Sheets",
+            "fields": ["comment", "action", "reply"],
+            "field_count": 3,
+            "primary_source": "Google Sheets (base_training_data)",
             "fallback_source": "CSV files",
             "sheet_id": TRAINING_DATA_SHEET_ID,
-            "simplified_structure": True
+            "ultra_minimal": True
         },
         "supported_actions": {
-            "reply": "Generate helpful response (with CTA for high-intent)",
+            "respond": "Generate helpful response (with CTA for high-intent)",
             "react": "Add thumbs up or heart reaction", 
             "delete": "Remove spam/inappropriate/non-prospect content",
-            "ignore": "Leave harmless off-topic comments alone"
+            "leave_alone": "Ignore harmless off-topic comments"
         },
-        "approach": "Simplified hybrid training data system with essential fields only",
-        "features": ["Sentiment Analysis", "High-Intent Detection", "Automatic CTA", "Business Logic", "Real-time Learning", "Google Sheets Integration"]
+        "approach": "Ultra-minimal training data with only essential fields - no metadata bloat",
+        "features": ["Pure AI Classification", "Essential Data Only", "Real-time Learning", "Google Sheets Integration"]
     }
 
 # Debug endpoint to test Google Sheets connection
