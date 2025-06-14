@@ -19,10 +19,10 @@ FACEBOOK_APP_SECRET = os.getenv("FACEBOOK_APP_SECRET")
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID")
 FACEBOOK_PAGE_TOKEN = os.getenv("FACEBOOK_PAGE_TOKEN")
 
-# Google Sheets Configuration - Ultra-minimal 3-field structure
+# Google Sheets Configuration - Now using environment variables
 GOOGLE_SHEETS_API_KEY = os.getenv("GOOGLE_SHEETS_API_KEY")
-TRAINING_DATA_SHEET_ID = "1YFAoRzfxOiH96GZfVqX9MaCC91FNFPLQEBEaG_EfbJQ"  # Update this after renaming sheet
-TRAINING_DATA_RANGE = "Sheet1!A:C"  # Ultra-minimal: comment,action,reply
+TRAINING_DATA_SHEET_ID = os.getenv("TRAINING_DATA_SHEET_ID", "1YFAoRzfxOiH96GZfVqX9MaCC91FNFPLQEBEaG_EfbJQ")
+TRAINING_DATA_RANGE = os.getenv("TRAINING_DATA_RANGE", "6.7.25 Import!A:C")  # Default to your current tab
 
 # Lease End Brand Context
 BRAND_CONTEXT = {
@@ -97,52 +97,83 @@ try:
 except Exception as e:
     raise ValueError(f"Failed to configure DSPy: {str(e)}")
 
-# Google Sheets Integration Functions
+# Enhanced Google Sheets Integration Functions
 def load_training_data_from_sheets():
-    """Load training data from Google Sheets"""
+    """Load training data from Google Sheets with robust error handling and multiple range attempts"""
     try:
         if not GOOGLE_SHEETS_API_KEY:
             print("⚠️ No Google Sheets API key found, skipping sheets data")
             return []
-            
-        # Google Sheets API URL
-        url = f"https://sheets.googleapis.com/v4/spreadsheets/{TRAINING_DATA_SHEET_ID}/values/{TRAINING_DATA_RANGE}?key={GOOGLE_SHEETS_API_KEY}"
         
-        response = requests.get(url)
-        if response.status_code != 200:
-            print(f"❌ Failed to fetch from Google Sheets: {response.status_code}")
-            return []
+        # Try multiple ranges in order of preference
+        ranges_to_try = [
+            TRAINING_DATA_RANGE,  # Primary range from environment variable
+            "6.7.25 Import!A:C",  # Known working range
+            "A:C",  # No sheet name (uses first sheet)
+            "Sheet1!A:C",  # Default fallback
+        ]
         
-        data = response.json()
-        values = data.get('values', [])
+        # Also try to get the actual first sheet name dynamically
+        try:
+            metadata_url = f"https://sheets.googleapis.com/v4/spreadsheets/{TRAINING_DATA_SHEET_ID}?key={GOOGLE_SHEETS_API_KEY}"
+            metadata_response = requests.get(metadata_url)
+            if metadata_response.status_code == 200:
+                metadata = metadata_response.json()
+                sheets = metadata.get('sheets', [])
+                if sheets:
+                    first_sheet_name = sheets[0].get('properties', {}).get('title', '')
+                    if first_sheet_name and f"{first_sheet_name}!A:C" not in ranges_to_try:
+                        ranges_to_try.insert(0, f"{first_sheet_name}!A:C")
+        except:
+            pass  # Continue with static ranges
         
-        if not values:
-            print("⚠️ No data found in Google Sheets")
-            return []
-        
-        # Assume first row is headers
-        headers = values[0]
-        training_examples = []
-        
-        # Convert rows to training examples
-        for row in values[1:]:  # Skip header row
-            if len(row) >= 5:  # Ensure minimum required fields
-                example = {}
-                for i, header in enumerate(headers):
-                    if i < len(row):
-                        example[header.lower()] = row[i]
-                    else:
-                        example[header.lower()] = ""
+        # Try each range until one works
+        for range_attempt in ranges_to_try:
+            try:
+                url = f"https://sheets.googleapis.com/v4/spreadsheets/{TRAINING_DATA_SHEET_ID}/values/{range_attempt}?key={GOOGLE_SHEETS_API_KEY}"
+                response = requests.get(url)
                 
-                # Ensure required fields exist (3-field structure)
-                training_examples.append({
-                    'comment': example.get('comment', ''),
-                    'action': example.get('action', 'leave_alone'),
-                    'reply': example.get('reply', '')
-                })
+                if response.status_code == 200:
+                    print(f"✅ Successfully connected using range: {range_attempt}")
+                    data = response.json()
+                    values = data.get('values', [])
+                    
+                    if not values:
+                        print("⚠️ No data found in Google Sheets")
+                        return []
+                    
+                    # Process the data - expect 3 columns: comment, action, reply
+                    training_examples = []
+                    headers = values[0] if values else []
+                    print(f"📋 Sheet headers: {headers}")
+                    
+                    for row_idx, row in enumerate(values[1:], 1):  # Skip header row
+                        if len(row) >= 3:  # Ensure minimum required fields
+                            training_examples.append({
+                                'comment': row[0] if len(row) > 0 else '',
+                                'action': row[1] if len(row) > 1 else 'leave_alone',
+                                'reply': row[2] if len(row) > 2 else ''
+                            })
+                        elif len(row) >= 1 and row[0].strip():  # Handle partial rows with at least a comment
+                            training_examples.append({
+                                'comment': row[0],
+                                'action': row[1] if len(row) > 1 else 'leave_alone',
+                                'reply': row[2] if len(row) > 2 else ''
+                            })
+                    
+                    print(f"✅ Loaded {len(training_examples)} training examples from Google Sheets")
+                    return training_examples
+                    
+                else:
+                    print(f"⚠️ Failed with range {range_attempt}: HTTP {response.status_code}")
+                    continue
+                    
+            except Exception as e:
+                print(f"⚠️ Failed with range {range_attempt}: {e}")
+                continue
         
-        print(f"✅ Loaded {len(training_examples)} training examples from Google Sheets")
-        return training_examples
+        print(f"❌ All range attempts failed for sheet ID: {TRAINING_DATA_SHEET_ID}")
+        return []
         
     except Exception as e:
         print(f"❌ Error loading from Google Sheets: {e}")
@@ -154,7 +185,10 @@ def append_to_google_sheets(training_data):
         if not GOOGLE_SHEETS_API_KEY:
             print("⚠️ No Google Sheets API key, cannot append to sheets")
             return False
-            
+        
+        # Extract sheet name from TRAINING_DATA_RANGE for append operation
+        sheet_name = TRAINING_DATA_RANGE.split('!')[0] if '!' in TRAINING_DATA_RANGE else None
+        
         # Prepare row data matching ultra-minimal 3-field structure
         row_data = [
             training_data.get('comment', ''),
@@ -162,11 +196,16 @@ def append_to_google_sheets(training_data):
             training_data.get('reply', '')
         ]
         
-        # Google Sheets API append URL
-        url = f"https://sheets.googleapis.com/v4/spreadsheets/{TRAINING_DATA_SHEET_ID}/values/A:C:append"
+        # Google Sheets API append URL - Fixed format
+        if sheet_name:
+            append_range = f"{sheet_name}!A:C"
+        else:
+            append_range = "A:C"
+            
+        url = f"https://sheets.googleapis.com/v4/spreadsheets/{TRAINING_DATA_SHEET_ID}/values/{append_range}:append"
         
         payload = {
-            "range": "A:C",
+            "range": append_range,
             "majorDimension": "ROWS",
             "values": [row_data]
         }
@@ -444,7 +483,7 @@ app = FastAPI()
 def read_root():
     return {
         "message": "Lease End AI Assistant - Ultra-Minimal Training Data System",
-        "version": "10.0",
+        "version": "11.0",
         "training_examples": len(TRAINING_DATA),
         "actions": ["respond", "react", "delete", "leave_alone"],
         "features": ["Pure AI Classification", "Ultra-Minimal Data", "Real-time Learning", "Google Sheets Integration", "Zero Metadata Bloat"],
@@ -455,15 +494,18 @@ def read_root():
             "/save-approved-example": "Save approved responses to Google Sheets (3 fields only)",
             "/test-feedback": "Debug endpoint for testing n8n integration",
             "/stats": "View training data statistics",
-            "/debug-sheets-connection": "Test Google Sheets API connection"
+            "/debug-sheets-connection": "Test Google Sheets API connection",
+            "/debug-sheet-ranges": "Test different sheet ranges",
+            "/debug-sheet-metadata": "Get sheet metadata and tab names"
         },
         "training_data_system": {
             "fields": ["comment", "action", "reply"],
             "field_count": 3,
-            "sheet_name": "base_training_data",
+            "sheet_name": "Environment Variable Controlled",
             "primary_source": "Google Sheets",
             "fallback_source": "CSV files",
             "sheet_id": TRAINING_DATA_SHEET_ID,
+            "range": TRAINING_DATA_RANGE,
             "real_time_updates": True,
             "collaborative_editing": True,
             "description": "Ultra-minimal training data - pure input/output patterns with no metadata",
@@ -676,7 +718,7 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
             "success": False
         }
 
-# Save approved examples to training data
+# Enhanced save approved examples endpoint
 class ApprovedExample(BaseModel):
     original_comment: str
     approved_category: str
@@ -690,9 +732,24 @@ class ApprovedExample(BaseModel):
     
 @app.post("/save-approved-example")
 async def save_approved_example(request: ApprovedExample):
-    """Save human-approved examples to enhanced_training_data.csv for future learning"""
+    """Save human-approved examples to both Google Sheets and CSV for future learning"""
     try:
-        # Prepare the training data row
+        # Prepare the training data for Google Sheets (ultra-minimal 3-field structure)
+        sheets_data = {
+            'comment': request.original_comment.strip(),
+            'action': request.approved_action,
+            'reply': request.approved_reply.strip()
+        }
+        
+        print(f"💾 Saving approved example to training data:")
+        print(f"   Comment: {request.original_comment[:50]}...")
+        print(f"   Action: {request.approved_action}")
+        print(f"   Reply: {request.approved_reply[:50]}...")
+        
+        # Try to append to Google Sheets first
+        sheets_success = append_to_google_sheets(sheets_data)
+        
+        # Also save to CSV as backup
         training_row = {
             'comment': request.original_comment.strip(),
             'category': request.approved_category.lower(),
@@ -706,11 +763,6 @@ async def save_approved_example(request: ApprovedExample):
             'date_added': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'source': 'human_approved'
         }
-        
-        print(f"💾 Saving approved example to training data:")
-        print(f"   Comment: {request.original_comment[:50]}...")
-        print(f"   Action: {request.approved_action}")
-        print(f"   Reply: {request.approved_reply[:50]}...")
         
         # Append to enhanced_training_data.csv
         file_exists = os.path.isfile('enhanced_training_data.csv')
@@ -737,6 +789,8 @@ async def save_approved_example(request: ApprovedExample):
         return {
             "status": "success",
             "message": "Approved example saved to training data",
+            "sheets_success": sheets_success,
+            "csv_success": True,
             "training_examples_count": len(TRAINING_DATA),
             "saved_data": {
                 "comment_preview": request.original_comment[:100] + "..." if len(request.original_comment) > 100 else request.original_comment,
@@ -847,6 +901,100 @@ async def debug_facebook_config():
         "app_secret_preview": os.getenv("FACEBOOK_APP_SECRET", "")[:10] + "..." if os.getenv("FACEBOOK_APP_SECRET") else "Missing"
     }
 
+# Enhanced debug endpoints
+@app.get("/debug-sheet-ranges")
+async def debug_sheet_ranges():
+    """Test different range formats to find the correct one"""
+    test_ranges = [
+        TRAINING_DATA_RANGE,  # Environment variable
+        "6.7.25 Import!A:C",  # Known tab name
+        "A:C",  # No sheet name
+        "Sheet1!A:C",  # Default name
+        "base_training_data!A:C",  # Expected name
+        "training_data!A:C",  # Alternative name
+        "A1:C100",  # Specific range without sheet
+    ]
+    
+    results = {}
+    
+    for range_test in test_ranges:
+        try:
+            url = f"https://sheets.googleapis.com/v4/spreadsheets/{TRAINING_DATA_SHEET_ID}/values/{range_test}?key={GOOGLE_SHEETS_API_KEY}"
+            response = requests.get(url)
+            
+            if response.status_code == 200:
+                data = response.json()
+                values = data.get('values', [])
+                results[range_test] = {
+                    "status": "success",
+                    "rows": len(values),
+                    "first_row": values[0] if values else [],
+                    "sample_data": values[:3] if values else []
+                }
+            else:
+                error_data = response.json() if response.headers.get('content-type', '').startswith('application/json') else response.text
+                results[range_test] = {
+                    "status": "error",
+                    "code": response.status_code,
+                    "error": error_data
+                }
+                
+        except Exception as e:
+            results[range_test] = {
+                "status": "exception",
+                "error": str(e)
+            }
+    
+    return {
+        "sheet_id": TRAINING_DATA_SHEET_ID,
+        "current_range": TRAINING_DATA_RANGE,
+        "test_results": results,
+        "recommendation": "Use the range that returns 'success' status"
+    }
+
+@app.get("/debug-sheet-metadata")
+async def debug_sheet_metadata():
+    """Get sheet metadata to see available tabs"""
+    try:
+        # Get spreadsheet metadata
+        url = f"https://sheets.googleapis.com/v4/spreadsheets/{TRAINING_DATA_SHEET_ID}?key={GOOGLE_SHEETS_API_KEY}"
+        response = requests.get(url)
+        
+        if response.status_code == 200:
+            data = response.json()
+            sheets = data.get('sheets', [])
+            sheet_info = []
+            
+            for sheet in sheets:
+                properties = sheet.get('properties', {})
+                sheet_info.append({
+                    "title": properties.get('title', 'Unknown'),
+                    "index": properties.get('index', 0),
+                    "sheet_id": properties.get('sheetId', 0),
+                    "row_count": properties.get('gridProperties', {}).get('rowCount', 0),
+                    "column_count": properties.get('gridProperties', {}).get('columnCount', 0)
+                })
+            
+            return {
+                "status": "success",
+                "spreadsheet_title": data.get('properties', {}).get('title', 'Unknown'),
+                "sheets": sheet_info,
+                "current_range": TRAINING_DATA_RANGE,
+                "recommended_range": f"{sheet_info[0]['title']}!A:C" if sheet_info else "A:C"
+            }
+        else:
+            return {
+                "status": "error",
+                "code": response.status_code,
+                "error": response.text
+            }
+            
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
 # New endpoint for action statistics
 @app.get("/stats")
 async def get_stats():
@@ -863,9 +1011,11 @@ async def get_stats():
         "data_structure": {
             "fields": ["comment", "action", "reply"],
             "field_count": 3,
-            "primary_source": "Google Sheets (base_training_data)",
+            "sheet_name": "Environment Variable Controlled",
+            "primary_source": "Google Sheets",
             "fallback_source": "CSV files",
             "sheet_id": TRAINING_DATA_SHEET_ID,
+            "range": TRAINING_DATA_RANGE,
             "ultra_minimal": True
         },
         "supported_actions": {
@@ -878,7 +1028,7 @@ async def get_stats():
         "features": ["Pure AI Classification", "Essential Data Only", "Real-time Learning", "Google Sheets Integration"]
     }
 
-# Debug endpoint to test Google Sheets connection
+# Enhanced debug endpoint to test Google Sheets connection
 @app.get("/debug-sheets-connection")
 async def debug_sheets_connection():
     """Test Google Sheets API connection and permissions"""
@@ -890,7 +1040,7 @@ async def debug_sheets_connection():
                 "setup_required": True
             }
         
-        # Test reading from the sheet
+        # Test reading from the sheet with current configuration
         url = f"https://sheets.googleapis.com/v4/spreadsheets/{TRAINING_DATA_SHEET_ID}/values/{TRAINING_DATA_RANGE}?key={GOOGLE_SHEETS_API_KEY}"
         response = requests.get(url)
         
@@ -901,22 +1051,32 @@ async def debug_sheets_connection():
                 "status": "success",
                 "message": "Google Sheets connection working",
                 "sheet_id": TRAINING_DATA_SHEET_ID,
+                "range": TRAINING_DATA_RANGE,
                 "rows_found": len(values),
                 "headers": values[0] if values else [],
+                "sample_data": values[:3] if values else [],
                 "api_key_configured": True,
-                "sheet_accessible": True
+                "sheet_accessible": True,
+                "environment_variables": {
+                    "TRAINING_DATA_SHEET_ID": bool(os.getenv("TRAINING_DATA_SHEET_ID")),
+                    "TRAINING_DATA_RANGE": bool(os.getenv("TRAINING_DATA_RANGE")),
+                    "GOOGLE_SHEETS_API_KEY": bool(GOOGLE_SHEETS_API_KEY)
+                }
             }
         else:
+            error_data = response.json() if response.headers.get('content-type', '').startswith('application/json') else response.text
             return {
                 "status": "error",
-                "error": f"HTTP {response.status_code}: {response.text}",
+                "error": f"HTTP {response.status_code}: {error_data}",
                 "sheet_id": TRAINING_DATA_SHEET_ID,
+                "range": TRAINING_DATA_RANGE,
                 "api_key_configured": True,
                 "sheet_accessible": False,
                 "troubleshooting": [
                     "Check if sheet is publicly readable",
                     "Verify sheet ID is correct",
-                    "Confirm API key has Sheets API enabled"
+                    "Confirm API key has Sheets API enabled",
+                    "Verify the tab name in TRAINING_DATA_RANGE"
                 ]
             }
             
@@ -925,6 +1085,7 @@ async def debug_sheets_connection():
             "status": "error",
             "error": str(e),
             "sheet_id": TRAINING_DATA_SHEET_ID,
+            "range": TRAINING_DATA_RANGE,
             "api_key_configured": bool(GOOGLE_SHEETS_API_KEY)
         }
 
