@@ -337,11 +337,11 @@ app = FastAPI()
 def read_root():
     return {
         "message": "Lease End AI Assistant - Database Edition",
-        "version": "17.0",
+        "version": "18.0",
         "training_examples": len(TRAINING_DATA),
         "actions": ["respond", "react", "delete", "leave_alone"],
-        "features": ["PostgreSQL Database", "Simple Appends", "No CSV Complexity"],
-        "approach": "Database for everything - fast, simple, reliable",
+        "features": ["PostgreSQL Database", "Auto-Duplicate Prevention", "Facebook Graph API Ready"],
+        "approach": "Database for everything - send all posts, duplicates handled automatically",
         "endpoints": {
             "/process-comment": "Initial comment processing",
             "/process-feedback": "Human feedback processing",
@@ -389,7 +389,7 @@ async def get_fb_posts():
 
 @app.post("/fb-posts/add")
 async def add_fb_post(post: FBPostCreate):
-    """Add new FB post to database - SIMPLE!"""
+    """Add new FB post to database - SIMPLE! (with automatic duplicate handling)"""
     try:
         db = SessionLocal()
         
@@ -411,15 +411,18 @@ async def add_fb_post(post: FBPostCreate):
         return {
             "success": True,
             "message": "FB post added successfully",
-            "post_id": post.post_id
+            "post_id": post.post_id,
+            "status": "new"
         }
         
     except IntegrityError:
         db.rollback()
         db.close()
         return {
-            "success": False,
-            "message": f"Post {post.post_id} already exists (duplicate prevented)"
+            "success": True,
+            "message": f"Post {post.post_id} already exists (duplicate skipped)",
+            "post_id": post.post_id,
+            "status": "duplicate_skipped"
         }
     except Exception as e:
         db.rollback()
