@@ -532,81 +532,9 @@ async def reload_training_data_endpoint():
         raise HTTPException(status_code=500, detail=f"Error reloading training data: {str(e)}")
 
 # Updated AI Processing Endpoints with Flexible Input
-@app.post("/process-comment", response_model=ProcessedComment)
-async def process_comment(request: CommentRequest):
+@app.post("/process-comment")
+async def process_comment(request: Request):
     """Core comment processing using AI classification - FLEXIBLE INPUT"""
-    try:
-        # Extract data using flexible getters
-        comment_text = request.get_comment_text()
-        post_id = request.get_post_id()
-        created_time = request.get_created_time()
-        
-        print(f"🔄 Processing comment: '{comment_text[:50]}...' for post: {post_id}")
-        
-        # Validate we have actual content
-        if not comment_text or comment_text == "No message content":
-            return ProcessedComment(
-                postId=post_id,
-                original_comment="Empty comment",
-                category="neutral",
-                action="delete",
-                reply="",
-                confidence_score=0.0,
-                approved="pending"
-            )
-        
-        # Use AI to classify the comment
-        ai_classification = classify_comment_with_ai(comment_text, post_id)
-        
-        sentiment = ai_classification['sentiment']
-        action = ai_classification['action'].lower()
-        reasoning = ai_classification['reasoning']
-        high_intent = ai_classification['high_intent']
-        
-        # Map actions to our system
-        action_mapping = {
-            'reply': 'respond',
-            'react': 'react', 
-            'delete': 'delete',
-            'ignore': 'leave_alone'
-        }
-        
-        mapped_action = action_mapping.get(action, 'leave_alone')
-        
-        # Generate response only if action is 'respond'
-        reply_text = ""
-        confidence_score = 0.85
-        
-        if mapped_action == 'respond':
-            reply_text = generate_response(comment_text, sentiment, high_intent)
-            confidence_score = 0.9
-        
-        return ProcessedComment(
-            postId=post_id,
-            original_comment=comment_text,
-            category=sentiment.lower(),
-            action=mapped_action,
-            reply=reply_text,
-            confidence_score=confidence_score,
-            approved="pending"
-        )
-        
-    except Exception as e:
-        print(f"❌ Error processing comment: {e}")
-        return ProcessedComment(
-            postId=request.get_post_id() if hasattr(request, 'get_post_id') else "unknown",
-            original_comment=request.get_comment_text() if hasattr(request, 'get_comment_text') else "Error",
-            category="error",
-            action="leave_alone",
-            reply="Thank you for your comment. We appreciate your feedback.",
-            confidence_score=0.0,
-            approved="pending"
-        )
-
-# Alternative simple endpoint that accepts raw JSON
-@app.post("/process-comment-simple")
-async def process_comment_simple(request: Request):
-    """Simple comment processing that accepts any JSON structure"""
     try:
         # Parse JSON from request body like the working feedback endpoint
         request_data = await request.json()
@@ -630,7 +558,7 @@ async def process_comment_simple(request: Request):
         else:
             created_time = str(created_time) if created_time else ""
         
-        print(f"🔄 Simple processing: '{comment_text[:50]}...' for post: {post_id}")
+        print(f"🔄 Processing comment: '{comment_text[:50]}...' for post: {post_id}")
         
         # Validate we have actual content
         if not comment_text or comment_text == "No message content":
@@ -649,6 +577,7 @@ async def process_comment_simple(request: Request):
         
         sentiment = ai_classification['sentiment']
         action = ai_classification['action'].lower()
+        reasoning = ai_classification['reasoning']
         high_intent = ai_classification['high_intent']
         
         # Map actions to our system
@@ -681,13 +610,62 @@ async def process_comment_simple(request: Request):
         }
         
     except Exception as e:
-        print(f"❌ Error in simple processing: {e}")
+        print(f"❌ Error processing comment: {e}")
         return {
             "postId": "unknown",
             "original_comment": "Error processing",
             "category": "error",
             "action": "leave_alone",
             "reply": "Thank you for your comment. We appreciate your feedback.",
+            "confidence_score": 0.0,
+            "approved": "pending",
+            "success": False,
+            "error": str(e)
+        }
+
+# Alternative simple endpoint that accepts raw JSON
+@app.post("/process-comment-backup")
+async def process_comment_backup(request: Request):
+    """Backup comment processing endpoint"""
+    try:
+        # Parse JSON from request body like the working feedback endpoint
+        request_data = await request.json()
+        
+        # Extract data flexibly from any JSON structure with robust handling
+        comment_text = request_data.get('comment') or request_data.get('message') or request_data.get('Message') or "No message content"
+        if comment_text and hasattr(comment_text, 'strip'):
+            comment_text = comment_text.strip()
+        else:
+            comment_text = str(comment_text) if comment_text else "No message content"
+        
+        post_id = request_data.get('postId') or request_data.get('post_id') or request_data.get('POST_ID') or request_data.get('POST ID') or "unknown"
+        if post_id and hasattr(post_id, 'strip'):
+            post_id = post_id.strip()
+        else:
+            post_id = str(post_id) if post_id else "unknown"
+        
+        print(f"🔄 Backup processing: '{comment_text[:50]}...' for post: {post_id}")
+        
+        return {
+            "postId": post_id,
+            "original_comment": comment_text,
+            "category": "neutral",
+            "action": "leave_alone", 
+            "reply": "",
+            "confidence_score": 0.5,
+            "approved": "pending",
+            "success": True,
+            "note": "Backup endpoint - basic processing only"
+        }
+        
+    except Exception as e:
+        print(f"❌ Error in backup processing: {e}")
+        return {
+            "postId": "unknown",
+            "original_comment": "Error processing",
+            "category": "error",
+            "action": "leave_alone",
+            "reply": "",
             "confidence_score": 0.0,
             "approved": "pending",
             "success": False,
