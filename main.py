@@ -21,11 +21,11 @@ FACEBOOK_APP_SECRET = os.getenv("FACEBOOK_APP_SECRET")
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID")
 FACEBOOK_PAGE_TOKEN = os.getenv("FACEBOOK_PAGE_TOKEN")
 
-# GitHub Configuration
+# GitHub Configuration - Only for reading CSV files
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")  # Personal Access Token
 GITHUB_OWNER = os.getenv("GITHUB_OWNER", "dten213")  # Your GitHub username
 GITHUB_REPO = os.getenv("GITHUB_REPO", "dspy-fastapi-api")  # Your repo name
-GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")  # Branch to commit to
+GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")  # Branch to read from
 
 # CSV File Paths
 RESPONSE_DATABASE_CSV = "response_database.csv"
@@ -266,122 +266,52 @@ def read_csv_as_string(file_path):
     except Exception as e:
         print(f"❌ Error reading file: {e}")
         return None
-# CSV Management Functions
+# CSV Management Functions - Read Only
 def read_response_database():
-    """Read all entries from response_database.csv"""
+    """Read training data from GitHub CSV or create empty structure"""
     try:
-        if not os.path.exists(RESPONSE_DATABASE_CSV):
-            # Create file with headers if it doesn't exist
-            with open(RESPONSE_DATABASE_CSV, 'w', newline='', encoding='utf-8') as file:
-                writer = csv.writer(file)
-                writer.writerow(['comment', 'action', 'reply'])
-            return []
+        # Try to download from GitHub first
+        github_content = download_file_from_github(RESPONSE_DATABASE_CSV)
         
-        with open(RESPONSE_DATABASE_CSV, 'r', encoding='utf-8') as file:
-            reader = csv.DictReader(file)
-            return list(reader)
-    except Exception as e:
-        print(f"Error reading response database: {e}")
+        if github_content:
+            # Parse CSV content from GitHub
+            lines = github_content.strip().split('\n')
+            if len(lines) > 1:  # Has header + data
+                reader = csv.DictReader(lines)
+                data = list(reader)
+                print(f"✅ Loaded {len(data)} training examples from GitHub")
+                return data
+        
+        # Return empty list if no data
+        print("📝 No training data found in GitHub, starting with empty dataset")
         return []
-
-def append_response_database(comment, action, reply):
-    """Append a new entry to response_database.csv"""
-    try:
-        # Check if file exists, create with headers if not
-        file_exists = os.path.exists(RESPONSE_DATABASE_CSV)
         
-        with open(RESPONSE_DATABASE_CSV, 'a', newline='', encoding='utf-8') as file:
-            writer = csv.writer(file)
-            
-            # Write headers if file is new
-            if not file_exists:
-                writer.writerow(['comment', 'action', 'reply'])
-                print(f"✅ Created {RESPONSE_DATABASE_CSV} with headers")
-            
-            # Write the new entry
-            writer.writerow([comment, action, reply])
-            print(f"✅ Added entry to {RESPONSE_DATABASE_CSV}: {action}")
-        
-        # Verify the file was written by checking if it exists and has content
-        if os.path.exists(RESPONSE_DATABASE_CSV):
-            with open(RESPONSE_DATABASE_CSV, 'r', encoding='utf-8') as file:
-                lines = file.readlines()
-                print(f"📊 File now has {len(lines)} lines")
-        
-        # Commit to GitHub
-        file_content = read_csv_as_string(RESPONSE_DATABASE_CSV)
-        if file_content:
-            commit_message = f"Add response entry: {action} - {comment[:50]}..."
-            github_success = commit_file_to_github(RESPONSE_DATABASE_CSV, file_content, commit_message)
-            if github_success:
-                print(f"🚀 Committed {RESPONSE_DATABASE_CSV} to GitHub")
-            else:
-                print(f"⚠️ Local file updated but GitHub commit failed")
-        
-        return True
     except Exception as e:
-        print(f"❌ Error appending to response database: {e}")
-        import traceback
-        print(f"Full error: {traceback.format_exc()}")
-        return False
+        print(f"❌ Error reading response database from GitHub: {e}")
+        return []
 
 def read_active_fb_post_ids():
-    """Read all entries from active_fb_post_id.csv"""
+    """Read active FB post IDs from GitHub CSV"""
     try:
-        if not os.path.exists(ACTIVE_FB_POST_ID_CSV):
-            # Create file with headers if it doesn't exist
-            with open(ACTIVE_FB_POST_ID_CSV, 'w', newline='', encoding='utf-8') as file:
-                writer = csv.writer(file)
-                writer.writerow(['Ad account name', 'Campaign name', 'Ad set name', 'Ad name', 'Page ID', 'Post Id', 'Object Story ID'])
-            return []
+        # Try to download from GitHub
+        github_content = download_file_from_github(ACTIVE_FB_POST_ID_CSV)
         
-        with open(ACTIVE_FB_POST_ID_CSV, 'r', encoding='utf-8') as file:
-            reader = csv.DictReader(file)
-            return list(reader)
-    except Exception as e:
-        print(f"Error reading active FB post IDs: {e}")
+        if github_content:
+            # Parse CSV content from GitHub
+            lines = github_content.strip().split('\n')
+            if len(lines) > 1:  # Has header + data
+                reader = csv.DictReader(lines)
+                data = list(reader)
+                print(f"✅ Loaded {len(data)} FB post IDs from GitHub")
+                return data
+        
+        # Return empty list if no data
+        print("📝 No FB post data found in GitHub, starting with empty dataset")
         return []
-
-def append_active_fb_post_id(ad_account_name, campaign_name, ad_set_name, ad_name, page_id, post_id, object_story_id):
-    """Append a new entry to active_fb_post_id.csv"""
-    try:
-        # Check if file exists, create with headers if not
-        file_exists = os.path.exists(ACTIVE_FB_POST_ID_CSV)
         
-        with open(ACTIVE_FB_POST_ID_CSV, 'a', newline='', encoding='utf-8') as file:
-            writer = csv.writer(file)
-            
-            # Write headers if file is new
-            if not file_exists:
-                writer.writerow(['Ad account name', 'Campaign name', 'Ad set name', 'Ad name', 'Page ID', 'Post Id', 'Object Story ID'])
-                print(f"✅ Created {ACTIVE_FB_POST_ID_CSV} with headers")
-            
-            # Write the new entry
-            writer.writerow([ad_account_name, campaign_name, ad_set_name, ad_name, page_id, post_id, object_story_id])
-            print(f"✅ Added entry to {ACTIVE_FB_POST_ID_CSV}: {post_id}")
-        
-        # Verify the file was written by checking if it exists and has content
-        if os.path.exists(ACTIVE_FB_POST_ID_CSV):
-            with open(ACTIVE_FB_POST_ID_CSV, 'r', encoding='utf-8') as file:
-                lines = file.readlines()
-                print(f"📊 File now has {len(lines)} lines")
-        
-        # Commit to GitHub
-        file_content = read_csv_as_string(ACTIVE_FB_POST_ID_CSV)
-        if file_content:
-            commit_message = f"Add FB post: {ad_name[:30]} - Post ID {post_id}"
-            github_success = commit_file_to_github(ACTIVE_FB_POST_ID_CSV, file_content, commit_message)
-            if github_success:
-                print(f"🚀 Committed {ACTIVE_FB_POST_ID_CSV} to GitHub")
-            else:
-                print(f"⚠️ Local file updated but GitHub commit failed")
-        
-        return True
     except Exception as e:
-        print(f"❌ Error appending to active FB post IDs: {e}")
-        import traceback
-        print(f"Full error: {traceback.format_exc()}")
-        return False
+        print(f"❌ Error reading FB post IDs from GitHub: {e}")
+        return []
 
 def load_training_data():
     """Load training examples from response_database.csv"""
@@ -399,7 +329,7 @@ def load_training_data():
 TRAINING_DATA = load_training_data()
 
 def reload_training_data():
-    """Reload training data from all sources"""
+    """Reload training data from GitHub"""
     global TRAINING_DATA
     TRAINING_DATA = load_training_data()
     return len(TRAINING_DATA)
@@ -526,7 +456,7 @@ Generate a helpful, natural response that addresses their comment directly:"""
         print(f"Error generating response: {e}")
         return "Thank you for your comment! We'd be happy to help with any lease buyout questions."
 
-# Pydantic Models
+# Pydantic Models - Removed append models since n8n handles writing
 class CommentRequest(BaseModel):
     comment: str
     postId: str
@@ -553,142 +483,80 @@ class FeedbackRequest(BaseModel):
     class Config:
         extra = "ignore"
 
-class ResponseDatabaseEntry(BaseModel):
-    comment: str
-    action: str
-    reply: str
-
-class ActiveFBPostEntry(BaseModel):
-    ad_account_name: str
-    campaign_name: str
-    ad_set_name: str
-    ad_name: str
-    page_id: str
-    post_id: str
-    object_story_id: str
-
 app = FastAPI()
 
 @app.get("/")
 def read_root():
     return {
         "message": "Lease End AI Assistant - Core AI System",
-        "version": "15.0",
+        "version": "16.0",
         "training_examples": len(TRAINING_DATA),
         "actions": ["respond", "react", "delete", "leave_alone"],
-        "features": ["Pure AI Classification", "Real-time Learning", "GitHub CSV Integration"],
-        "approach": "Core AI functionality - comment processing and feedback learning",
+        "features": ["Pure AI Classification", "GitHub CSV Reading", "n8n Direct CSV Writing"],
+        "approach": "FastAPI for processing, n8n for data management",
         "endpoints": {
             "/process-comment": "Initial comment processing",
             "/process-feedback": "Human feedback processing",
             "/test-feedback": "Debug endpoint for testing n8n integration",
             "/stats": "View training data statistics",
             "/generate-reply": "Backwards compatibility endpoint",
-            "/response-database": "Read response database",
-            "/response-database/append": "Add to response database",
-            "/active-fb-posts": "Read active FB post IDs",
-            "/active-fb-posts/append": "Add to active FB post IDs"
+            "/response-database": "Read response database from GitHub",
+            "/active-fb-posts": "Read active FB post IDs from GitHub",
+            "/reload-training-data": "Refresh training data from GitHub"
         },
         "csv_files": {
             "response_database": {
                 "file": "response_database.csv",
-                "fields": ["comment", "action", "reply"]
+                "fields": ["comment", "action", "reply"],
+                "managed_by": "n8n workflows → GitHub"
             },
             "active_fb_posts": {
-                "file": "active_fb_post_id.csv",
-                "fields": ["Ad account name", "Campaign name", "Ad set name", "Ad name", "Page ID", "Post Id", "Object Story ID"]
+                "file": "active_fb_post_id.csv", 
+                "fields": ["Ad account name", "Campaign name", "Ad set name", "Ad name", "Page ID", "Post Id", "Object Story ID"],
+                "managed_by": "n8n workflows → GitHub"
             }
         },
-        "training_data_system": {
-            "source": "response_database.csv (GitHub synced)",
-            "managed_by": "FastAPI append endpoints + GitHub commits"
-        },
-        "philosophy": "Let Claude do what it does best - understand context and generate responses."
+        "data_flow": "GitHub CSV ← n8n workflows | FastAPI reads from GitHub CSV",
+        "philosophy": "FastAPI for AI processing, n8n for data management, GitHub as single source of truth."
     }
 
-# CSV Database Endpoints
+# Read-Only CSV Database Endpoints
 @app.get("/response-database")
 async def get_response_database():
-    """Get all entries from response_database.csv"""
+    """Get all entries from response_database.csv (GitHub)"""
     try:
         data = read_response_database()
         return {
             "success": True,
             "count": len(data),
-            "data": data
+            "data": data,
+            "source": "GitHub CSV"
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading response database: {str(e)}")
 
-@app.post("/response-database/append")
-async def append_to_response_database(entry: ResponseDatabaseEntry):
-    """Append new entry to response_database.csv"""
-    try:
-        success = append_response_database(entry.comment, entry.action, entry.reply)
-        if success:
-            # Auto-reload training data after adding new response
-            new_count = reload_training_data()
-            return {
-                "success": True,
-                "message": "Entry added to response database",
-                "entry": entry.dict(),
-                "training_data_reloaded": True,
-                "new_training_count": new_count
-            }
-        else:
-            raise HTTPException(status_code=500, detail="Failed to append to response database")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error appending to response database: {str(e)}")
-
 @app.get("/active-fb-posts")
 async def get_active_fb_posts():
-    """Get all entries from active_fb_post_id.csv"""
+    """Get all entries from active_fb_post_id.csv (GitHub)"""
     try:
         data = read_active_fb_post_ids()
         return {
             "success": True,
             "count": len(data),
-            "data": data
+            "data": data,
+            "source": "GitHub CSV"
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading active FB post IDs: {str(e)}")
 
-@app.post("/active-fb-posts/append")
-async def append_to_active_fb_posts(entry: ActiveFBPostEntry):
-    """Append new entry to active_fb_post_id.csv"""
-    try:
-        success = append_active_fb_post_id(
-            entry.ad_account_name,
-            entry.campaign_name,
-            entry.ad_set_name,
-            entry.ad_name,
-            entry.page_id,
-            entry.post_id,
-            entry.object_story_id
-        )
-        if success:
-            # Auto-reload training data after adding new posts
-            new_count = reload_training_data()
-            return {
-                "success": True,
-                "message": "Entry added to active FB posts",
-                "entry": entry.dict(),
-                "training_data_reloaded": True,
-                "new_training_count": new_count
-            }
-        else:
-            raise HTTPException(status_code=500, detail="Failed to append to active FB posts")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error appending to active FB posts: {str(e)}")
-
 @app.post("/reload-training-data")
 async def reload_training_data_endpoint():
-    """Manually reload training data from all sources"""
+    """Manually reload training data from GitHub"""
     try:
         new_count = reload_training_data()
         return {
             "success": True,
-            "message": "Training data reloaded successfully",
+            "message": "Training data reloaded from GitHub",
             "total_examples": new_count,
             "timestamp": datetime.now().isoformat()
         }
@@ -973,7 +841,8 @@ async def get_stats():
         "data_structure": {
             "fields": ["comment", "action", "reply"],
             "field_count": 3,
-            "source": "response_database.csv (GitHub synced)"
+            "source": "response_database.csv (GitHub)",
+            "managed_by": "n8n workflows"
         },
         "supported_actions": {
             "respond": "Generate helpful response (with CTA for high-intent)",
