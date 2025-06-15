@@ -290,6 +290,12 @@ def load_training_data():
 # Global training data
 TRAINING_DATA = load_training_data()
 
+def reload_training_data():
+    """Reload training data from all sources"""
+    global TRAINING_DATA
+    TRAINING_DATA = load_training_data()
+    return len(TRAINING_DATA)
+
 # AI Classification
 def classify_comment_with_ai(comment, postId=""):
     """Use Claude AI to classify comment with business logic"""
@@ -515,10 +521,14 @@ async def append_to_response_database(entry: ResponseDatabaseEntry):
     try:
         success = append_response_database(entry.comment, entry.action, entry.reply)
         if success:
+            # Auto-reload training data after adding new response
+            new_count = reload_training_data()
             return {
                 "success": True,
                 "message": "Entry added to response database",
-                "entry": entry.dict()
+                "entry": entry.dict(),
+                "training_data_reloaded": True,
+                "new_training_count": new_count
             }
         else:
             raise HTTPException(status_code=500, detail="Failed to append to response database")
@@ -552,15 +562,33 @@ async def append_to_active_fb_posts(entry: ActiveFBPostEntry):
             entry.object_story_id
         )
         if success:
+            # Auto-reload training data after adding new posts
+            new_count = reload_training_data()
             return {
                 "success": True,
                 "message": "Entry added to active FB posts",
-                "entry": entry.dict()
+                "entry": entry.dict(),
+                "training_data_reloaded": True,
+                "new_training_count": new_count
             }
         else:
             raise HTTPException(status_code=500, detail="Failed to append to active FB posts")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error appending to active FB posts: {str(e)}")
+
+@app.post("/reload-training-data")
+async def reload_training_data_endpoint():
+    """Manually reload training data from all sources"""
+    try:
+        new_count = reload_training_data()
+        return {
+            "success": True,
+            "message": "Training data reloaded successfully",
+            "total_examples": new_count,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reloading training data: {str(e)}")
 
 # Original Endpoints (unchanged)
 @app.post("/process-comment", response_model=ProcessedComment)
