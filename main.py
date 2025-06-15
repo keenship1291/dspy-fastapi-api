@@ -740,6 +740,97 @@ async def migrate_from_github():
     except Exception as e:
         return {"error": f"Migration failed: {str(e)}"}
 
+@app.post("/deduplicate-posts")
+async def deduplicate_posts():
+    """Remove duplicate posts, keeping only one per Object Story ID"""
+    try:
+        db = SessionLocal()
+        
+        # Get all posts grouped by object_story_id
+        from sqlalchemy import func
+        
+        # Find duplicate object_story_ids
+        duplicate_groups = db.query(
+            FBPost.object_story_id,
+            func.count(FBPost.id).label('count'),
+            func.min(FBPost.id).label('keep_id')
+        ).group_by(FBPost.object_story_id).having(func.count(FBPost.id) > 1).all()
+        
+        total_duplicates_removed = 0
+        
+        for group in duplicate_groups:
+            object_story_id = group.object_story_id
+            keep_id = group.keep_id
+            duplicate_count = group.count - 1  # -1 because we keep one
+            
+            # Delete all duplicates except the one we want to keep
+            deleted = db.query(FBPost).filter(
+                FBPost.object_story_id == object_story_id,
+                FBPost.id != keep_id
+            ).delete()
+            
+            total_duplicates_removed += deleted
+            
+            print(f"Removed {deleted} duplicates for Object Story ID: {object_story_id}")
+        
+        db.commit()
+        
+        # Get final count
+        remaining_count = db.query(FBPost).count()
+        db.close()
+        
+        return {
+            "success": True,
+            "message": "Deduplication completed",
+            "duplicates_removed": total_duplicates_removed,
+            "remaining_posts": remaining_count,
+            "duplicate_groups_processed": len(duplicate_groups)
+        }
+        
+    except Exception as e:
+        db.rollback()
+        db.close()
+        return {"error": f"Deduplication failed: {str(e)}"}
+
+@app.get("/duplicate-stats")
+async def get_duplicate_stats():
+    """Check how many duplicates exist based on Object Story ID"""
+    try:
+        db = SessionLocal()
+        
+        from sqlalchemy import func
+        
+        # Get duplicate statistics
+        total_posts = db.query(FBPost).count()
+        
+        duplicate_groups = db.query(
+            FBPost.object_story_id,
+            func.count(FBPost.id).label('count')
+        ).group_by(FBPost.object_story_id).having(func.count(FBPost.id) > 1).all()
+        
+        total_duplicates = sum(group.count - 1 for group in duplicate_groups)
+        unique_posts = total_posts - total_duplicates
+        
+        db.close()
+        
+        return {
+            "success": True,
+            "total_posts": total_posts,
+            "unique_posts": unique_posts,
+            "duplicate_posts": total_duplicates,
+            "duplicate_groups": len(duplicate_groups),
+            "duplicate_details": [
+                {
+                    "object_story_id": group.object_story_id,
+                    "duplicate_count": group.count
+                }
+                for group in duplicate_groups[:10]  # Show first 10 examples
+            ]
+        }
+        
+    except Exception as e:
+        return {"error": f"Failed to get duplicate stats: {str(e)}"}
+
 @app.post("/migrate-responses-from-github")
 async def migrate_responses_from_github():
     """One-time migration of response data from GitHub CSV to database"""
