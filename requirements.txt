@@ -2,3 +2,5 @@ fastapi
 uvicorn
 dspy-ai
 anthropic
+psycopg2-binary==2.9.7
+sqlalchemy==2.0.21
