@@ -132,13 +132,23 @@ def append_response_database(comment, action, reply):
             # Write headers if file is new
             if not file_exists:
                 writer.writerow(['comment', 'action', 'reply'])
+                print(f"✅ Created {RESPONSE_DATABASE_CSV} with headers")
             
             # Write the new entry
             writer.writerow([comment, action, reply])
+            print(f"✅ Added entry to {RESPONSE_DATABASE_CSV}: {action}")
+        
+        # Verify the file was written by checking if it exists and has content
+        if os.path.exists(RESPONSE_DATABASE_CSV):
+            with open(RESPONSE_DATABASE_CSV, 'r', encoding='utf-8') as file:
+                lines = file.readlines()
+                print(f"📊 File now has {len(lines)} lines")
         
         return True
     except Exception as e:
-        print(f"Error appending to response database: {e}")
+        print(f"❌ Error appending to response database: {e}")
+        import traceback
+        print(f"Full error: {traceback.format_exc()}")
         return False
 
 def read_active_fb_post_ids():
@@ -170,13 +180,23 @@ def append_active_fb_post_id(ad_account_name, campaign_name, ad_set_name, ad_nam
             # Write headers if file is new
             if not file_exists:
                 writer.writerow(['Ad account name', 'Campaign name', 'Ad set name', 'Ad name', 'Page ID', 'Post Id', 'Object Story ID'])
+                print(f"✅ Created {ACTIVE_FB_POST_ID_CSV} with headers")
             
             # Write the new entry
             writer.writerow([ad_account_name, campaign_name, ad_set_name, ad_name, page_id, post_id, object_story_id])
+            print(f"✅ Added entry to {ACTIVE_FB_POST_ID_CSV}: {post_id}")
+        
+        # Verify the file was written by checking if it exists and has content
+        if os.path.exists(ACTIVE_FB_POST_ID_CSV):
+            with open(ACTIVE_FB_POST_ID_CSV, 'r', encoding='utf-8') as file:
+                lines = file.readlines()
+                print(f"📊 File now has {len(lines)} lines")
         
         return True
     except Exception as e:
-        print(f"Error appending to active FB post IDs: {e}")
+        print(f"❌ Error appending to active FB post IDs: {e}")
+        import traceback
+        print(f"Full error: {traceback.format_exc()}")
         return False
 
 # Google Sheets Integration Functions
