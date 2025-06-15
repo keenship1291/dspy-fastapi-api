@@ -268,49 +268,45 @@ def read_csv_as_string(file_path):
         return None
 # CSV Management Functions - Read Only
 def read_response_database():
-    """Read training data from GitHub CSV or create empty structure"""
+    """Read training data from local CSV file"""
     try:
-        # Try to download from GitHub first
-        github_content = download_file_from_github(RESPONSE_DATABASE_CSV)
+        if not os.path.exists(RESPONSE_DATABASE_CSV):
+            # Create file with headers if it doesn't exist
+            with open(RESPONSE_DATABASE_CSV, 'w', newline='', encoding='utf-8') as file:
+                writer = csv.writer(file)
+                writer.writerow(['comment', 'action', 'reply'])
+            print(f"📝 Created new {RESPONSE_DATABASE_CSV} with headers")
+            return []
         
-        if github_content:
-            # Parse CSV content from GitHub
-            lines = github_content.strip().split('\n')
-            if len(lines) > 1:  # Has header + data
-                reader = csv.DictReader(lines)
-                data = list(reader)
-                print(f"✅ Loaded {len(data)} training examples from GitHub")
-                return data
-        
-        # Return empty list if no data
-        print("📝 No training data found in GitHub, starting with empty dataset")
-        return []
+        with open(RESPONSE_DATABASE_CSV, 'r', encoding='utf-8') as file:
+            reader = csv.DictReader(file)
+            data = list(reader)
+            print(f"✅ Loaded {len(data)} training examples from local CSV")
+            return data
         
     except Exception as e:
-        print(f"❌ Error reading response database from GitHub: {e}")
+        print(f"❌ Error reading response database from local CSV: {e}")
         return []
 
 def read_active_fb_post_ids():
-    """Read active FB post IDs from GitHub CSV"""
+    """Read active FB post IDs from local CSV file"""
     try:
-        # Try to download from GitHub
-        github_content = download_file_from_github(ACTIVE_FB_POST_ID_CSV)
+        if not os.path.exists(ACTIVE_FB_POST_ID_CSV):
+            # Create file with headers if it doesn't exist
+            with open(ACTIVE_FB_POST_ID_CSV, 'w', newline='', encoding='utf-8') as file:
+                writer = csv.writer(file)
+                writer.writerow(['Ad account name', 'Campaign name', 'Ad set name', 'Ad name', 'Page ID', 'Post Id', 'Object Story ID'])
+            print(f"📝 Created new {ACTIVE_FB_POST_ID_CSV} with headers")
+            return []
         
-        if github_content:
-            # Parse CSV content from GitHub
-            lines = github_content.strip().split('\n')
-            if len(lines) > 1:  # Has header + data
-                reader = csv.DictReader(lines)
-                data = list(reader)
-                print(f"✅ Loaded {len(data)} FB post IDs from GitHub")
-                return data
-        
-        # Return empty list if no data
-        print("📝 No FB post data found in GitHub, starting with empty dataset")
-        return []
+        with open(ACTIVE_FB_POST_ID_CSV, 'r', encoding='utf-8') as file:
+            reader = csv.DictReader(file)
+            data = list(reader)
+            print(f"✅ Loaded {len(data)} FB post IDs from local CSV")
+            return data
         
     except Exception as e:
-        print(f"❌ Error reading FB post IDs from GitHub: {e}")
+        print(f"❌ Error reading FB post IDs from local CSV: {e}")
         return []
 
 def load_training_data():
@@ -530,7 +526,7 @@ async def get_response_database():
             "success": True,
             "count": len(data),
             "data": data,
-            "source": "GitHub CSV"
+            "source": "Local CSV"
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading response database: {str(e)}")
@@ -544,7 +540,7 @@ async def get_active_fb_posts():
             "success": True,
             "count": len(data),
             "data": data,
-            "source": "GitHub CSV"
+            "source": "Local CSV"
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading active FB post IDs: {str(e)}")
