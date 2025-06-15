@@ -290,12 +290,46 @@ Generate a helpful, natural response that addresses their comment directly:"""
         print(f"Error generating response: {e}")
         return "Thank you for your comment! We'd be happy to help with any lease buyout questions."
 
-# Pydantic Models
+# Updated Pydantic Models - More Flexible
 class CommentRequest(BaseModel):
-    comment: str
+    # Primary fields
+    comment: Optional[str] = None
+    message: Optional[str] = None  # Accept both comment and message
     postId: str
-    created_time: str = ""
-    memory_context: str = ""
+    created_time: Optional[str] = ""
+    
+    # Optional fields that might come from n8n
+    post_id: Optional[str] = None  # Alternative field name
+    POST_ID: Optional[str] = None  # Another alternative
+    created_Time: Optional[str] = None  # Alternative capitalization
+    
+    class Config:
+        extra = "ignore"  # Ignore any extra fields from n8n
+    
+    def get_comment_text(self) -> str:
+        """Get the comment text from any available field"""
+        return (
+            self.comment or 
+            self.message or 
+            "No message content"
+        ).strip()
+    
+    def get_post_id(self) -> str:
+        """Get the post ID from any available field"""
+        return (
+            self.postId or 
+            self.post_id or 
+            self.POST_ID or 
+            "unknown"
+        ).strip()
+    
+    def get_created_time(self) -> str:
+        """Get the created time from any available field"""
+        return (
+            self.created_time or 
+            self.created_Time or 
+            ""
+        ).strip()
 
 class ProcessedComment(BaseModel):
     postId: str
@@ -337,13 +371,14 @@ app = FastAPI()
 def read_root():
     return {
         "message": "Lease End AI Assistant - Database Edition",
-        "version": "18.0",
+        "version": "19.0",
         "training_examples": len(TRAINING_DATA),
         "actions": ["respond", "react", "delete", "leave_alone"],
-        "features": ["PostgreSQL Database", "Auto-Duplicate Prevention", "Facebook Graph API Ready"],
+        "features": ["PostgreSQL Database", "Auto-Duplicate Prevention", "Facebook Graph API Ready", "Flexible Input Handling"],
         "approach": "Database for everything - send all posts, duplicates handled automatically",
         "endpoints": {
-            "/process-comment": "Initial comment processing",
+            "/process-comment": "Initial comment processing (strict validation)",
+            "/process-comment-simple": "Simple comment processing (flexible JSON)",
             "/process-feedback": "Human feedback processing",
             "/fb-posts": "Get all FB posts",
             "/fb-posts/add": "Add new FB post (simple!)",
@@ -496,13 +531,32 @@ async def reload_training_data_endpoint():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reloading training data: {str(e)}")
 
-# Original AI Processing Endpoints (unchanged)
+# Updated AI Processing Endpoints with Flexible Input
 @app.post("/process-comment", response_model=ProcessedComment)
 async def process_comment(request: CommentRequest):
-    """Core comment processing using AI classification"""
+    """Core comment processing using AI classification - FLEXIBLE INPUT"""
     try:
+        # Extract data using flexible getters
+        comment_text = request.get_comment_text()
+        post_id = request.get_post_id()
+        created_time = request.get_created_time()
+        
+        print(f"🔄 Processing comment: '{comment_text[:50]}...' for post: {post_id}")
+        
+        # Validate we have actual content
+        if not comment_text or comment_text == "No message content":
+            return ProcessedComment(
+                postId=post_id,
+                original_comment="Empty comment",
+                category="neutral",
+                action="delete",
+                reply="",
+                confidence_score=0.0,
+                approved="pending"
+            )
+        
         # Use AI to classify the comment
-        ai_classification = classify_comment_with_ai(request.comment, request.postId)
+        ai_classification = classify_comment_with_ai(comment_text, post_id)
         
         sentiment = ai_classification['sentiment']
         action = ai_classification['action'].lower()
@@ -524,12 +578,12 @@ async def process_comment(request: CommentRequest):
         confidence_score = 0.85
         
         if mapped_action == 'respond':
-            reply_text = generate_response(request.comment, sentiment, high_intent)
+            reply_text = generate_response(comment_text, sentiment, high_intent)
             confidence_score = 0.9
         
         return ProcessedComment(
-            postId=request.postId,
-            original_comment=request.comment,
+            postId=post_id,
+            original_comment=comment_text,
             category=sentiment.lower(),
             action=mapped_action,
             reply=reply_text,
@@ -538,16 +592,108 @@ async def process_comment(request: CommentRequest):
         )
         
     except Exception as e:
-        print(f"Error processing comment: {e}")
+        print(f"❌ Error processing comment: {e}")
         return ProcessedComment(
-            postId=request.postId,
-            original_comment=request.comment,
+            postId=request.get_post_id() if hasattr(request, 'get_post_id') else "unknown",
+            original_comment=request.get_comment_text() if hasattr(request, 'get_comment_text') else "Error",
             category="error",
             action="leave_alone",
             reply="Thank you for your comment. We appreciate your feedback.",
             confidence_score=0.0,
             approved="pending"
         )
+
+# Alternative simple endpoint that accepts raw JSON
+@app.post("/process-comment-simple")
+async def process_comment_simple(request: dict):
+    """Simple comment processing that accepts any JSON structure"""
+    try:
+        # Extract data flexibly from any JSON structure
+        comment_text = (
+            request.get('comment') or 
+            request.get('message') or 
+            request.get('Message') or
+            "No message content"
+        ).strip()
+        
+        post_id = (
+            request.get('postId') or 
+            request.get('post_id') or 
+            request.get('POST_ID') or
+            request.get('POST ID') or
+            "unknown"
+        ).strip()
+        
+        created_time = (
+            request.get('created_time') or 
+            request.get('created_Time') or
+            request.get('Created Time') or
+            ""
+        ).strip()
+        
+        print(f"🔄 Simple processing: '{comment_text[:50]}...' for post: {post_id}")
+        
+        # Validate we have actual content
+        if not comment_text or comment_text == "No message content":
+            return {
+                "postId": post_id,
+                "original_comment": "Empty comment",
+                "category": "neutral",
+                "action": "delete",
+                "reply": "",
+                "confidence_score": 0.0,
+                "approved": "pending"
+            }
+        
+        # Use AI to classify the comment
+        ai_classification = classify_comment_with_ai(comment_text, post_id)
+        
+        sentiment = ai_classification['sentiment']
+        action = ai_classification['action'].lower()
+        high_intent = ai_classification['high_intent']
+        
+        # Map actions to our system
+        action_mapping = {
+            'reply': 'respond',
+            'react': 'react', 
+            'delete': 'delete',
+            'ignore': 'leave_alone'
+        }
+        
+        mapped_action = action_mapping.get(action, 'leave_alone')
+        
+        # Generate response only if action is 'respond'
+        reply_text = ""
+        confidence_score = 0.85
+        
+        if mapped_action == 'respond':
+            reply_text = generate_response(comment_text, sentiment, high_intent)
+            confidence_score = 0.9
+        
+        return {
+            "postId": post_id,
+            "original_comment": comment_text,
+            "category": sentiment.lower(),
+            "action": mapped_action,
+            "reply": reply_text,
+            "confidence_score": confidence_score,
+            "approved": "pending",
+            "success": True
+        }
+        
+    except Exception as e:
+        print(f"❌ Error in simple processing: {e}")
+        return {
+            "postId": "unknown",
+            "original_comment": "Error processing",
+            "category": "error",
+            "action": "leave_alone",
+            "reply": "Thank you for your comment. We appreciate your feedback.",
+            "confidence_score": 0.0,
+            "approved": "pending",
+            "success": False,
+            "error": str(e)
+        }
 
 @app.post("/process-feedback")
 async def process_feedback(request: FeedbackRequest):
@@ -899,6 +1045,8 @@ async def migrate_responses_from_github():
         
     except Exception as e:
         return {"error": f"Response migration failed: {str(e)}"}
+
+@app.get("/stats")
 async def get_stats():
     """Get training data statistics"""
     action_counts = {}
