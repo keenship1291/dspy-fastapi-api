@@ -49,6 +49,7 @@ class ResponseEntry(Base):
     comment = Column(Text)
     action = Column(String, index=True)
     reply = Column(Text)
+    reasoning = Column(Text)  # NEW FIELD
     created_at = Column(DateTime, default=datetime.utcnow)
 
 # Create tables
@@ -150,7 +151,8 @@ def load_training_data():
             training_data.append({
                 'comment': response.comment,
                 'action': response.action,
-                'reply': response.reply
+                'reply': response.reply,
+                'reasoning': getattr(response, 'reasoning', '')  # Handle existing records without reasoning
             })
         
         print(f"✅ Loaded {len(training_data)} training examples from database")
@@ -436,6 +438,7 @@ class ResponseCreate(BaseModel):
     comment: str
     action: str
     reply: str
+    reasoning: Optional[str] = ""  # NEW FIELD
 
 app = FastAPI()
 
@@ -567,13 +570,66 @@ async def get_responses():
                 {
                     "comment": resp.comment,
                     "action": resp.action,
-                    "reply": resp.reply
+                    "reply": resp.reply,
+                    "reasoning": resp.reasoning  # NEW FIELD
                 }
                 for resp in responses
             ]
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.post("/approve-response")
+async def approve_response(request: Request):
+    """Save approved response to training data"""
+    try:
+        request_data = await request.json()
+        
+        comment = request_data.get('original_comment', '').strip()
+        action = request_data.get('action', '').strip() 
+        reply = request_data.get('reply', '').strip()
+        reasoning = request_data.get('reasoning', '').strip()
+        
+        if not comment or not action:
+            return {
+                "success": False,
+                "error": "Missing required fields: original_comment and action"
+            }
+        
+        # Add to training data database
+        db = SessionLocal()
+        
+        db_response = ResponseEntry(
+            comment=comment,
+            action=action,
+            reply=reply,
+            reasoning=reasoning
+        )
+        
+        db.add(db_response)
+        db.commit()
+        db.close()
+        
+        # Reload training data
+        new_count = reload_training_data()
+        
+        return {
+            "success": True,
+            "message": "Response approved and added to training data",
+            "training_count": new_count,
+            "approved_data": {
+                "comment": comment,
+                "action": action,
+                "reply": reply,
+                "reasoning": reasoning
+            }
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Failed to approve response: {str(e)}"
+        }
 
 @app.post("/responses/add")
 async def add_response(response: ResponseCreate):
@@ -584,7 +640,8 @@ async def add_response(response: ResponseCreate):
         db_response = ResponseEntry(
             comment=response.comment,
             action=response.action,
-            reply=response.reply
+            reply=response.reply,
+            reasoning=response.reasoning  # NEW FIELD
         )
         
         db.add(db_response)
