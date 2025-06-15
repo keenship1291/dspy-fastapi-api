@@ -371,19 +371,20 @@ app = FastAPI()
 def read_root():
     return {
         "message": "Lease End AI Assistant - Database Edition",
-        "version": "19.0",
+        "version": "20.0",
         "training_examples": len(TRAINING_DATA),
         "actions": ["respond", "react", "delete", "leave_alone"],
         "features": ["PostgreSQL Database", "Auto-Duplicate Prevention", "Facebook Graph API Ready", "Flexible Input Handling"],
-        "approach": "Database for everything - send all posts, duplicates handled automatically",
+        "approach": "Pure database workflow - no CSV files or GitHub dependencies",
         "endpoints": {
-            "/process-comment": "Initial comment processing (strict validation)",
-            "/process-comment-simple": "Simple comment processing (flexible JSON)",
+            "/process-comment": "Main comment processing (flexible JSON)",
+            "/process-comment-backup": "Backup comment processing endpoint",
             "/process-feedback": "Human feedback processing",
-            "/fb-posts": "Get all FB posts",
-            "/fb-posts/add": "Add new FB post (simple!)",
-            "/responses": "Get all response data",
-            "/responses/add": "Add new response data",
+            "/fb-posts": "Get all FB posts from database",
+            "/fb-posts/add": "Add new FB post (auto-duplicate handling)",
+            "/responses": "Get all response training data",
+            "/responses/add": "Add new response training data",
+            "/reload-training-data": "Reload training data from database",
             "/stats": "View training data statistics"
         },
         "database": {
@@ -391,7 +392,7 @@ def read_root():
             "tables": ["fb_posts", "responses"],
             "benefits": ["Simple appends", "No duplicates", "Fast queries", "Concurrent writes"]
         },
-        "philosophy": "Databases for data, not CSV files!"
+        "philosophy": "Database-first architecture - clean, fast, reliable!"
     }
 
 # Database Endpoints - Super Simple!
@@ -551,6 +552,12 @@ async def process_comment(request: Request):
             post_id = post_id.strip()
         else:
             post_id = str(post_id) if post_id else "unknown"
+        
+        created_time = request_data.get('created_time') or request_data.get('created_Time') or request_data.get('Created Time') or ""
+        if created_time and hasattr(created_time, 'strip'):
+            created_time = created_time.strip()
+        else:
+            created_time = str(created_time) if created_time else ""
         
         created_time = request_data.get('created_time') or request_data.get('created_Time') or request_data.get('Created Time') or ""
         if created_time and hasattr(created_time, 'strip'):
@@ -795,233 +802,6 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
             "error": str(e),
             "success": False
         }
-
-@app.post("/migrate-from-github")
-async def migrate_from_github():
-    """One-time migration from GitHub CSV to database"""
-    try:
-        import requests
-        import csv
-        import base64
-        
-        # GitHub file URL (you might need to add GITHUB_TOKEN back temporarily)
-        github_token = os.getenv("GITHUB_TOKEN")
-        if not github_token:
-            return {"error": "Need GITHUB_TOKEN environment variable for migration"}
-        
-        headers = {
-            'Authorization': f'token {github_token}',
-            'Accept': 'application/vnd.github.v3+json'
-        }
-        
-        # Get CSV from GitHub
-        url = "https://api.github.com/repos/dten111213/dspy-fastapi-api/contents/active_fb_post_id.csv"
-        response = requests.get(url, headers=headers)
-        
-        if response.status_code != 200:
-            return {"error": f"Failed to fetch GitHub CSV: {response.status_code}"}
-        
-        # Decode CSV content
-        csv_content = base64.b64decode(response.json()['content']).decode('utf-8')
-        
-        # Parse CSV
-        csv_reader = csv.DictReader(csv_content.strip().split('\n'))
-        
-        db = SessionLocal()
-        migrated_count = 0
-        duplicate_count = 0
-        
-        for row in csv_reader:
-            try:
-                # Create new post
-                db_post = FBPost(
-                    ad_account_name=row.get('Ad account name', ''),
-                    campaign_name=row.get('Campaign name', ''),
-                    ad_set_name=row.get('Ad set name', ''),
-                    ad_name=row.get('Ad name', ''),
-                    page_id=row.get('Page ID', ''),
-                    post_id=row.get('Post Id', ''),
-                    object_story_id=row.get('Object Story ID', '')
-                )
-                
-                db.add(db_post)
-                db.commit()
-                migrated_count += 1
-                
-            except IntegrityError:
-                db.rollback()
-                duplicate_count += 1
-                continue
-        
-        db.close()
-        
-        return {
-            "success": True,
-            "message": "Migration completed",
-            "migrated_count": migrated_count,
-            "duplicate_count": duplicate_count,
-            "total_processed": migrated_count + duplicate_count
-        }
-        
-    except Exception as e:
-        return {"error": f"Migration failed: {str(e)}"}
-
-@app.post("/deduplicate-posts")
-async def deduplicate_posts():
-    """Remove duplicate posts, keeping only one per Object Story ID"""
-    try:
-        db = SessionLocal()
-        
-        # Get all posts grouped by object_story_id
-        from sqlalchemy import func
-        
-        # Find duplicate object_story_ids
-        duplicate_groups = db.query(
-            FBPost.object_story_id,
-            func.count(FBPost.id).label('count'),
-            func.min(FBPost.id).label('keep_id')
-        ).group_by(FBPost.object_story_id).having(func.count(FBPost.id) > 1).all()
-        
-        total_duplicates_removed = 0
-        
-        for group in duplicate_groups:
-            object_story_id = group.object_story_id
-            keep_id = group.keep_id
-            duplicate_count = group.count - 1  # -1 because we keep one
-            
-            # Delete all duplicates except the one we want to keep
-            deleted = db.query(FBPost).filter(
-                FBPost.object_story_id == object_story_id,
-                FBPost.id != keep_id
-            ).delete()
-            
-            total_duplicates_removed += deleted
-            
-            print(f"Removed {deleted} duplicates for Object Story ID: {object_story_id}")
-        
-        db.commit()
-        
-        # Get final count
-        remaining_count = db.query(FBPost).count()
-        db.close()
-        
-        return {
-            "success": True,
-            "message": "Deduplication completed",
-            "duplicates_removed": total_duplicates_removed,
-            "remaining_posts": remaining_count,
-            "duplicate_groups_processed": len(duplicate_groups)
-        }
-        
-    except Exception as e:
-        db.rollback()
-        db.close()
-        return {"error": f"Deduplication failed: {str(e)}"}
-
-@app.get("/duplicate-stats")
-async def get_duplicate_stats():
-    """Check how many duplicates exist based on Object Story ID"""
-    try:
-        db = SessionLocal()
-        
-        from sqlalchemy import func
-        
-        # Get duplicate statistics
-        total_posts = db.query(FBPost).count()
-        
-        duplicate_groups = db.query(
-            FBPost.object_story_id,
-            func.count(FBPost.id).label('count')
-        ).group_by(FBPost.object_story_id).having(func.count(FBPost.id) > 1).all()
-        
-        total_duplicates = sum(group.count - 1 for group in duplicate_groups)
-        unique_posts = total_posts - total_duplicates
-        
-        db.close()
-        
-        return {
-            "success": True,
-            "total_posts": total_posts,
-            "unique_posts": unique_posts,
-            "duplicate_posts": total_duplicates,
-            "duplicate_groups": len(duplicate_groups),
-            "duplicate_details": [
-                {
-                    "object_story_id": group.object_story_id,
-                    "duplicate_count": group.count
-                }
-                for group in duplicate_groups[:10]  # Show first 10 examples
-            ]
-        }
-        
-    except Exception as e:
-        return {"error": f"Failed to get duplicate stats: {str(e)}"}
-
-@app.post("/migrate-responses-from-github")
-async def migrate_responses_from_github():
-    """One-time migration of response data from GitHub CSV to database"""
-    try:
-        import requests
-        import csv
-        import base64
-        
-        github_token = os.getenv("GITHUB_TOKEN")
-        if not github_token:
-            return {"error": "Need GITHUB_TOKEN environment variable for migration"}
-        
-        headers = {
-            'Authorization': f'token {github_token}',
-            'Accept': 'application/vnd.github.v3+json'
-        }
-        
-        # Get CSV from GitHub
-        url = "https://api.github.com/repos/dten111213/dspy-fastapi-api/contents/response_database.csv"
-        response = requests.get(url, headers=headers)
-        
-        if response.status_code != 200:
-            return {"error": f"Failed to fetch GitHub CSV: {response.status_code}"}
-        
-        # Decode CSV content
-        csv_content = base64.b64decode(response.json()['content']).decode('utf-8')
-        
-        # Parse CSV
-        csv_reader = csv.DictReader(csv_content.strip().split('\n'))
-        
-        db = SessionLocal()
-        migrated_count = 0
-        
-        for row in csv_reader:
-            try:
-                # Create new response
-                db_response = ResponseEntry(
-                    comment=row.get('comment', ''),
-                    action=row.get('action', ''),
-                    reply=row.get('reply', '')
-                )
-                
-                db.add(db_response)
-                db.commit()
-                migrated_count += 1
-                
-            except Exception as e:
-                db.rollback()
-                print(f"Error migrating response: {e}")
-                continue
-        
-        db.close()
-        
-        # Reload training data after migration
-        new_count = reload_training_data()
-        
-        return {
-            "success": True,
-            "message": "Response migration completed",
-            "migrated_count": migrated_count,
-            "new_training_count": new_count
-        }
-        
-    except Exception as e:
-        return {"error": f"Response migration failed: {str(e)}"}
 
 @app.get("/stats")
 async def get_stats():
