@@ -754,4 +754,64 @@ async def test_feedback(request: dict):
     }
 
 @app.post("/generate-reply")
-async def generate_reply(request:
+async def generate_reply(request: Request):
+    """Simple reply generation for backwards compatibility"""
+    data = await request.json()
+    comment = data.get("comment", "")
+    postId = data.get("postId", "")
+
+    try:
+        ai_classification = classify_comment_with_ai(comment, postId)
+        
+        if ai_classification['action'].lower() == 'reply':
+            reply = generate_response(comment, ai_classification['sentiment'], ai_classification['high_intent'])
+        else:
+            reply = "Thank you for your comment."
+        
+        return {
+            "postId": postId,
+            "reply": reply,
+            "action": ai_classification['action'].lower()
+        }
+        
+    except Exception as e:
+        return {
+            "postId": postId,
+            "reply": "Thank you for your comment. We appreciate your feedback.",
+            "action": "ignore",
+            "error": str(e)
+        }
+
+@app.get("/stats")
+async def get_stats():
+    """Get training data statistics"""
+    action_counts = {}
+    
+    for example in TRAINING_DATA:
+        action = example.get('action', 'unknown')
+        action_counts[action] = action_counts.get(action, 0) + 1
+    
+    return {
+        "total_training_examples": len(TRAINING_DATA),
+        "action_distribution": action_counts,
+        "data_structure": {
+            "fields": ["comment", "action", "reply"],
+            "field_count": 3,
+            "primary_source": "Google Sheets",
+            "fallback_source": "response_database.csv",
+            "sheet_id": TRAINING_DATA_SHEET_ID,
+            "range": TRAINING_DATA_RANGE
+        },
+        "supported_actions": {
+            "respond": "Generate helpful response (with CTA for high-intent)",
+            "react": "Add thumbs up or heart reaction", 
+            "delete": "Remove spam/inappropriate/non-prospect content",
+            "leave_alone": "Ignore harmless off-topic comments"
+        }
+    }
+
+# Railway-specific server startup
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
