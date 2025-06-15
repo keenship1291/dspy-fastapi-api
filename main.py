@@ -670,7 +670,141 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
             "success": False
         }
 
-@app.get("/stats")
+@app.post("/migrate-from-github")
+async def migrate_from_github():
+    """One-time migration from GitHub CSV to database"""
+    try:
+        import requests
+        import csv
+        import base64
+        
+        # GitHub file URL (you might need to add GITHUB_TOKEN back temporarily)
+        github_token = os.getenv("GITHUB_TOKEN")
+        if not github_token:
+            return {"error": "Need GITHUB_TOKEN environment variable for migration"}
+        
+        headers = {
+            'Authorization': f'token {github_token}',
+            'Accept': 'application/vnd.github.v3+json'
+        }
+        
+        # Get CSV from GitHub
+        url = "https://api.github.com/repos/dten111213/dspy-fastapi-api/contents/active_fb_post_id.csv"
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code != 200:
+            return {"error": f"Failed to fetch GitHub CSV: {response.status_code}"}
+        
+        # Decode CSV content
+        csv_content = base64.b64decode(response.json()['content']).decode('utf-8')
+        
+        # Parse CSV
+        csv_reader = csv.DictReader(csv_content.strip().split('\n'))
+        
+        db = SessionLocal()
+        migrated_count = 0
+        duplicate_count = 0
+        
+        for row in csv_reader:
+            try:
+                # Create new post
+                db_post = FBPost(
+                    ad_account_name=row.get('Ad account name', ''),
+                    campaign_name=row.get('Campaign name', ''),
+                    ad_set_name=row.get('Ad set name', ''),
+                    ad_name=row.get('Ad name', ''),
+                    page_id=row.get('Page ID', ''),
+                    post_id=row.get('Post Id', ''),
+                    object_story_id=row.get('Object Story ID', '')
+                )
+                
+                db.add(db_post)
+                db.commit()
+                migrated_count += 1
+                
+            except IntegrityError:
+                db.rollback()
+                duplicate_count += 1
+                continue
+        
+        db.close()
+        
+        return {
+            "success": True,
+            "message": "Migration completed",
+            "migrated_count": migrated_count,
+            "duplicate_count": duplicate_count,
+            "total_processed": migrated_count + duplicate_count
+        }
+        
+    except Exception as e:
+        return {"error": f"Migration failed: {str(e)}"}
+
+@app.post("/migrate-responses-from-github")
+async def migrate_responses_from_github():
+    """One-time migration of response data from GitHub CSV to database"""
+    try:
+        import requests
+        import csv
+        import base64
+        
+        github_token = os.getenv("GITHUB_TOKEN")
+        if not github_token:
+            return {"error": "Need GITHUB_TOKEN environment variable for migration"}
+        
+        headers = {
+            'Authorization': f'token {github_token}',
+            'Accept': 'application/vnd.github.v3+json'
+        }
+        
+        # Get CSV from GitHub
+        url = "https://api.github.com/repos/dten111213/dspy-fastapi-api/contents/response_database.csv"
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code != 200:
+            return {"error": f"Failed to fetch GitHub CSV: {response.status_code}"}
+        
+        # Decode CSV content
+        csv_content = base64.b64decode(response.json()['content']).decode('utf-8')
+        
+        # Parse CSV
+        csv_reader = csv.DictReader(csv_content.strip().split('\n'))
+        
+        db = SessionLocal()
+        migrated_count = 0
+        
+        for row in csv_reader:
+            try:
+                # Create new response
+                db_response = ResponseEntry(
+                    comment=row.get('comment', ''),
+                    action=row.get('action', ''),
+                    reply=row.get('reply', '')
+                )
+                
+                db.add(db_response)
+                db.commit()
+                migrated_count += 1
+                
+            except Exception as e:
+                db.rollback()
+                print(f"Error migrating response: {e}")
+                continue
+        
+        db.close()
+        
+        # Reload training data after migration
+        new_count = reload_training_data()
+        
+        return {
+            "success": True,
+            "message": "Response migration completed",
+            "migrated_count": migrated_count,
+            "new_training_count": new_count
+        }
+        
+    except Exception as e:
+        return {"error": f"Response migration failed: {str(e)}"}
 async def get_stats():
     """Get training data statistics"""
     action_counts = {}
