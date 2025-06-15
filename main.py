@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 import os
 import csv
 from datetime import datetime, timezone
@@ -7,6 +7,7 @@ import dspy
 from pydantic import BaseModel
 import requests
 import json
+from typing import List, Dict, Optional
 
 # Load API key from environment variable (set in Railway dashboard)
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
@@ -23,6 +24,10 @@ FACEBOOK_PAGE_TOKEN = os.getenv("FACEBOOK_PAGE_TOKEN")
 GOOGLE_SHEETS_API_KEY = os.getenv("GOOGLE_SHEETS_API_KEY")
 TRAINING_DATA_SHEET_ID = os.getenv("TRAINING_DATA_SHEET_ID", "1-dQAp8bgLcW7kri_6YHz3yZJrxDQMGr30GOrDmunnZk")
 TRAINING_DATA_RANGE = os.getenv("TRAINING_DATA_RANGE", "6.7.25 Import!A:C")
+
+# CSV File Paths
+RESPONSE_DATABASE_CSV = "response_database.csv"
+ACTIVE_FB_POST_ID_CSV = "active_fb_post_id.csv"
 
 # Lease End Brand Context
 BRAND_CONTEXT = {
@@ -97,6 +102,83 @@ try:
 except Exception as e:
     raise ValueError(f"Failed to configure DSPy: {str(e)}")
 
+# CSV Management Functions
+def read_response_database():
+    """Read all entries from response_database.csv"""
+    try:
+        if not os.path.exists(RESPONSE_DATABASE_CSV):
+            # Create file with headers if it doesn't exist
+            with open(RESPONSE_DATABASE_CSV, 'w', newline='', encoding='utf-8') as file:
+                writer = csv.writer(file)
+                writer.writerow(['comment', 'action', 'reply'])
+            return []
+        
+        with open(RESPONSE_DATABASE_CSV, 'r', encoding='utf-8') as file:
+            reader = csv.DictReader(file)
+            return list(reader)
+    except Exception as e:
+        print(f"Error reading response database: {e}")
+        return []
+
+def append_response_database(comment, action, reply):
+    """Append a new entry to response_database.csv"""
+    try:
+        # Check if file exists, create with headers if not
+        file_exists = os.path.exists(RESPONSE_DATABASE_CSV)
+        
+        with open(RESPONSE_DATABASE_CSV, 'a', newline='', encoding='utf-8') as file:
+            writer = csv.writer(file)
+            
+            # Write headers if file is new
+            if not file_exists:
+                writer.writerow(['comment', 'action', 'reply'])
+            
+            # Write the new entry
+            writer.writerow([comment, action, reply])
+        
+        return True
+    except Exception as e:
+        print(f"Error appending to response database: {e}")
+        return False
+
+def read_active_fb_post_ids():
+    """Read all entries from active_fb_post_id.csv"""
+    try:
+        if not os.path.exists(ACTIVE_FB_POST_ID_CSV):
+            # Create file with headers if it doesn't exist
+            with open(ACTIVE_FB_POST_ID_CSV, 'w', newline='', encoding='utf-8') as file:
+                writer = csv.writer(file)
+                writer.writerow(['Ad account name', 'Campaign name', 'Ad set name', 'Ad name', 'Page ID', 'Post Id', 'Object Story ID'])
+            return []
+        
+        with open(ACTIVE_FB_POST_ID_CSV, 'r', encoding='utf-8') as file:
+            reader = csv.DictReader(file)
+            return list(reader)
+    except Exception as e:
+        print(f"Error reading active FB post IDs: {e}")
+        return []
+
+def append_active_fb_post_id(ad_account_name, campaign_name, ad_set_name, ad_name, page_id, post_id, object_story_id):
+    """Append a new entry to active_fb_post_id.csv"""
+    try:
+        # Check if file exists, create with headers if not
+        file_exists = os.path.exists(ACTIVE_FB_POST_ID_CSV)
+        
+        with open(ACTIVE_FB_POST_ID_CSV, 'a', newline='', encoding='utf-8') as file:
+            writer = csv.writer(file)
+            
+            # Write headers if file is new
+            if not file_exists:
+                writer.writerow(['Ad account name', 'Campaign name', 'Ad set name', 'Ad name', 'Page ID', 'Post Id', 'Object Story ID'])
+            
+            # Write the new entry
+            writer.writerow([ad_account_name, campaign_name, ad_set_name, ad_name, page_id, post_id, object_story_id])
+        
+        return True
+    except Exception as e:
+        print(f"Error appending to active FB post IDs: {e}")
+        return False
+
 # Google Sheets Integration Functions
 def load_training_data_from_sheets():
     """Load training data from Google Sheets with robust error handling"""
@@ -166,51 +248,14 @@ def load_training_data_from_sheets():
         return []
 
 def load_training_data_from_csv():
-    """Load training examples from CSV file as fallback"""
-    training_examples = []
-    
-    csv_files = ['enhanced_training_data.csv', 'training_data.csv']
-    
-    for csv_file in csv_files:
-        try:
-            with open(csv_file, 'r', encoding='utf-8') as file:
-                reader = csv.DictReader(file)
-                for row in reader:
-                    # Handle both old and new CSV formats
-                    if 'action' in row:
-                        training_examples.append({
-                            'comment': row['comment'],
-                            'action': row['action'],
-                            'reply': row['reply']
-                        })
-                    else:
-                        # Old format - convert to new action system
-                        requires_response = row.get('requires_response', 'false').lower() == 'true'
-                        category = row.get('category', 'general')
-                        
-                        if not requires_response:
-                            action = 'leave_alone'
-                        elif category == 'praise':
-                            action = 'react'
-                        elif category in ['spam', 'inappropriate']:
-                            action = 'delete'
-                        else:
-                            action = 'respond'
-                        
-                        training_examples.append({
-                            'comment': row['comment'],
-                            'action': action,
-                            'reply': row.get('reply', '')
-                        })
-            print(f"✅ Loaded {len(training_examples)} training examples from {csv_file}")
-            break
-        except FileNotFoundError:
-            continue
-        except Exception as e:
-            print(f"❌ Error loading {csv_file}: {e}")
-            continue
-    
-    return training_examples
+    """Load training examples from response_database.csv"""
+    try:
+        data = read_response_database()
+        print(f"✅ Loaded {len(data)} training examples from response_database.csv")
+        return data
+    except Exception as e:
+        print(f"❌ Error loading response_database.csv: {e}")
+        return []
 
 def load_training_data():
     """Load training examples from Google Sheets first, CSV as fallback"""
@@ -237,7 +282,7 @@ def load_training_data():
     
     print(f"📊 Total training examples loaded:")
     print(f"   - Google Sheets: {len(sheets_examples)}")
-    print(f"   - CSV Fallback: {len(csv_examples)}")
+    print(f"   - CSV Database: {len(csv_examples)}")
     print(f"   - Total (deduplicated): {len(deduplicated_examples)}")
     
     return deduplicated_examples
@@ -367,7 +412,7 @@ Generate a helpful, natural response that addresses their comment directly:"""
         print(f"Error generating response: {e}")
         return "Thank you for your comment! We'd be happy to help with any lease buyout questions."
 
-# Request/Response models
+# Pydantic Models
 class CommentRequest(BaseModel):
     comment: str
     postId: str
@@ -394,30 +439,55 @@ class FeedbackRequest(BaseModel):
     class Config:
         extra = "ignore"
 
+class ResponseDatabaseEntry(BaseModel):
+    comment: str
+    action: str
+    reply: str
+
+class ActiveFBPostEntry(BaseModel):
+    ad_account_name: str
+    campaign_name: str
+    ad_set_name: str
+    ad_name: str
+    page_id: str
+    post_id: str
+    object_story_id: str
+
 app = FastAPI()
 
 @app.get("/")
 def read_root():
     return {
         "message": "Lease End AI Assistant - Core AI System",
-        "version": "13.1",
+        "version": "14.0",
         "training_examples": len(TRAINING_DATA),
         "actions": ["respond", "react", "delete", "leave_alone"],
-        "features": ["Pure AI Classification", "Real-time Learning", "Google Sheets Integration"],
+        "features": ["Pure AI Classification", "Real-time Learning", "Google Sheets Integration", "CSV Database Management"],
         "approach": "Core AI functionality - comment processing and feedback learning",
         "endpoints": {
             "/process-comment": "Initial comment processing",
             "/process-feedback": "Human feedback processing",
             "/test-feedback": "Debug endpoint for testing n8n integration",
             "/stats": "View training data statistics",
-            "/generate-reply": "Backwards compatibility endpoint"
+            "/generate-reply": "Backwards compatibility endpoint",
+            "/response-database": "Read response database",
+            "/response-database/append": "Add to response database",
+            "/active-fb-posts": "Read active FB post IDs",
+            "/active-fb-posts/append": "Add to active FB post IDs"
         },
-        "comment_fields": ["postId", "original_comment", "category", "action", "reply", "confidence_score", "approved"],
+        "csv_files": {
+            "response_database": {
+                "file": "response_database.csv",
+                "fields": ["comment", "action", "reply"]
+            },
+            "active_fb_posts": {
+                "file": "active_fb_post_id.csv",
+                "fields": ["Ad account name", "Campaign name", "Ad set name", "Ad name", "Page ID", "Post Id", "Object Story ID"]
+            }
+        },
         "training_data_system": {
-            "fields": ["comment", "action", "reply"],
-            "field_count": 3,
             "primary_source": "Google Sheets",
-            "fallback_source": "CSV files",
+            "fallback_source": "response_database.csv",
             "sheet_id": TRAINING_DATA_SHEET_ID,
             "range": TRAINING_DATA_RANGE,
             "managed_by": "n8n workflows"
@@ -425,6 +495,74 @@ def read_root():
         "philosophy": "Let Claude do what it does best - understand context and generate responses."
     }
 
+# CSV Database Endpoints
+@app.get("/response-database")
+async def get_response_database():
+    """Get all entries from response_database.csv"""
+    try:
+        data = read_response_database()
+        return {
+            "success": True,
+            "count": len(data),
+            "data": data
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading response database: {str(e)}")
+
+@app.post("/response-database/append")
+async def append_to_response_database(entry: ResponseDatabaseEntry):
+    """Append new entry to response_database.csv"""
+    try:
+        success = append_response_database(entry.comment, entry.action, entry.reply)
+        if success:
+            return {
+                "success": True,
+                "message": "Entry added to response database",
+                "entry": entry.dict()
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to append to response database")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error appending to response database: {str(e)}")
+
+@app.get("/active-fb-posts")
+async def get_active_fb_posts():
+    """Get all entries from active_fb_post_id.csv"""
+    try:
+        data = read_active_fb_post_ids()
+        return {
+            "success": True,
+            "count": len(data),
+            "data": data
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading active FB post IDs: {str(e)}")
+
+@app.post("/active-fb-posts/append")
+async def append_to_active_fb_posts(entry: ActiveFBPostEntry):
+    """Append new entry to active_fb_post_id.csv"""
+    try:
+        success = append_active_fb_post_id(
+            entry.ad_account_name,
+            entry.campaign_name,
+            entry.ad_set_name,
+            entry.ad_name,
+            entry.page_id,
+            entry.post_id,
+            entry.object_story_id
+        )
+        if success:
+            return {
+                "success": True,
+                "message": "Entry added to active FB posts",
+                "entry": entry.dict()
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to append to active FB posts")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error appending to active FB posts: {str(e)}")
+
+# Original Endpoints (unchanged)
 @app.post("/process-comment", response_model=ProcessedComment)
 async def process_comment(request: CommentRequest):
     """Core comment processing using AI classification"""
@@ -616,64 +754,4 @@ async def test_feedback(request: dict):
     }
 
 @app.post("/generate-reply")
-async def generate_reply(request: Request):
-    """Simple reply generation for backwards compatibility"""
-    data = await request.json()
-    comment = data.get("comment", "")
-    postId = data.get("postId", "")
-
-    try:
-        ai_classification = classify_comment_with_ai(comment, postId)
-        
-        if ai_classification['action'].lower() == 'reply':
-            reply = generate_response(comment, ai_classification['sentiment'], ai_classification['high_intent'])
-        else:
-            reply = "Thank you for your comment."
-        
-        return {
-            "postId": postId,
-            "reply": reply,
-            "action": ai_classification['action'].lower()
-        }
-        
-    except Exception as e:
-        return {
-            "postId": postId,
-            "reply": "Thank you for your comment. We appreciate your feedback.",
-            "action": "ignore",
-            "error": str(e)
-        }
-
-@app.get("/stats")
-async def get_stats():
-    """Get training data statistics"""
-    action_counts = {}
-    
-    for example in TRAINING_DATA:
-        action = example.get('action', 'unknown')
-        action_counts[action] = action_counts.get(action, 0) + 1
-    
-    return {
-        "total_training_examples": len(TRAINING_DATA),
-        "action_distribution": action_counts,
-        "data_structure": {
-            "fields": ["comment", "action", "reply"],
-            "field_count": 3,
-            "primary_source": "Google Sheets",
-            "fallback_source": "CSV files",
-            "sheet_id": TRAINING_DATA_SHEET_ID,
-            "range": TRAINING_DATA_RANGE
-        },
-        "supported_actions": {
-            "respond": "Generate helpful response (with CTA for high-intent)",
-            "react": "Add thumbs up or heart reaction", 
-            "delete": "Remove spam/inappropriate/non-prospect content",
-            "leave_alone": "Ignore harmless off-topic comments"
-        }
-    }
-
-# Railway-specific server startup
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+async def generate_reply(request:
