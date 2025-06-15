@@ -605,31 +605,30 @@ async def process_comment(request: CommentRequest):
 
 # Alternative simple endpoint that accepts raw JSON
 @app.post("/process-comment-simple")
-async def process_comment_simple(request: dict):
+async def process_comment_simple(request: Request):
     """Simple comment processing that accepts any JSON structure"""
     try:
-        # Extract data flexibly from any JSON structure
-        comment_text = (
-            request.get('comment') or 
-            request.get('message') or 
-            request.get('Message') or
-            "No message content"
-        ).strip()
+        # Parse JSON from request body like the working feedback endpoint
+        request_data = await request.json()
         
-        post_id = (
-            request.get('postId') or 
-            request.get('post_id') or 
-            request.get('POST_ID') or
-            request.get('POST ID') or
-            "unknown"
-        ).strip()
+        # Extract data flexibly from any JSON structure with robust handling
+        comment_text = request_data.get('comment') or request_data.get('message') or request_data.get('Message') or "No message content"
+        if comment_text and hasattr(comment_text, 'strip'):
+            comment_text = comment_text.strip()
+        else:
+            comment_text = str(comment_text) if comment_text else "No message content"
         
-        created_time = (
-            request.get('created_time') or 
-            request.get('created_Time') or
-            request.get('Created Time') or
-            ""
-        ).strip()
+        post_id = request_data.get('postId') or request_data.get('post_id') or request_data.get('POST_ID') or request_data.get('POST ID') or "unknown"
+        if post_id and hasattr(post_id, 'strip'):
+            post_id = post_id.strip()
+        else:
+            post_id = str(post_id) if post_id else "unknown"
+        
+        created_time = request_data.get('created_time') or request_data.get('created_Time') or request_data.get('Created Time') or ""
+        if created_time and hasattr(created_time, 'strip'):
+            created_time = created_time.strip()
+        else:
+            created_time = str(created_time) if created_time else ""
         
         print(f"🔄 Simple processing: '{comment_text[:50]}...' for post: {post_id}")
         
