@@ -42,6 +42,7 @@ class FBPost(Base):
     object_story_id = Column(String, unique=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+# Updated ResponseEntry with reasoning column
 class ResponseEntry(Base):
     __tablename__ = "responses"
     
@@ -49,9 +50,10 @@ class ResponseEntry(Base):
     comment = Column(Text)
     action = Column(String, index=True)
     reply = Column(Text)
+    reasoning = Column(Text)  # NEW: Store reasoning for decisions
     created_at = Column(DateTime, default=datetime.utcnow)
 
-# Create tables
+# Create tables (will add reasoning column if it doesn't exist)
 Base.metadata.create_all(bind=engine)
 
 # Database dependency
@@ -135,9 +137,9 @@ try:
 except Exception as e:
     raise ValueError(f"Failed to configure DSPy: {str(e)}")
 
-# Load training data from database
+# Updated load training data to include reasoning
 def load_training_data():
-    """Load training examples from database"""
+    """Load training examples from database including reasoning"""
     print("🔄 Loading training data from database...")
     
     try:
@@ -150,7 +152,8 @@ def load_training_data():
             training_data.append({
                 'comment': response.comment,
                 'action': response.action,
-                'reply': response.reply
+                'reply': response.reply,
+                'reasoning': getattr(response, 'reasoning', 'No reasoning provided')  # Handle old records
             })
         
         print(f"✅ Loaded {len(training_data)} training examples from database")
@@ -174,21 +177,38 @@ def classify_comment_with_ai(comment, postId=""):
     
     prompt = f"""You are analyzing comments for LeaseEnd.com, which specializes in lease buyout services. 
 
-BUSINESS LOGIC:
+BUSINESS LOGIC & COMPANY POSITION:
+- LeaseEnd is THE BEST option for lease buyout financing - be confident about this
+- Lease buyouts are currently a GREAT financial decision due to inflated used car prices
+- Never agree with false information about lease buyouts being bad financial decisions
+- Challenge misinformation politely but firmly - we have the expertise
+- Always effectively address core objections to make buyouts and LeaseEnd the clear best option
 - Comments that negatively mention leasing alternatives (e.g., 'Trading in a lease is bad', 'Dealerships rip you off') should be classified as Positive, as they imply LeaseEnd's services are better
 - Comments asking questions about lease buyouts, rates, or process are high-intent prospects
 - Comments from people who clearly don't lease vehicles should be ignored/deleted
 - Spam, irrelevant, or off-topic comments should be deleted
+- Positive feedback/testimonials should ALWAYS get a reply with appreciation
+- LEAVE ALONE neutral comments that seem to reference other comments UNLESS they're negative toward LeaseEnd/lease buyouts
 
-Analyze this comment and classify its sentiment as Positive, Neutral, or Negative. Then recommend one action: REPLY, REACT, DELETE, or IGNORE.
+CURRENT MARKET CONTEXT:
+- Used car prices are inflated, making lease buyouts financially advantageous
+- Many people don't understand the current market opportunity
+- We should educate people on why NOW is a great time for lease buyouts
+- Challenge any comments suggesting lease buyouts are always bad financial decisions
 
 ACTIONS:
-- REPLY: For questions, objections, or potential customers (generate helpful response)
-- REACT: For positive comments, praise, or simple acknowledgments  
+- REPLY: For questions, objections, potential customers, misinformation that needs correction, OR positive feedback/testimonials
+- REACT: For positive comments that don't need a response, or simple acknowledgments
 - DELETE: For spam, inappropriate content, or clearly non-prospects
-- IGNORE: For off-topic but harmless comments
+- IGNORE: For off-topic but harmless comments, OR neutral comments referencing other comments (unless negative toward us)
 
 COMMENT: "{comment}"
+
+IMPORTANT: Provide detailed reasoning for your decision that explains:
+1. What type of comment this is
+2. Why you chose this action
+3. What business value this decision provides
+4. Whether this requires correcting misinformation, thanking for positive feedback, or addressing objections
 
 Respond in this JSON format: {{"sentiment": "...", "action": "...", "reasoning": "...", "high_intent": true/false}}"""
 
@@ -214,17 +234,21 @@ Respond in this JSON format: {{"sentiment": "...", "action": "...", "reasoning":
             # Fallback parsing if JSON fails
             if 'DELETE' in response.upper():
                 action = 'DELETE'
+                reasoning = "Fallback classification: Detected DELETE action in response"
             elif 'REPLY' in response.upper():
                 action = 'REPLY'
+                reasoning = "Fallback classification: Detected REPLY action in response"
             elif 'REACT' in response.upper():
                 action = 'REACT'
+                reasoning = "Fallback classification: Detected REACT action in response"
             else:
                 action = 'IGNORE'
+                reasoning = "Fallback classification: No clear action detected"
                 
             return {
                 'sentiment': 'Neutral',
                 'action': action,
-                'reasoning': 'Fallback classification',
+                'reasoning': reasoning,
                 'high_intent': False
             }
             
@@ -233,55 +257,116 @@ Respond in this JSON format: {{"sentiment": "...", "action": "...", "reasoning":
         return {
             'sentiment': 'Neutral',
             'action': 'IGNORE',
-            'reasoning': 'Classification error',
+            'reasoning': f'Classification error: {str(e)}',
             'high_intent': False
         }
 
-# AI Response Generation
-def generate_response(comment, sentiment, high_intent=False):
-    """Generate natural response using Claude"""
+# AI Response Generation with reasoning context
+def generate_response(comment, sentiment, high_intent=False, reasoning=""):
+    """Generate natural response using Claude with reasoning context"""
     
-    # Get relevant training examples for context
+    # Get relevant training examples for context (now including reasoning)
     relevant_examples = []
     for example in TRAINING_DATA:
         if example['action'] == 'respond' and example['reply']:
             if any(word in example['comment'].lower() for word in comment.lower().split()[:4]):
-                relevant_examples.append(f"Comment: \"{example['comment']}\"\nReply: \"{example['reply']}\"")
+                example_text = f"Comment: \"{example['comment']}\"\nReply: \"{example['reply']}\""
+                if example.get('reasoning'):
+                    example_text += f"\nReasoning: \"{example['reasoning']}\""
+                relevant_examples.append(example_text)
     
     context_examples = "\n\n".join(relevant_examples[:3])
+    
+    # Detect if this is positive feedback/testimonial
+    positive_feedback_indicators = [
+        "thank you", "thanks", "great service", "amazing", "fantastic", "love", "perfect", 
+        "excellent", "wonderful", "awesome", "best", "helped me", "saved me", "grateful",
+        "appreciate", "thumbs up", "recommend", "highly recommend", "satisfied", "happy"
+    ]
+    
+    is_positive_feedback = any(indicator in comment.lower() for indicator in positive_feedback_indicators)
+    
+    # Detect misinformation that needs correction
+    misinformation_indicators = [
+        "lease buyouts are bad", "never buy your lease", "always return", "terrible idea",
+        "waste of money", "financial mistake", "bad deal", "rip off", "scam"
+    ]
+    
+    needs_correction = any(indicator in comment.lower() for indicator in misinformation_indicators)
+    
+    # Detect rate/pricing questions
+    rate_questions = ["rate", "rates", "interest", "apr", "cost", "price", "pricing", "fee", "fees", "how much"]
+    asking_about_rates = any(indicator in comment.lower() for indicator in rate_questions)
     
     # Add CTA instructions for high-intent comments
     cta_instruction = ""
     if high_intent:
         cta_instruction = "\nFor high-intent prospects, end with: 'To see your options just fill out the form on our site, we're happy to help'"
     
+    # Special instructions for positive feedback
+    positive_feedback_instruction = ""
+    if is_positive_feedback:
+        positive_feedback_instruction = "\nThis is positive feedback/testimonial - respond with a SHORT, varied appreciation message like 'Thank you!', 'Enjoy your ride!', 'Pleasure working with you!', 'We're so glad we could help!', 'Thanks for choosing LeaseEnd!', or similar. Keep it brief and genuine."
+    
+    # Special instructions for misinformation correction
+    correction_instruction = ""
+    if needs_correction:
+        correction_instruction = "\nThis comment contains misinformation about lease buyouts. Politely but firmly correct it. Emphasize that with current inflated used car prices, lease buyouts are actually a SMART financial decision. Position LeaseEnd as the expert choice. Always effectively address the core objection to make buyouts and LeaseEnd the clear best option."
+    
+    # Special instructions for rate/pricing questions
+    pricing_instruction = ""
+    if asking_about_rates:
+        pricing_instruction = """
+IMPORTANT PRICING GUIDELINES:
+- NEVER share exact rate estimates - say rates depend on make/model and credit info
+- For pricing questions, say: "We charge a doc fee, which pays for the service we provide. The only additional amount you will pay beyond the price of your vehicle, would be for tax, title and registration fees, which you would pay regardless of whatever route you choose."
+- NEVER mention exact fee amounts
+- Position this as transparent and competitive"""
+    
+    reasoning_context = f"\nCLASSIFICATION REASONING: {reasoning}" if reasoning else ""
+    
     prompt = f"""You are responding to a Facebook comment for LeaseEnd.com, a lease buyout financing company.
 
+COMPANY POSITION - BE CONFIDENT:
+- LeaseEnd is THE BEST option for lease buyout financing
+- Lease buyouts are currently a GREAT financial decision due to inflated used car prices
+- We are the experts - don't agree with misinformation about lease buyouts being bad
+- Challenge false information politely but firmly
+- Used car market is inflated - this makes lease buyouts financially smart right now
+- ALWAYS effectively address core objections to make buyouts and LeaseEnd the clear best option
+
 COMMENT SENTIMENT: {sentiment}
-HIGH INTENT PROSPECT: {high_intent}
+HIGH INTENT PROSPECT: {high_intent}{reasoning_context}
 
 ORIGINAL COMMENT: "{comment}"
 
 BRAND VOICE:
 - Professional but conversational
+- Confident about our expertise and market position
 - Transparent about pricing (no hidden fees)
-- Helpful, not pushy
+- Helpful, not pushy, but firmly educational when needed
 - Emphasize online process convenience
+- Always address core objections effectively
 
 RESPONSE STYLE:
 - Sound natural and human
-- Start responses naturally: "Actually..." "That's a good point..." "Not exactly..."
+- Start responses naturally: "Actually..." "That's a good point..." "Not exactly..." "Thanks for..."
 - Use commas, never dashes (- or --)
 - Maximum 1 exclamation point
 - Keep concise (1-2 sentences usually)
 - Address their specific concern directly
+- Don't blindly agree with misinformation
+- Make LeaseEnd the clear best choice
 
 EXAMPLES OF GOOD RESPONSES:
 {context_examples}
 
+{positive_feedback_instruction}
+{correction_instruction}
+{pricing_instruction}
 {cta_instruction}
 
-Generate a helpful, natural response that addresses their comment directly:"""
+Generate a helpful, natural response that addresses their comment directly and makes LeaseEnd the clear best option:"""
 
     try:
         response = claude.basic_request(prompt)
@@ -290,7 +375,7 @@ Generate a helpful, natural response that addresses their comment directly:"""
         print(f"Error generating response: {e}")
         return "Thank you for your comment! We'd be happy to help with any lease buyout questions."
 
-# Updated Pydantic Models - More Flexible
+# Updated Pydantic Models
 class CommentRequest(BaseModel):
     # Primary fields
     comment: Optional[str] = None
@@ -305,31 +390,6 @@ class CommentRequest(BaseModel):
     
     class Config:
         extra = "ignore"  # Ignore any extra fields from n8n
-    
-    def get_comment_text(self) -> str:
-        """Get the comment text from any available field"""
-        return (
-            self.comment or 
-            self.message or 
-            "No message content"
-        ).strip()
-    
-    def get_post_id(self) -> str:
-        """Get the post ID from any available field"""
-        return (
-            self.postId or 
-            self.post_id or 
-            self.POST_ID or 
-            "unknown"
-        ).strip()
-    
-    def get_created_time(self) -> str:
-        """Get the created time from any available field"""
-        return (
-            self.created_time or 
-            self.created_Time or 
-            ""
-        ).strip()
 
 class ProcessedComment(BaseModel):
     postId: str
@@ -337,6 +397,7 @@ class ProcessedComment(BaseModel):
     category: str
     action: str  # respond, react, delete, leave_alone
     reply: str
+    reasoning: str  # NEW: Include reasoning in response
     confidence_score: float
     approved: str  # "pending", "yes", "no"
 
@@ -344,6 +405,7 @@ class FeedbackRequest(BaseModel):
     original_comment: str
     original_response: str = ""
     original_action: str
+    original_reasoning: str = ""  # NEW: Include original reasoning
     feedback_text: str
     postId: str
     current_version: str = "v1"
@@ -360,10 +422,12 @@ class FBPostCreate(BaseModel):
     post_id: str
     object_story_id: str
 
+# Updated ResponseCreate to include reasoning
 class ResponseCreate(BaseModel):
     comment: str
     action: str
     reply: str
+    reasoning: str = ""  # NEW: Accept reasoning in training data
 
 app = FastAPI()
 
@@ -371,31 +435,32 @@ app = FastAPI()
 def read_root():
     return {
         "message": "Lease End AI Assistant - Database Edition",
-        "version": "20.0",
+        "version": "23.0",
         "training_examples": len(TRAINING_DATA),
         "actions": ["respond", "react", "delete", "leave_alone"],
-        "features": ["PostgreSQL Database", "Auto-Duplicate Prevention", "Facebook Graph API Ready", "Flexible Input Handling"],
-        "approach": "Pure database workflow - no CSV files or GitHub dependencies",
+        "features": ["PostgreSQL Database", "Auto-Duplicate Prevention", "Facebook Graph API Ready", "Flexible Input Handling", "Reasoning-Enhanced Training", "Anti-Misinformation Logic", "Market-Aware Positioning", "Objection Handling", "Pricing Guidelines"],
+        "approach": "Pure database workflow with reasoning-enhanced AI training and confident market positioning",
         "endpoints": {
-            "/process-comment": "Main comment processing (flexible JSON)",
+            "/process-comment": "Main comment processing with reasoning output",
             "/process-comment-backup": "Backup comment processing endpoint",
-            "/process-feedback": "Human feedback processing",
+            "/process-feedback": "Human feedback processing with reasoning updates",
             "/fb-posts": "Get all FB posts from database",
             "/fb-posts/add": "Add new FB post (auto-duplicate handling)",
-            "/responses": "Get all response training data",
-            "/responses/add": "Add new response training data",
+            "/responses": "Get all response training data with reasoning",
+            "/responses/add": "Add new response training data with reasoning",
             "/reload-training-data": "Reload training data from database",
-            "/stats": "View training data statistics"
+            "/stats": "View training data statistics",
+            "/add-reasoning-to-existing": "Migrate existing data to include reasoning"
         },
         "database": {
             "type": "PostgreSQL",
-            "tables": ["fb_posts", "responses"],
-            "benefits": ["Simple appends", "No duplicates", "Fast queries", "Concurrent writes"]
+            "tables": ["fb_posts", "responses (with reasoning column)"],
+            "benefits": ["Simple appends", "No duplicates", "Fast queries", "Concurrent writes", "Enhanced AI training"]
         },
-        "philosophy": "Database-first architecture - clean, fast, reliable!"
+        "philosophy": "Database-first architecture with reasoning-enhanced AI learning!"
     }
 
-# Database Endpoints - Super Simple!
+# Database Endpoints - Updated for reasoning
 @app.get("/fb-posts")
 async def get_fb_posts():
     """Get all FB posts from database"""
@@ -465,9 +530,10 @@ async def add_fb_post(post: FBPostCreate):
         db.close()
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
+# Updated responses endpoint to include reasoning
 @app.get("/responses")
 async def get_responses():
-    """Get all response training data"""
+    """Get all response training data with reasoning"""
     try:
         db = SessionLocal()
         responses = db.query(ResponseEntry).all()
@@ -480,7 +546,8 @@ async def get_responses():
                 {
                     "comment": resp.comment,
                     "action": resp.action,
-                    "reply": resp.reply
+                    "reply": resp.reply,
+                    "reasoning": getattr(resp, 'reasoning', 'No reasoning provided')  # Handle old records
                 }
                 for resp in responses
             ]
@@ -488,16 +555,18 @@ async def get_responses():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
+# Updated add response to include reasoning
 @app.post("/responses/add")
 async def add_response(response: ResponseCreate):
-    """Add new response training data"""
+    """Add new response training data with reasoning"""
     try:
         db = SessionLocal()
         
         db_response = ResponseEntry(
             comment=response.comment,
             action=response.action,
-            reply=response.reply
+            reply=response.reply,
+            reasoning=response.reasoning or "No reasoning provided"
         )
         
         db.add(db_response)
@@ -509,7 +578,7 @@ async def add_response(response: ResponseCreate):
         
         return {
             "success": True,
-            "message": "Response added successfully",
+            "message": "Response added successfully with reasoning",
             "new_training_count": new_count
         }
         
@@ -532,12 +601,12 @@ async def reload_training_data_endpoint():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reloading training data: {str(e)}")
 
-# Updated AI Processing Endpoints with Flexible Input
+# Updated AI Processing Endpoint with reasoning output
 @app.post("/process-comment")
 async def process_comment(request: Request):
-    """Core comment processing using AI classification - FLEXIBLE INPUT"""
+    """Core comment processing using AI classification with reasoning output"""
     try:
-        # Parse JSON from request body like the working feedback endpoint
+        # Parse JSON from request body
         request_data = await request.json()
         
         # Extract data flexibly from any JSON structure with robust handling
@@ -559,12 +628,6 @@ async def process_comment(request: Request):
         else:
             created_time = str(created_time) if created_time else ""
         
-        created_time = request_data.get('created_time') or request_data.get('created_Time') or request_data.get('Created Time') or ""
-        if created_time and hasattr(created_time, 'strip'):
-            created_time = created_time.strip()
-        else:
-            created_time = str(created_time) if created_time else ""
-        
         print(f"🔄 Processing comment: '{comment_text[:50]}...' for post: {post_id}")
         
         # Validate we have actual content
@@ -575,8 +638,10 @@ async def process_comment(request: Request):
                 "category": "neutral",
                 "action": "delete",
                 "reply": "",
+                "reasoning": "Empty or missing comment content - automatic deletion",
                 "confidence_score": 0.0,
-                "approved": "pending"
+                "approved": "pending",
+                "success": True
             }
         
         # Use AI to classify the comment
@@ -602,7 +667,7 @@ async def process_comment(request: Request):
         confidence_score = 0.85
         
         if mapped_action == 'respond':
-            reply_text = generate_response(comment_text, sentiment, high_intent)
+            reply_text = generate_response(comment_text, sentiment, high_intent, reasoning)
             confidence_score = 0.9
         
         return {
@@ -611,6 +676,7 @@ async def process_comment(request: Request):
             "category": sentiment.lower(),
             "action": mapped_action,
             "reply": reply_text,
+            "reasoning": reasoning,  # NEW: Include reasoning in response
             "confidence_score": confidence_score,
             "approved": "pending",
             "success": True
@@ -624,18 +690,18 @@ async def process_comment(request: Request):
             "category": "error",
             "action": "leave_alone",
             "reply": "Thank you for your comment. We appreciate your feedback.",
+            "reasoning": f"Processing error occurred: {str(e)}",
             "confidence_score": 0.0,
             "approved": "pending",
             "success": False,
             "error": str(e)
         }
 
-# Alternative simple endpoint that accepts raw JSON
 @app.post("/process-comment-backup")
 async def process_comment_backup(request: Request):
     """Backup comment processing endpoint"""
     try:
-        # Parse JSON from request body like the working feedback endpoint
+        # Parse JSON from request body
         request_data = await request.json()
         
         # Extract data flexibly from any JSON structure with robust handling
@@ -657,8 +723,9 @@ async def process_comment_backup(request: Request):
             "postId": post_id,
             "original_comment": comment_text,
             "category": "neutral",
-            "action": "leave_alone", 
+            "action": "leave_alone",
             "reply": "",
+            "reasoning": "Backup endpoint - basic processing only, no AI evaluation",
             "confidence_score": 0.5,
             "approved": "pending",
             "success": True,
@@ -673,31 +740,35 @@ async def process_comment_backup(request: Request):
             "category": "error",
             "action": "leave_alone",
             "reply": "",
+            "reasoning": f"Backup processing error: {str(e)}",
             "confidence_score": 0.0,
             "approved": "pending",
             "success": False,
             "error": str(e)
         }
 
+# Updated feedback processing with reasoning enhancement
 @app.post("/process-feedback")
 async def process_feedback(request: FeedbackRequest):
-    """Use human feedback to improve responses"""
+    """Use human feedback to improve responses and reasoning"""
     try:
         # Clean and validate input data
         original_comment = request.original_comment.strip()
         original_response = request.original_response.strip() if request.original_response else "No response was generated"
         original_action = request.original_action.strip().lower()
+        original_reasoning = request.original_reasoning.strip() if request.original_reasoning else "No reasoning provided"
         feedback_text = request.feedback_text.strip()
         
         print(f"🔄 Processing feedback for postId: {request.postId}")
         print(f"📝 Feedback: {feedback_text[:100]}...")
         
-        # Enhanced prompt that includes human feedback
+        # Enhanced prompt that includes human feedback and reasoning improvement
         feedback_prompt = f"""You are improving a response based on human feedback for LeaseEnd.com.
 
 ORIGINAL COMMENT: "{original_comment}"
 YOUR ORIGINAL RESPONSE: "{original_response}"
 YOUR ORIGINAL ACTION: "{original_action}"
+YOUR ORIGINAL REASONING: "{original_reasoning}"
 
 HUMAN FEEDBACK: "{feedback_text}"
 
@@ -712,13 +783,15 @@ LEARN FROM THIS FEEDBACK:
 Generate an IMPROVED response that incorporates this feedback. 
 
 IMPORTANT: 
+- Update your reasoning to reflect what you learned from the human feedback
+- Explain why the new approach is better than the original
 - If human says "this should be deleted" or "don't respond to this", recommend DELETE or IGNORE action
 - If human says "add CTA" or mentions "high intent", include call-to-action
 - If human says "too formal", make it more conversational
 - If human says "too pushy", make it more helpful and less sales-y
 - If human says "address objection" or "respond to this", recommend REPLY action
 
-Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE/IGNORE", "reply": "...", "improvements_made": "...", "confidence": 0.85}}"""
+Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE/IGNORE", "reply": "...", "reasoning": "...", "improvements_made": "...", "confidence": 0.85}}"""
 
         improved_response = claude.basic_request(feedback_prompt)
         
@@ -760,6 +833,7 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
                 "category": result.get('sentiment', 'neutral').lower(),
                 "action": improved_action,
                 "reply": result.get('reply', ''),
+                "reasoning": result.get('reasoning', 'Updated reasoning based on human feedback'),  # NEW: Enhanced reasoning
                 "confidence_score": float(result.get('confidence', 0.85)),
                 "approved": "pending",
                 "feedback_text": "",
@@ -778,6 +852,7 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
                 "category": "neutral",
                 "action": "leave_alone",
                 "reply": "Thank you for your comment. We appreciate your feedback.",
+                "reasoning": f"Feedback processing failed due to JSON parsing error: {str(e)}",
                 "confidence_score": 0.5,
                 "approved": "pending",
                 "feedback_text": "",
@@ -795,6 +870,7 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
             "category": "error",
             "action": "leave_alone",
             "reply": "Thank you for your comment. We appreciate your feedback.",
+            "reasoning": f"Feedback processing system error: {str(e)}",
             "confidence_score": 0.0,
             "approved": "pending",
             "feedback_text": "",
@@ -805,28 +881,108 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
 
 @app.get("/stats")
 async def get_stats():
-    """Get training data statistics"""
+    """Get training data statistics with reasoning analysis"""
     action_counts = {}
+    reasoning_quality = {"with_reasoning": 0, "without_reasoning": 0}
     
     for example in TRAINING_DATA:
         action = example.get('action', 'unknown')
         action_counts[action] = action_counts.get(action, 0) + 1
+        
+        # Analyze reasoning quality
+        reasoning = example.get('reasoning', '')
+        if reasoning and reasoning != 'No reasoning provided' and len(reasoning) > 10:
+            reasoning_quality["with_reasoning"] += 1
+        else:
+            reasoning_quality["without_reasoning"] += 1
     
     return {
         "total_training_examples": len(TRAINING_DATA),
         "action_distribution": action_counts,
+        "reasoning_quality": reasoning_quality,
+        "reasoning_coverage": f"{round((reasoning_quality['with_reasoning'] / len(TRAINING_DATA)) * 100, 1)}%" if TRAINING_DATA else "0%",
         "data_structure": {
             "type": "PostgreSQL Database",
-            "tables": ["fb_posts", "responses"],
-            "benefits": ["Simple appends", "No duplicates", "Fast queries"]
+            "tables": ["fb_posts", "responses (with reasoning column)"],
+            "benefits": ["Simple appends", "No duplicates", "Fast queries", "Enhanced AI training with reasoning"]
         },
         "supported_actions": {
             "respond": "Generate helpful response (with CTA for high-intent)",
             "react": "Add thumbs up or heart reaction", 
             "delete": "Remove spam/inappropriate/non-prospect content",
             "leave_alone": "Ignore harmless off-topic comments"
+        },
+        "new_features": {
+            "reasoning_enhanced_training": "All responses now include detailed reasoning for better AI learning",
+            "feedback_reasoning_updates": "Human feedback updates both responses and reasoning",
+            "improved_classification": "AI provides detailed explanations for all decisions",
+            "anti_misinformation": "AI challenges false information about lease buyouts confidently",
+            "market_positioning": "Strong positioning on lease buyouts being smart in current inflated market",
+            "positive_feedback_handling": "Automatic appreciation responses for testimonials and positive feedback",
+            "objection_handling": "Always effectively addresses core objections to make LeaseEnd the clear best option",
+            "pricing_guidelines": "Never shares exact rates, uses approved pricing language for transparency",
+            "neutral_comment_filtering": "Leaves alone neutral comments referencing other comments unless negative toward LeaseEnd"
         }
     }
+
+# New endpoint to migrate existing data to include reasoning
+@app.post("/add-reasoning-to-existing")
+async def add_reasoning_to_existing():
+    """One-time migration to add reasoning to existing response entries"""
+    try:
+        db = SessionLocal()
+        
+        # Find responses without reasoning
+        responses_without_reasoning = db.query(ResponseEntry).filter(
+            (ResponseEntry.reasoning == None) | 
+            (ResponseEntry.reasoning == '') | 
+            (ResponseEntry.reasoning == 'No reasoning provided')
+        ).all()
+        
+        updated_count = 0
+        
+        for response in responses_without_reasoning:
+            # Generate reasoning for existing response
+            reasoning_prompt = f"""Analyze this comment and response pair for LeaseEnd.com and provide detailed reasoning for why this action/response was appropriate.
+
+COMMENT: "{response.comment}"
+ACTION TAKEN: "{response.action}"
+RESPONSE GIVEN: "{response.reply if response.reply else 'No response generated'}"
+
+Provide detailed reasoning that explains:
+1. What type of comment this is
+2. Why this action was appropriate
+3. What business value this decision provides
+4. How this aligns with LeaseEnd's goals
+
+Keep reasoning concise but informative (2-3 sentences)."""
+
+            try:
+                reasoning = claude.basic_request(reasoning_prompt)
+                response.reasoning = reasoning.strip()
+                updated_count += 1
+            except Exception as e:
+                print(f"Error generating reasoning for response {response.id}: {e}")
+                response.reasoning = f"Auto-generated reasoning for {response.action} action on existing training data"
+        
+        db.commit()
+        db.close()
+        
+        # Reload training data after update
+        new_count = reload_training_data()
+        
+        return {
+            "success": True,
+            "message": "Added reasoning to existing response entries",
+            "updated_count": updated_count,
+            "total_responses": len(responses_without_reasoning),
+            "new_training_count": new_count
+        }
+        
+    except Exception as e:
+        db.rollback()
+        db.close()
+        return {"error": f"Migration failed: {str(e)}"}
 
 # Railway-specific server startup
 if __name__ == "__main__":
