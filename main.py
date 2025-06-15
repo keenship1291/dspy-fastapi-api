@@ -21,11 +21,6 @@ FACEBOOK_APP_SECRET = os.getenv("FACEBOOK_APP_SECRET")
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID")
 FACEBOOK_PAGE_TOKEN = os.getenv("FACEBOOK_PAGE_TOKEN")
 
-# Google Sheets Configuration - Now using environment variables
-GOOGLE_SHEETS_API_KEY = os.getenv("GOOGLE_SHEETS_API_KEY")
-TRAINING_DATA_SHEET_ID = os.getenv("TRAINING_DATA_SHEET_ID", "1-dQAp8bgLcW7kri_6YHz3yZJrxDQMGr30GOrDmunnZk")
-TRAINING_DATA_RANGE = os.getenv("TRAINING_DATA_RANGE", "6.7.25 Import!A:C")
-
 # GitHub Configuration
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")  # Personal Access Token
 GITHUB_OWNER = os.getenv("GITHUB_OWNER", "dten213")  # Your GitHub username
@@ -109,7 +104,98 @@ try:
 except Exception as e:
     raise ValueError(f"Failed to configure DSPy: {str(e)}")
 
+# Smart CSV sync: Only sync if files don't exist locally
+def smart_csv_sync():
+    """Only sync from GitHub if local files don't exist"""
+    files_to_sync = []
+    
+    for csv_file in [RESPONSE_DATABASE_CSV, ACTIVE_FB_POST_ID_CSV]:
+        if not os.path.exists(csv_file):
+            files_to_sync.append(csv_file)
+    
+    if files_to_sync:
+        print(f"🔄 Missing local files, syncing from GitHub: {files_to_sync}")
+        sync_csv_from_github()
+    else:
+        print("✅ Local CSV files exist, skipping GitHub sync")
+
+# Smart startup sync
+print("🚀 Starting up with smart CSV sync...")
+smart_csv_sync()
+
 # GitHub Integration Functions
+def download_file_from_github(file_path):
+    """Download a file from GitHub repository"""
+    try:
+        if not GITHUB_TOKEN:
+            print(f"⚠️ No GitHub token found, cannot download {file_path}")
+            return None
+        
+        # GitHub API headers
+        headers = {
+            'Authorization': f'token {GITHUB_TOKEN}',
+            'Accept': 'application/vnd.github.v3+json'
+        }
+        
+        # Get file from GitHub
+        get_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{file_path}"
+        response = requests.get(get_url, headers=headers)
+        
+        if response.status_code == 200:
+            file_data = response.json()
+            # Decode base64 content
+            content = base64.b64decode(file_data['content']).decode('utf-8')
+            print(f"✅ Downloaded {file_path} from GitHub ({len(content)} characters)")
+            return content
+        elif response.status_code == 404:
+            print(f"📝 File {file_path} not found in GitHub, will create new")
+            return None
+        else:
+            print(f"❌ Error downloading {file_path}: {response.status_code}")
+            return None
+            
+    except Exception as e:
+        print(f"❌ Error downloading from GitHub: {e}")
+        return None
+
+def sync_csv_from_github():
+    """Download and sync CSV files from GitHub to Railway on startup"""
+    print("🔄 Syncing CSV files from GitHub...")
+    
+    files_synced = 0
+    
+    for csv_file in [RESPONSE_DATABASE_CSV, ACTIVE_FB_POST_ID_CSV]:
+        try:
+            # Download from GitHub
+            github_content = download_file_from_github(csv_file)
+            
+            if github_content:
+                # Write to local Railway file
+                with open(csv_file, 'w', encoding='utf-8') as file:
+                    file.write(github_content)
+                
+                # Count lines for verification
+                lines = github_content.count('\n')
+                print(f"✅ Synced {csv_file}: {lines} lines from GitHub → Railway")
+                files_synced += 1
+            else:
+                # Create empty file with headers if not found in GitHub
+                if csv_file == RESPONSE_DATABASE_CSV:
+                    with open(csv_file, 'w', newline='', encoding='utf-8') as file:
+                        writer = csv.writer(file)
+                        writer.writerow(['comment', 'action', 'reply'])
+                    print(f"📝 Created new {csv_file} with headers")
+                elif csv_file == ACTIVE_FB_POST_ID_CSV:
+                    with open(csv_file, 'w', newline='', encoding='utf-8') as file:
+                        writer = csv.writer(file)
+                        writer.writerow(['Ad account name', 'Campaign name', 'Ad set name', 'Ad name', 'Page ID', 'Post Id', 'Object Story ID'])
+                    print(f"📝 Created new {csv_file} with headers")
+                
+        except Exception as e:
+            print(f"❌ Error syncing {csv_file}: {e}")
+    
+    print(f"🎯 GitHub sync complete: {files_synced} files synced from GitHub")
+    return files_synced
 def commit_file_to_github(file_path, content, commit_message):
     """Commit a file to GitHub repository"""
     try:
@@ -297,76 +383,10 @@ def append_active_fb_post_id(ad_account_name, campaign_name, ad_set_name, ad_nam
         print(f"Full error: {traceback.format_exc()}")
         return False
 
-# Google Sheets Integration Functions
-def load_training_data_from_sheets():
-    """Load training data from Google Sheets with robust error handling"""
-    try:
-        if not GOOGLE_SHEETS_API_KEY:
-            print("⚠️ No Google Sheets API key found, skipping sheets data")
-            return []
-        
-        # Try multiple ranges in order of preference
-        ranges_to_try = [
-            TRAINING_DATA_RANGE,  # Primary range from environment variable
-            "6.7.25 Import!A:C",  # Known working range
-            "A:C",  # No sheet name (uses first sheet)
-            "Sheet1!A:C",  # Default fallback
-        ]
-        
-        # Try each range until one works
-        for range_attempt in ranges_to_try:
-            try:
-                url = f"https://sheets.googleapis.com/v4/spreadsheets/{TRAINING_DATA_SHEET_ID}/values/{range_attempt}?key={GOOGLE_SHEETS_API_KEY}"
-                response = requests.get(url)
-                
-                if response.status_code == 200:
-                    print(f"✅ Successfully connected using range: {range_attempt}")
-                    data = response.json()
-                    values = data.get('values', [])
-                    
-                    if not values:
-                        print("⚠️ No data found in Google Sheets")
-                        return []
-                    
-                    # Process the data - expect 3 columns: comment, action, reply
-                    training_examples = []
-                    headers = values[0] if values else []
-                    print(f"📋 Sheet headers: {headers}")
-                    
-                    for row_idx, row in enumerate(values[1:], 1):  # Skip header row
-                        if len(row) >= 3:  # Ensure minimum required fields
-                            training_examples.append({
-                                'comment': row[0] if len(row) > 0 else '',
-                                'action': row[1] if len(row) > 1 else 'leave_alone',
-                                'reply': row[2] if len(row) > 2 else ''
-                            })
-                        elif len(row) >= 1 and row[0].strip():  # Handle partial rows with at least a comment
-                            training_examples.append({
-                                'comment': row[0],
-                                'action': row[1] if len(row) > 1 else 'leave_alone',
-                                'reply': row[2] if len(row) > 2 else ''
-                            })
-                    
-                    print(f"✅ Loaded {len(training_examples)} training examples from Google Sheets")
-                    return training_examples
-                    
-                else:
-                    print(f"⚠️ Failed with range {range_attempt}: HTTP {response.status_code}")
-                    continue
-                    
-            except Exception as e:
-                print(f"⚠️ Failed with range {range_attempt}: {e}")
-                continue
-        
-        print(f"❌ All range attempts failed for sheet ID: {TRAINING_DATA_SHEET_ID}")
-        return []
-        
-    except Exception as e:
-        print(f"❌ Error loading from Google Sheets: {e}")
-        return []
-
-def load_training_data_from_csv():
+def load_training_data():
     """Load training examples from response_database.csv"""
+    print("🔄 Loading training data from CSV...")
+    
     try:
         data = read_response_database()
         print(f"✅ Loaded {len(data)} training examples from response_database.csv")
@@ -374,36 +394,6 @@ def load_training_data_from_csv():
     except Exception as e:
         print(f"❌ Error loading response_database.csv: {e}")
         return []
-
-def load_training_data():
-    """Load training examples from Google Sheets first, CSV as fallback"""
-    print("🔄 Loading training data...")
-    
-    # Try Google Sheets first
-    sheets_examples = load_training_data_from_sheets()
-    
-    # Load CSV as fallback/supplement
-    csv_examples = load_training_data_from_csv()
-    
-    # Combine both sources
-    all_examples = sheets_examples + csv_examples
-    
-    # Remove duplicates based on comment content
-    seen_comments = set()
-    deduplicated_examples = []
-    
-    for example in all_examples:
-        comment_key = example['comment'].strip().lower()
-        if comment_key not in seen_comments and comment_key:
-            seen_comments.add(comment_key)
-            deduplicated_examples.append(example)
-    
-    print(f"📊 Total training examples loaded:")
-    print(f"   - Google Sheets: {len(sheets_examples)}")
-    print(f"   - CSV Database: {len(csv_examples)}")
-    print(f"   - Total (deduplicated): {len(deduplicated_examples)}")
-    
-    return deduplicated_examples
 
 # Global training data
 TRAINING_DATA = load_training_data()
@@ -583,10 +573,10 @@ app = FastAPI()
 def read_root():
     return {
         "message": "Lease End AI Assistant - Core AI System",
-        "version": "14.0",
+        "version": "15.0",
         "training_examples": len(TRAINING_DATA),
         "actions": ["respond", "react", "delete", "leave_alone"],
-        "features": ["Pure AI Classification", "Real-time Learning", "Google Sheets Integration", "CSV Database Management"],
+        "features": ["Pure AI Classification", "Real-time Learning", "GitHub CSV Integration"],
         "approach": "Core AI functionality - comment processing and feedback learning",
         "endpoints": {
             "/process-comment": "Initial comment processing",
@@ -610,11 +600,8 @@ def read_root():
             }
         },
         "training_data_system": {
-            "primary_source": "Google Sheets",
-            "fallback_source": "response_database.csv",
-            "sheet_id": TRAINING_DATA_SHEET_ID,
-            "range": TRAINING_DATA_RANGE,
-            "managed_by": "n8n workflows"
+            "source": "response_database.csv (GitHub synced)",
+            "managed_by": "FastAPI append endpoints + GitHub commits"
         },
         "philosophy": "Let Claude do what it does best - understand context and generate responses."
     }
@@ -707,6 +694,49 @@ async def reload_training_data_endpoint():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reloading training data: {str(e)}")
+
+@app.get("/download-csv/{filename}")
+async def download_csv(filename: str):
+    """Download current CSV files from Railway"""
+    if filename not in ["response_database.csv", "active_fb_post_id.csv"]:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    
+    try:
+        if not os.path.exists(filename):
+            raise HTTPException(status_code=404, detail="File not found")
+            
+        with open(filename, 'r', encoding='utf-8') as file:
+            content = file.read()
+            
+        # Count lines for reference
+        lines = content.count('\n')
+        
+        return {
+            "filename": filename,
+            "content": content,
+            "line_count": lines,
+            "message": f"Current {filename} with {lines} lines from Railway"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
+
+@app.post("/sync-from-github")
+async def sync_from_github_endpoint():
+    """Manually trigger sync from GitHub"""
+    try:
+        files_synced = sync_csv_from_github()
+        # Reload training data after sync
+        new_count = reload_training_data()
+        
+        return {
+            "success": True,
+            "message": "Successfully synced from GitHub",
+            "files_synced": files_synced,
+            "new_training_count": new_count,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error syncing from GitHub: {str(e)}")
 
 # Original Endpoints (unchanged)
 @app.post("/process-comment", response_model=ProcessedComment)
@@ -943,10 +973,7 @@ async def get_stats():
         "data_structure": {
             "fields": ["comment", "action", "reply"],
             "field_count": 3,
-            "primary_source": "Google Sheets",
-            "fallback_source": "response_database.csv",
-            "sheet_id": TRAINING_DATA_SHEET_ID,
-            "range": TRAINING_DATA_RANGE
+            "source": "response_database.csv (GitHub synced)"
         },
         "supported_actions": {
             "respond": "Generate helpful response (with CTA for high-intent)",
