@@ -8,6 +8,7 @@ from pydantic import BaseModel
 import requests
 import json
 from typing import List, Dict, Optional
+import base64
 
 # Load API key from environment variable (set in Railway dashboard)
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
@@ -24,6 +25,12 @@ FACEBOOK_PAGE_TOKEN = os.getenv("FACEBOOK_PAGE_TOKEN")
 GOOGLE_SHEETS_API_KEY = os.getenv("GOOGLE_SHEETS_API_KEY")
 TRAINING_DATA_SHEET_ID = os.getenv("TRAINING_DATA_SHEET_ID", "1-dQAp8bgLcW7kri_6YHz3yZJrxDQMGr30GOrDmunnZk")
 TRAINING_DATA_RANGE = os.getenv("TRAINING_DATA_RANGE", "6.7.25 Import!A:C")
+
+# GitHub Configuration
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")  # Personal Access Token
+GITHUB_OWNER = os.getenv("GITHUB_OWNER", "dten213")  # Your GitHub username
+GITHUB_REPO = os.getenv("GITHUB_REPO", "dspy-fastapi-api")  # Your repo name
+GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")  # Branch to commit to
 
 # CSV File Paths
 RESPONSE_DATABASE_CSV = "response_database.csv"
@@ -102,6 +109,77 @@ try:
 except Exception as e:
     raise ValueError(f"Failed to configure DSPy: {str(e)}")
 
+# GitHub Integration Functions
+def commit_file_to_github(file_path, content, commit_message):
+    """Commit a file to GitHub repository"""
+    try:
+        if not GITHUB_TOKEN:
+            print("⚠️ No GitHub token found, skipping GitHub commit")
+            return False
+        
+        # GitHub API headers
+        headers = {
+            'Authorization': f'token {GITHUB_TOKEN}',
+            'Accept': 'application/vnd.github.v3+json',
+            'Content-Type': 'application/json'
+        }
+        
+        # Get current file SHA (required for updating existing files)
+        get_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{file_path}"
+        get_response = requests.get(get_url, headers=headers)
+        
+        sha = None
+        if get_response.status_code == 200:
+            sha = get_response.json().get('sha')
+            print(f"📋 Found existing file SHA: {sha[:7]}...")
+        elif get_response.status_code == 404:
+            print(f"📝 Creating new file: {file_path}")
+        else:
+            print(f"❌ Error getting file info: {get_response.status_code}")
+            return False
+        
+        # Encode content to base64
+        content_encoded = base64.b64encode(content.encode('utf-8')).decode('utf-8')
+        
+        # Prepare commit data
+        commit_data = {
+            'message': commit_message,
+            'content': content_encoded,
+            'branch': GITHUB_BRANCH
+        }
+        
+        # Add SHA if updating existing file
+        if sha:
+            commit_data['sha'] = sha
+        
+        # Commit to GitHub
+        put_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{file_path}"
+        put_response = requests.put(put_url, headers=headers, json=commit_data)
+        
+        if put_response.status_code in [200, 201]:
+            commit_sha = put_response.json().get('commit', {}).get('sha', 'unknown')
+            print(f"✅ Successfully committed to GitHub: {commit_sha[:7]}...")
+            return True
+        else:
+            print(f"❌ Failed to commit to GitHub: {put_response.status_code}")
+            print(f"Response: {put_response.text}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error committing to GitHub: {e}")
+        return False
+
+def read_csv_as_string(file_path):
+    """Read CSV file and return as string"""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as file:
+            return file.read()
+    except FileNotFoundError:
+        print(f"⚠️ File not found: {file_path}")
+        return None
+    except Exception as e:
+        print(f"❌ Error reading file: {e}")
+        return None
 # CSV Management Functions
 def read_response_database():
     """Read all entries from response_database.csv"""
@@ -143,6 +221,16 @@ def append_response_database(comment, action, reply):
             with open(RESPONSE_DATABASE_CSV, 'r', encoding='utf-8') as file:
                 lines = file.readlines()
                 print(f"📊 File now has {len(lines)} lines")
+        
+        # Commit to GitHub
+        file_content = read_csv_as_string(RESPONSE_DATABASE_CSV)
+        if file_content:
+            commit_message = f"Add response entry: {action} - {comment[:50]}..."
+            github_success = commit_file_to_github(RESPONSE_DATABASE_CSV, file_content, commit_message)
+            if github_success:
+                print(f"🚀 Committed {RESPONSE_DATABASE_CSV} to GitHub")
+            else:
+                print(f"⚠️ Local file updated but GitHub commit failed")
         
         return True
     except Exception as e:
@@ -191,6 +279,16 @@ def append_active_fb_post_id(ad_account_name, campaign_name, ad_set_name, ad_nam
             with open(ACTIVE_FB_POST_ID_CSV, 'r', encoding='utf-8') as file:
                 lines = file.readlines()
                 print(f"📊 File now has {len(lines)} lines")
+        
+        # Commit to GitHub
+        file_content = read_csv_as_string(ACTIVE_FB_POST_ID_CSV)
+        if file_content:
+            commit_message = f"Add FB post: {ad_name[:30]} - Post ID {post_id}"
+            github_success = commit_file_to_github(ACTIVE_FB_POST_ID_CSV, file_content, commit_message)
+            if github_success:
+                print(f"🚀 Committed {ACTIVE_FB_POST_ID_CSV} to GitHub")
+            else:
+                print(f"⚠️ Local file updated but GitHub commit failed")
         
         return True
     except Exception as e:
