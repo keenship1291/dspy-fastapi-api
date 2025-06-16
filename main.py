@@ -339,13 +339,15 @@ BRAND VOICE:
 RESPONSE STYLE:
 - Sound natural and human
 - Get straight to the point - no unnecessary sentence starters
-- Use commas, never dashes (- or --)
+- NEVER use dashes (-), em dashes (—), or en dashes (–) anywhere in responses
+- Use commas, periods, and semicolons for punctuation instead
 - Maximum 1 exclamation point
 - Keep concise (1-2 sentences usually)
 - Address their specific concern directly
 - Don't blindly agree with misinformation
 - Make LeaseEnd the clear best choice
 - Be direct and efficient in communication
+- Avoid AI-typical formatting like bullet points or dashes
 
 EXAMPLES OF GOOD RESPONSES:
 {context_examples}
@@ -359,7 +361,19 @@ Generate a helpful, natural response that addresses their comment directly and m
 
     try:
         response = claude.basic_request(prompt)
-        return response.strip()
+        
+        # Clean response to remove any dashes that might have slipped through
+        cleaned_response = response.strip()
+        
+        # Replace any type of dash with appropriate punctuation
+        cleaned_response = cleaned_response.replace(' - ', ', ')  # Regular dash with spaces
+        cleaned_response = cleaned_response.replace(' – ', ', ')  # En dash with spaces  
+        cleaned_response = cleaned_response.replace(' — ', ', ')  # Em dash with spaces
+        cleaned_response = cleaned_response.replace('-', '')       # Any remaining dashes
+        cleaned_response = cleaned_response.replace('–', '')       # Any remaining en dashes
+        cleaned_response = cleaned_response.replace('—', '')       # Any remaining em dashes
+        
+        return cleaned_response
     except Exception as e:
         print(f"Error generating response: {e}")
         return "Thank you for your comment! We'd be happy to help with any lease buyout questions."
