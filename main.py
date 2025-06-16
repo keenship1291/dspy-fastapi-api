@@ -447,7 +447,7 @@ class ResponseCreate(BaseModel):
     comment: str
     action: str
     reply: str
-    reasoning: Optional[str] = ""  # NEW FIELD
+    reasoning: Optional[str] = ""  # Keep this model in case it's used elsewhere
 
 app = FastAPI()
 
@@ -473,10 +473,10 @@ def read_root():
             "/process-comment": "Main comment processing (enhanced AI logic)",
             "/process-comment-backup": "Backup comment processing endpoint",
             "/process-feedback": "Human feedback processing",
+            "/approve-response": "Save approved responses to training data",
             "/fb-posts": "Get all FB posts from database",
             "/fb-posts/add": "Add new FB post (auto-duplicate handling)",
             "/responses": "Get all response training data",
-            "/responses/add": "Add new response training data",
             "/reload-training-data": "Reload training data from database",
             "/stats": "View training data statistics"
         },
@@ -632,37 +632,6 @@ async def approve_response(request: ApproveRequest):
             "success": False,
             "error": f"Failed to approve response: {str(e)}"
         }
-
-@app.post("/responses/add")
-async def add_response(response: ResponseCreate):
-    """Add new response training data"""
-    try:
-        db = SessionLocal()
-        
-        db_response = ResponseEntry(
-            comment=response.comment,
-            action=response.action,
-            reply=response.reply,
-            reasoning=response.reasoning  # NEW FIELD
-        )
-        
-        db.add(db_response)
-        db.commit()
-        db.close()
-        
-        # Reload training data
-        new_count = reload_training_data()
-        
-        return {
-            "success": True,
-            "message": "Response added successfully",
-            "new_training_count": new_count
-        }
-        
-    except Exception as e:
-        db.rollback()
-        db.close()
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.post("/reload-training-data")
 async def reload_training_data_endpoint():
