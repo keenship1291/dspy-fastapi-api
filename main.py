@@ -858,7 +858,9 @@ IMPORTANT:
 - If human says "too pushy", make it more helpful and less sales-y
 - If human says "address objection" or "respond to this", recommend REPLY action
 
-Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE/IGNORE", "reply": "...", "improvements_made": "...", "confidence": 0.85}}"""
+CRITICAL: Provide a "reasoning" field that explains WHY you chose this action and response - similar to classification reasoning (e.g., "High-intent prospect asking about pricing - needs informative response with pricing guidelines" or "Positive feedback from customer - deserves appreciation response" or "Spam/irrelevant content - should be deleted").
+
+Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE/IGNORE", "reply": "...", "reasoning": "Explain why this action and response were chosen based on comment analysis and human feedback", "confidence": 0.85}}"""
 
         improved_response = claude.basic_request(feedback_prompt)
         
@@ -900,11 +902,12 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
                 "category": result.get('sentiment', 'neutral').lower(),
                 "action": improved_action,
                 "reply": result.get('reply', ''),
+                "reasoning": result.get('reasoning', 'Applied human feedback to improve response'),  # CLASSIFICATION-STYLE REASONING
                 "confidence_score": float(result.get('confidence', 0.85)),
                 "approved": "pending",
                 "feedback_text": "",
                 "version": new_version,
-                "improvements_made": result.get('improvements_made', 'Applied human feedback'),
+                "improvements_made": result.get('reasoning', 'Applied human feedback'),  # Keep for reference
                 "feedback_processed": True,
                 "success": True
             }
@@ -918,6 +921,7 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
                 "category": "neutral",
                 "action": "leave_alone",
                 "reply": "Thank you for your comment. We appreciate your feedback.",
+                "reasoning": "JSON parsing failed during feedback processing - applied safe fallback response",  # CLASSIFICATION-STYLE REASONING
                 "confidence_score": 0.5,
                 "approved": "pending",
                 "feedback_text": "",
@@ -935,6 +939,7 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
             "category": "error",
             "action": "leave_alone",
             "reply": "Thank you for your comment. We appreciate your feedback.",
+            "reasoning": "Error occurred during feedback processing - applied safe fallback response",  # CLASSIFICATION-STYLE REASONING
             "confidence_score": 0.0,
             "approved": "pending",
             "feedback_text": "",
