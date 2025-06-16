@@ -419,7 +419,7 @@ class FeedbackRequest(BaseModel):
     original_response: str = ""
     original_action: str
     feedback_text: str
-    postId: str
+    commentId: str  # CHANGED FROM postId
     current_version: str = "v1"
     
     class Config:
@@ -769,7 +769,7 @@ async def process_feedback(request: FeedbackRequest):
         original_action = request.original_action.strip().lower()
         feedback_text = request.feedback_text.strip()
         
-        print(f"🔄 Processing feedback for postId: {request.postId}")
+        print(f"🔄 Processing feedback for commentId: {request.commentId}")  # CHANGED FROM postId
         print(f"📝 Feedback: {feedback_text[:100]}...")
         
         # Enhanced prompt that includes human feedback
@@ -837,7 +837,7 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
             new_version = f"v{current_version_num + 1}"
             
             return {
-                "postId": request.postId,
+                "commentId": request.commentId,  # CHANGED FROM postId
                 "original_comment": original_comment,
                 "category": result.get('sentiment', 'neutral').lower(),
                 "action": improved_action,
@@ -856,7 +856,7 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
             print(f"❌ JSON parsing failed: {e}")
             new_version_num = int(request.current_version.replace('v', '')) + 1 if request.current_version.startswith('v') else 2
             return {
-                "postId": request.postId,
+                "commentId": request.commentId,  # CHANGED FROM postId
                 "original_comment": original_comment,
                 "category": "neutral",
                 "action": "leave_alone",
@@ -874,7 +874,7 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
         print(f"❌ Feedback processing error: {e}")
         new_version_num = int(request.current_version.replace('v', '')) + 1 if request.current_version.startswith('v') else 2
         return {
-            "postId": request.postId,
+            "commentId": request.commentId,  # CHANGED FROM postId
             "original_comment": request.original_comment,
             "category": "error",
             "action": "leave_alone",
