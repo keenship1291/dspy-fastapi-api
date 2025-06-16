@@ -425,6 +425,15 @@ class FeedbackRequest(BaseModel):
     class Config:
         extra = "ignore"
 
+class ApproveRequest(BaseModel):
+    original_comment: str
+    action: str
+    reply: str
+    reasoning: str = ""
+    
+    class Config:
+        extra = "ignore"
+
 class FBPostCreate(BaseModel):
     ad_account_name: str
     campaign_name: str
@@ -580,17 +589,10 @@ async def get_responses():
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.post("/approve-response")
-async def approve_response(request: Request):
+async def approve_response(request: ApproveRequest):
     """Save approved response to training data"""
     try:
-        request_data = await request.json()
-        
-        comment = request_data.get('original_comment', '').strip()
-        action = request_data.get('action', '').strip() 
-        reply = request_data.get('reply', '').strip()
-        reasoning = request_data.get('reasoning', '').strip()
-        
-        if not comment or not action:
+        if not request.original_comment or not request.action:
             return {
                 "success": False,
                 "error": "Missing required fields: original_comment and action"
@@ -600,10 +602,10 @@ async def approve_response(request: Request):
         db = SessionLocal()
         
         db_response = ResponseEntry(
-            comment=comment,
-            action=action,
-            reply=reply,
-            reasoning=reasoning
+            comment=request.original_comment,
+            action=request.action,
+            reply=request.reply,
+            reasoning=request.reasoning
         )
         
         db.add(db_response)
@@ -618,10 +620,10 @@ async def approve_response(request: Request):
             "message": "Response approved and added to training data",
             "training_count": new_count,
             "approved_data": {
-                "comment": comment,
-                "action": action,
-                "reply": reply,
-                "reasoning": reasoning
+                "comment": request.original_comment,
+                "action": request.action,
+                "reply": request.reply,
+                "reasoning": request.reasoning
             }
         }
         
@@ -678,30 +680,12 @@ async def reload_training_data_endpoint():
 
 # Updated AI Processing Endpoints with Enhanced Logic
 @app.post("/process-comment")
-async def process_comment(request: Request):
-    """Core comment processing using ENHANCED AI classification - FLEXIBLE INPUT"""
+async def process_comment(request: CommentRequest):
+    """Core comment processing using ENHANCED AI classification - CLEAN PYDANTIC"""
     try:
-        # Parse JSON from request body like the working feedback endpoint
-        request_data = await request.json()
-        
-        # Extract data flexibly from any JSON structure with robust handling
-        comment_text = request_data.get('comment') or request_data.get('message') or request_data.get('Message') or "No message content"
-        if comment_text and hasattr(comment_text, 'strip'):
-            comment_text = comment_text.strip()
-        else:
-            comment_text = str(comment_text) if comment_text else "No message content"
-        
-        post_id = request_data.get('postId') or request_data.get('post_id') or request_data.get('POST_ID') or request_data.get('POST ID') or "unknown"
-        if post_id and hasattr(post_id, 'strip'):
-            post_id = post_id.strip()
-        else:
-            post_id = str(post_id) if post_id else "unknown"
-        
-        created_time = request_data.get('created_time') or request_data.get('created_Time') or request_data.get('Created Time') or ""
-        if created_time and hasattr(created_time, 'strip'):
-            created_time = created_time.strip()
-        else:
-            created_time = str(created_time) if created_time else ""
+        comment_text = request.get_comment_text()
+        post_id = request.get_post_id()
+        created_time = request.get_created_time()
         
         print(f"🔄 Processing comment with ENHANCED logic: '{comment_text[:50]}...' for post: {post_id}")
         
@@ -772,24 +756,11 @@ async def process_comment(request: Request):
 
 # Alternative simple endpoint that accepts raw JSON
 @app.post("/process-comment-backup")
-async def process_comment_backup(request: Request):
+async def process_comment_backup(request: CommentRequest):
     """Backup comment processing endpoint"""
     try:
-        # Parse JSON from request body like the working feedback endpoint
-        request_data = await request.json()
-        
-        # Extract data flexibly from any JSON structure with robust handling
-        comment_text = request_data.get('comment') or request_data.get('message') or request_data.get('Message') or "No message content"
-        if comment_text and hasattr(comment_text, 'strip'):
-            comment_text = comment_text.strip()
-        else:
-            comment_text = str(comment_text) if comment_text else "No message content"
-        
-        post_id = request_data.get('postId') or request_data.get('post_id') or request_data.get('POST_ID') or request_data.get('POST ID') or "unknown"
-        if post_id and hasattr(post_id, 'strip'):
-            post_id = post_id.strip()
-        else:
-            post_id = str(post_id) if post_id else "unknown"
+        comment_text = request.get_comment_text()
+        post_id = request.get_post_id()
         
         print(f"🔄 Backup processing: '{comment_text[:50]}...' for post: {post_id}")
         
