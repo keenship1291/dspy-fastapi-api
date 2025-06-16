@@ -171,7 +171,7 @@ def reload_training_data():
     return len(TRAINING_DATA)
 
 # ENHANCED AI Classification with enhanced business logic
-def classify_comment_with_ai(comment, postId=""):
+def classify_comment_with_ai(comment, commentId=""):  # CHANGED FROM postId
     """Use Claude AI to classify comment with enhanced business logic"""
     
     prompt = f"""You are analyzing comments for LeaseEnd.com, which specializes in lease buyout services. 
@@ -369,12 +369,12 @@ class CommentRequest(BaseModel):
     # Primary fields
     comment: Optional[str] = None
     message: Optional[str] = None  # Accept both comment and message
-    postId: str
+    commentId: str  # CHANGED FROM postId
     created_time: Optional[str] = ""
     
     # Optional fields that might come from n8n
-    post_id: Optional[str] = None  # Alternative field name
-    POST_ID: Optional[str] = None  # Another alternative
+    comment_id: Optional[str] = None  # Alternative field name
+    COMMENT_ID: Optional[str] = None  # Another alternative
     created_Time: Optional[str] = None  # Alternative capitalization
     
     class Config:
@@ -388,12 +388,12 @@ class CommentRequest(BaseModel):
             "No message content"
         ).strip()
     
-    def get_post_id(self) -> str:
-        """Get the post ID from any available field"""
+    def get_comment_id(self) -> str:  # CHANGED FROM get_post_id
+        """Get the comment ID from any available field"""
         return (
-            self.postId or 
-            self.post_id or 
-            self.POST_ID or 
+            self.commentId or 
+            self.comment_id or 
+            self.COMMENT_ID or 
             "unknown"
         ).strip()
     
@@ -653,15 +653,15 @@ async def process_comment(request: CommentRequest):
     """Core comment processing using ENHANCED AI classification - CLEAN PYDANTIC"""
     try:
         comment_text = request.get_comment_text()
-        post_id = request.get_post_id()
+        comment_id = request.get_comment_id()  # CHANGED FROM post_id
         created_time = request.get_created_time()
         
-        print(f"🔄 Processing comment with ENHANCED logic: '{comment_text[:50]}...' for post: {post_id}")
+        print(f"🔄 Processing comment with ENHANCED logic: '{comment_text[:50]}...' for comment: {comment_id}")
         
         # Validate we have actual content
         if not comment_text or comment_text == "No message content":
             return {
-                "postId": post_id,
+                "commentId": comment_id,  # CHANGED FROM postId
                 "original_comment": "Empty comment",
                 "category": "neutral",
                 "action": "delete",
@@ -671,7 +671,7 @@ async def process_comment(request: CommentRequest):
             }
         
         # Use ENHANCED AI to classify the comment
-        ai_classification = classify_comment_with_ai(comment_text, post_id)
+        ai_classification = classify_comment_with_ai(comment_text, comment_id)  # CHANGED FROM post_id
         
         sentiment = ai_classification['sentiment']
         action = ai_classification['action'].lower()
@@ -697,7 +697,7 @@ async def process_comment(request: CommentRequest):
             confidence_score = 0.9
         
         return {
-            "postId": post_id,
+            "commentId": comment_id,  # CHANGED FROM postId
             "original_comment": comment_text,
             "category": sentiment.lower(),
             "action": mapped_action,
@@ -712,7 +712,7 @@ async def process_comment(request: CommentRequest):
     except Exception as e:
         print(f"❌ Error processing comment: {e}")
         return {
-            "postId": "unknown",
+            "commentId": "unknown",  # CHANGED FROM postId
             "original_comment": "Error processing",
             "category": "error",
             "action": "leave_alone",
@@ -729,12 +729,12 @@ async def process_comment_backup(request: CommentRequest):
     """Backup comment processing endpoint"""
     try:
         comment_text = request.get_comment_text()
-        post_id = request.get_post_id()
+        comment_id = request.get_comment_id()  # CHANGED FROM post_id
         
-        print(f"🔄 Backup processing: '{comment_text[:50]}...' for post: {post_id}")
+        print(f"🔄 Backup processing: '{comment_text[:50]}...' for comment: {comment_id}")
         
         return {
-            "postId": post_id,
+            "commentId": comment_id,  # CHANGED FROM postId
             "original_comment": comment_text,
             "category": "neutral",
             "action": "leave_alone", 
@@ -748,7 +748,7 @@ async def process_comment_backup(request: CommentRequest):
     except Exception as e:
         print(f"❌ Error in backup processing: {e}")
         return {
-            "postId": "unknown",
+            "commentId": "unknown",  # CHANGED FROM postId
             "original_comment": "Error processing",
             "category": "error",
             "action": "leave_alone",
