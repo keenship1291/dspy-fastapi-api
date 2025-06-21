@@ -223,6 +223,29 @@ Respond in this JSON format: {{"sentiment": "...", "action": "...", "reasoning":
 def generate_response(comment, sentiment, high_intent=False):
     """Generate natural response using Claude"""
     
+    # Detect if this is a potential customer vs just making statements
+    customer_indicators = [
+        "how much", "what are", "can i", "should i", "interested", "looking", 
+        "want to", "need", "help me", "my lease", "my car", "rates", "process",
+        "qualify", "apply", "cost", "price", "how do", "when can", "where do"
+    ]
+    
+    statement_indicators = [
+        "i think", "i believe", "in my opinion", "that's wrong", "that's not true",
+        "never", "always", "people should", "anyone who", "dealerships are",
+        "banks are", "leasing is", "buying is", "worst", "terrible", "bad idea"
+    ]
+    
+    is_potential_customer = any(indicator in comment.lower() for indicator in customer_indicators)
+    is_making_statement = any(indicator in comment.lower() for indicator in statement_indicators)
+    
+    # CTA logic: Only for potential customers, not for people making statements
+    cta_instruction = ""
+    if is_potential_customer and high_intent and not is_making_statement:
+        cta_instruction = "\nFor this potential customer, you may end with a soft CTA like: 'Feel free to check out our site to see your options' or 'We'd be happy to help if you have questions.' Keep it natural and not pushy."
+    elif is_making_statement:
+        cta_instruction = "\nThis person is making a statement or argument. DO NOT include any call to action. Simply address their point, correct any misinformation, and provide helpful information. No sales pitch needed."
+    
     prompt = f"""You are responding to a Facebook comment for LeaseEnd.com, a lease buyout financing company.
 
 COMPANY POSITION - BE CONFIDENT:
@@ -234,8 +257,15 @@ COMPANY POSITION - BE CONFIDENT:
 
 COMMENT SENTIMENT: {sentiment}
 HIGH INTENT PROSPECT: {high_intent}
+POTENTIAL CUSTOMER: {is_potential_customer}
+MAKING STATEMENT: {is_making_statement}
 
 ORIGINAL COMMENT: "{comment}"
+
+RESPONSE STRATEGY:
+- If they're a potential customer asking questions: Be helpful and may include soft CTA
+- If they're making statements/arguments: Address their point, educate if needed, NO CTA
+- If they're spreading misinformation: Politely but firmly correct, provide facts, NO CTA
 
 RESPONSE STYLE:
 - Sound natural and human
@@ -246,6 +276,8 @@ RESPONSE STYLE:
 - Keep concise (1-2 sentences usually)
 - Address their specific concern directly
 - Make LeaseEnd the clear best choice
+
+{cta_instruction}
 
 Generate a helpful, natural response:"""
 
