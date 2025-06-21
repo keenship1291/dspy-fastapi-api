@@ -510,6 +510,8 @@ def read_root():
     }
 
 @app.get("/ping")
+@app.post("/ping") 
+@app.head("/ping")
 def ping():
     """Keep-alive endpoint to prevent Railway cold starts"""
     return {
