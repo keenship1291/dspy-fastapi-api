@@ -451,7 +451,7 @@ class BatchCommentRequest(BaseModel):
     batch_id: Optional[str] = None
 
 class ProcessedComment(BaseModel):
-    postId: str
+    commentId: str  # Changed from postId to commentId
     original_comment: str
     category: str
     action: str
@@ -464,7 +464,7 @@ class FeedbackRequest(BaseModel):
     original_response: str = ""
     original_action: str
     feedback_text: str
-    postId: str
+    commentId: str
     current_version: str = "v1"
     
     class Config:
@@ -845,7 +845,7 @@ async def process_comment(request: CommentRequest):
             confidence_score = 0.9
         
         return ProcessedComment(
-            postId=comment_id,
+            commentId=comment_id,  # Changed from postId
             original_comment=comment_text,
             category=sentiment.lower(),
             action=mapped_action,
@@ -857,7 +857,7 @@ async def process_comment(request: CommentRequest):
     except Exception as e:
         print(f"Error processing comment: {e}")
         return ProcessedComment(
-            postId=request.get_comment_id(),
+            commentId=request.get_comment_id(),
             original_comment=request.get_comment_text(),
             category="error",
             action="leave_alone",
@@ -876,7 +876,7 @@ async def process_feedback(request: FeedbackRequest):
         original_action = request.original_action.strip().lower()
         feedback_text = request.feedback_text.strip()
         
-        print(f"🔄 Processing feedback for postId: {request.postId}")
+        print(f"🔄 Processing feedback for commentId: {request.commentId}")
         print(f"📝 Feedback: {feedback_text[:100]}...")
         
         # Enhanced prompt that includes human feedback
@@ -942,7 +942,7 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
             new_version = f"v{current_version_num + 1}"
             
             return {
-                "postId": request.postId,
+                "commentId": request.commentId,
                 "original_comment": original_comment,
                 "category": result.get('sentiment', 'neutral').lower(),
                 "action": improved_action,
@@ -960,7 +960,7 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
             print(f"❌ JSON parsing failed: {e}")
             new_version_num = int(request.current_version.replace('v', '')) + 1 if request.current_version.startswith('v') else 2
             return {
-                "postId": request.postId,
+                "commentId": request.commentId,
                 "original_comment": original_comment,
                 "category": "neutral",
                 "action": "leave_alone",
@@ -977,7 +977,7 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
         print(f"❌ Feedback processing error: {e}")
         new_version_num = int(request.current_version.replace('v', '')) + 1 if request.current_version.startswith('v') else 2
         return {
-            "postId": request.postId,
+            "commentId": request.commentId,
             "original_comment": request.original_comment,
             "category": "error",
             "action": "leave_alone",
@@ -996,10 +996,10 @@ async def approve_response(request: ApproveRequest):
     try:
         db = SessionLocal()
         
-        # Store the approved response as training data
+        # Store the approved response as training data with the ACTUAL action passed
         response_entry = ResponseEntry(
             comment=request.original_comment,
-            action="respond",
+            action=request.action,  # Use the action from the request, not hardcoded "respond"
             reply=request.reply,
             reasoning=request.reasoning
         )
@@ -1013,8 +1013,9 @@ async def approve_response(request: ApproveRequest):
         
         return {
             "status": "approved",
-            "message": "Response approved and added to training data",
-            "training_examples": len(TRAINING_DATA)
+            "message": f"Response approved and added to training data with action: {request.action}",
+            "training_examples": len(TRAINING_DATA),
+            "action_stored": request.action
         }
         
     except Exception as e:
