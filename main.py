@@ -522,9 +522,10 @@ def ping():
 def health_check():
     """Health check endpoint for monitoring"""
     try:
-        # Quick database check
+        # Quick database check with proper SQLAlchemy syntax
+        from sqlalchemy import text
         db = SessionLocal()
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         db.close()
         
         return {
