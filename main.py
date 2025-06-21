@@ -698,6 +698,108 @@ async def reload_training_data_endpoint():
         raise HTTPException(status_code=500, detail=f"Error reloading training data: {str(e)}")
 
 # Updated AI Processing Endpoints with Enhanced Logic
+class BatchCommentRequest(BaseModel):
+    comments: List[CommentRequest]
+    
+    class Config:
+        extra = "ignore"
+
+@app.post("/process-comments-batch")
+async def process_comments_batch(request: BatchCommentRequest):
+    """Process multiple comments in a single API call"""
+    try:
+        results = []
+        
+        for comment_req in request.comments:
+            try:
+                comment_text = comment_req.get_comment_text()
+                comment_id = comment_req.get_comment_id()
+                created_time = comment_req.get_created_time()
+                
+                print(f"🔄 Batch processing: '{comment_text[:30]}...' for comment: {comment_id}")
+                
+                # Validate we have actual content
+                if not comment_text or comment_text == "No message content":
+                    results.append({
+                        "commentId": comment_id,
+                        "original_comment": "Empty comment",
+                        "category": "neutral",
+                        "action": "delete",
+                        "reply": "",
+                        "confidence_score": 0.0,
+                        "approved": "pending",
+                        "success": True
+                    })
+                    continue
+                
+                # Use ENHANCED AI to classify the comment
+                ai_classification = classify_comment_with_ai(comment_text, comment_id)
+                
+                sentiment = ai_classification['sentiment']
+                action = ai_classification['action'].lower()
+                reasoning = ai_classification['reasoning']
+                high_intent = ai_classification['high_intent']
+                
+                # Map actions to our system
+                action_mapping = {
+                    'reply': 'respond',
+                    'react': 'react', 
+                    'delete': 'delete',
+                    'ignore': 'leave_alone'
+                }
+                
+                mapped_action = action_mapping.get(action, 'leave_alone')
+                
+                # Generate response only if action is 'respond'
+                reply_text = ""
+                confidence_score = 0.85
+                
+                if mapped_action == 'respond':
+                    reply_text = generate_response(comment_text, sentiment, high_intent)
+                    confidence_score = 0.9
+                
+                results.append({
+                    "commentId": comment_id,
+                    "original_comment": comment_text,
+                    "category": sentiment.lower(),
+                    "action": mapped_action,
+                    "reply": reply_text,
+                    "confidence_score": confidence_score,
+                    "approved": "pending",
+                    "success": True,
+                    "reasoning": reasoning
+                })
+                
+            except Exception as e:
+                print(f"❌ Error processing comment {comment_req.get_comment_id()}: {e}")
+                results.append({
+                    "commentId": comment_req.get_comment_id(),
+                    "original_comment": "Error processing",
+                    "category": "error",
+                    "action": "leave_alone",
+                    "reply": "Thank you for your comment. We appreciate your feedback.",
+                    "confidence_score": 0.0,
+                    "approved": "pending",
+                    "success": False,
+                    "error": str(e)
+                })
+        
+        return {
+            "success": True,
+            "processed": len(results),
+            "results": results,
+            "batch_id": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        print(f"❌ Batch processing error: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "processed": 0,
+            "results": []
+        }
+
 @app.post("/process-comment")
 async def process_comment(request: CommentRequest):
     """Core comment processing using ENHANCED AI classification - CLEAN PYDANTIC"""
@@ -970,8 +1072,14 @@ async def get_stats():
         }
     }
 
-# Railway-specific server startup
+# Railway-specific server startup with keep-alive optimization
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(
+        app, 
+        host="0.0.0.0", 
+        port=port,
+        access_log=False,  # Reduce logging overhead
+        keep_alive=300     # Keep connections alive for 5 minutes
+    )
