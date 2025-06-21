@@ -492,7 +492,8 @@ def read_root():
             "/fb-posts/add": "Add new FB post (auto-duplicate handling)",
             "/responses": "Get all response training data",
             "/reload-training-data": "Reload training data from database",
-            "/stats": "View training data statistics"
+            "/stats": "View training data statistics",
+            "/ping": "Keep-alive endpoint to prevent cold starts"
         },
         "business_logic": {
             "positioning": "LeaseEnd is THE BEST option for lease buyout financing",
@@ -507,6 +508,38 @@ def read_root():
             "benefits": ["Simple appends", "No duplicates", "Fast queries", "Concurrent writes"]
         }
     }
+
+@app.get("/ping")
+def ping():
+    """Keep-alive endpoint to prevent Railway cold starts"""
+    return {
+        "status": "alive",
+        "timestamp": datetime.now().isoformat(),
+        "message": "App is running and ready to process requests"
+    }
+
+@app.get("/health")
+def health_check():
+    """Health check endpoint for monitoring"""
+    try:
+        # Quick database check
+        db = SessionLocal()
+        db.execute("SELECT 1")
+        db.close()
+        
+        return {
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "database": "connected",
+            "training_examples": len(TRAINING_DATA)
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "timestamp": datetime.now().isoformat(),
+            "database": "error",
+            "error": str(e)
+        }
 
 # Database Endpoints - Super Simple!
 @app.get("/fb-posts")
