@@ -58,10 +58,10 @@ class BatchJob(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     job_id = Column(String, unique=True, index=True)
-    status = Column(String, default="processing")  # processing, completed, failed
+    status = Column(String, default="processing")
     total_comments = Column(Integer, default=0)
     processed_comments = Column(Integer, default=0)
-    results = Column(Text)  # JSON string of results
+    results = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime)
 
@@ -75,6 +75,30 @@ def get_db():
         yield db
     finally:
         db.close()
+
+# Lease End Brand Context
+BRAND_CONTEXT = {
+    "power_words": {
+        "trust_building": ["transparent", "guaranteed", "reliable", "honest"],
+        "convenience": ["effortless", "hassle-free", "quick", "simple", "online"],
+        "value": ["save", "affordable", "competitive", "best deal", "no hidden fees"],
+        "urgency": ["limited time", "act now", "lock in", "before rates change"]
+    },
+    
+    "competitive_advantages": {
+        "vs_dealerships": "No pressure, transparent pricing, 100% online process",
+        "vs_credit_unions": "No membership required, flexible, fast online",
+        "vs_banks": "Competitive rates, simple process, customer-centric"
+    },
+    
+    "objection_responses": {
+        "time_concerns": "Our online process takes minutes, not hours at a dealership",
+        "hidden_fees": "We're completely transparent - no hidden fees, guaranteed",
+        "best_deal_doubts": "We work with multiple lenders to get you the best rate",
+        "complexity": "We handle all the paperwork - you just sign and we do the rest",
+        "dealership_offers": "Dealerships often have hidden fees and pressure tactics"
+    }
+}
 
 # Custom Anthropic LM for DSPy
 class CustomAnthropic(dspy.LM):
@@ -153,8 +177,15 @@ def load_training_data():
 # Global training data
 TRAINING_DATA = load_training_data()
 
+def reload_training_data():
+    """Reload training data from database"""
+    global TRAINING_DATA
+    TRAINING_DATA = load_training_data()
+    return len(TRAINING_DATA)
+
+# AI Classification with enhanced business logic
 def classify_comment_with_ai(comment, commentId=""):
-    """Use Claude AI to classify comment"""
+    """Use Claude AI to classify comment with enhanced business logic"""
     
     prompt = f"""You are analyzing comments for LeaseEnd.com, which specializes in lease buyout services. 
 
@@ -164,6 +195,18 @@ BUSINESS LOGIC & COMPANY POSITION:
 - Never agree with false information about lease buyouts being bad financial decisions
 - Challenge misinformation politely but firmly - we have the expertise
 - Always effectively address core objections to make buyouts and LeaseEnd the clear best option
+- Comments that negatively mention leasing alternatives (e.g., 'Trading in a lease is bad', 'Dealerships rip you off') should be classified as Positive, as they imply LeaseEnd's services are better
+- Comments asking questions about lease buyouts, rates, or process are high-intent prospects
+- Comments from people who clearly don't lease vehicles should be ignored/deleted
+- Spam, irrelevant, or off-topic comments should be deleted
+- Positive feedback/testimonials should ALWAYS get a reply with appreciation
+- LEAVE ALONE neutral comments that seem to reference other comments UNLESS they're negative toward LeaseEnd/lease buyouts
+
+CURRENT MARKET CONTEXT:
+- Used car prices are inflated, making lease buyouts financially advantageous
+- Many people don't understand the current market opportunity
+- We should educate people on why NOW is a great time for lease buyouts
+- Challenge any comments suggesting lease buyouts are always bad financial decisions
 
 ACTIONS:
 - REPLY: For questions, objections, potential customers, misinformation that needs correction, OR positive feedback/testimonials
@@ -197,17 +240,21 @@ Respond in this JSON format: {{"sentiment": "...", "action": "...", "reasoning":
             # Fallback parsing if JSON fails
             if 'DELETE' in response.upper():
                 action = 'DELETE'
+                reasoning = "Fallback classification: Detected DELETE action in response"
             elif 'REPLY' in response.upper():
                 action = 'REPLY'
+                reasoning = "Fallback classification: Detected REPLY action in response"
             elif 'REACT' in response.upper():
                 action = 'REACT'
+                reasoning = "Fallback classification: Detected REACT action in response"
             else:
                 action = 'IGNORE'
+                reasoning = "Fallback classification: No clear action detected"
                 
             return {
                 'sentiment': 'Neutral',
                 'action': action,
-                'reasoning': 'Fallback classification',
+                'reasoning': reasoning,
                 'high_intent': False
             }
             
@@ -220,8 +267,18 @@ Respond in this JSON format: {{"sentiment": "...", "action": "...", "reasoning":
             'high_intent': False
         }
 
+# Enhanced Response generation with enhanced business logic and smart CTA
 def generate_response(comment, sentiment, high_intent=False):
-    """Generate natural response using Claude"""
+    """Generate natural response using Claude with enhanced business logic"""
+    
+    # Get relevant training examples for context
+    relevant_examples = []
+    for example in TRAINING_DATA:
+        if example['action'] == 'respond' and example['reply']:
+            if any(word in example['comment'].lower() for word in comment.lower().split()[:4]):
+                relevant_examples.append(f"Comment: \"{example['comment']}\"\nReply: \"{example['reply']}\"")
+    
+    context_examples = "\n\n".join(relevant_examples[:3])
     
     # Detect if this is a potential customer vs just making statements
     customer_indicators = [
@@ -236,16 +293,36 @@ def generate_response(comment, sentiment, high_intent=False):
         "banks are", "leasing is", "buying is", "worst", "terrible", "bad idea"
     ]
     
-    is_potential_customer = any(indicator in comment.lower() for indicator in customer_indicators)
-    is_making_statement = any(indicator in comment.lower() for indicator in statement_indicators)
-    
     # Detect urgency/personalized help needs
     urgent_indicators = [
         "urgent", "asap", "need help now", "time sensitive", "deadline", "expires", 
         "confused", "don't understand", "complicated", "help me", "call me", "speak to someone"
     ]
     
+    is_potential_customer = any(indicator in comment.lower() for indicator in customer_indicators)
+    is_making_statement = any(indicator in comment.lower() for indicator in statement_indicators)
     needs_personal_help = any(indicator in comment.lower() for indicator in urgent_indicators)
+    
+    # Detect if this is positive feedback/testimonial
+    positive_feedback_indicators = [
+        "thank you", "thanks", "great service", "amazing", "fantastic", "love", "perfect", 
+        "excellent", "wonderful", "awesome", "best", "helped me", "saved me", "grateful",
+        "appreciate", "thumbs up", "recommend", "highly recommend", "satisfied", "happy"
+    ]
+    
+    is_positive_feedback = any(indicator in comment.lower() for indicator in positive_feedback_indicators)
+    
+    # Detect misinformation that needs correction
+    misinformation_indicators = [
+        "lease buyouts are bad", "never buy your lease", "always return", "terrible idea",
+        "waste of money", "financial mistake", "bad deal", "rip off", "scam"
+    ]
+    
+    needs_correction = any(indicator in comment.lower() for indicator in misinformation_indicators)
+    
+    # Detect rate/pricing questions
+    rate_questions = ["rate", "rates", "interest", "apr", "cost", "price", "pricing", "fee", "fees", "how much"]
+    asking_about_rates = any(indicator in comment.lower() for indicator in rate_questions)
     
     # CTA logic: Only for potential customers, not for people making statements
     cta_instruction = ""
@@ -257,6 +334,26 @@ def generate_response(comment, sentiment, high_intent=False):
     elif is_making_statement:
         cta_instruction = "\nThis person is making a statement or argument. DO NOT include any call to action. Simply address their point, correct any misinformation, and provide helpful information. No sales pitch needed."
     
+    # Special instructions for positive feedback
+    positive_feedback_instruction = ""
+    if is_positive_feedback:
+        positive_feedback_instruction = "\nThis is positive feedback/testimonial - respond with a SHORT, varied appreciation message like 'Thank you!', 'Enjoy your ride!', 'Pleasure working with you!', 'We're so glad we could help!', 'Thanks for choosing LeaseEnd!', or similar. Keep it brief and genuine."
+    
+    # Special instructions for misinformation correction
+    correction_instruction = ""
+    if needs_correction:
+        correction_instruction = "\nThis comment contains misinformation about lease buyouts. Politely but firmly correct it. Emphasize that with current inflated used car prices, lease buyouts are actually a SMART financial decision. Position LeaseEnd as the expert choice. Always effectively address the core objection to make buyouts and LeaseEnd the clear best option."
+    
+    # Special instructions for rate/pricing questions
+    pricing_instruction = ""
+    if asking_about_rates:
+        pricing_instruction = """
+IMPORTANT PRICING GUIDELINES:
+- NEVER share exact rate estimates - say rates depend on make/model and credit info
+- For pricing questions, say: "We charge a doc fee, which pays for the service we provide. The only additional amount you will pay beyond the price of your vehicle, would be for tax, title and registration fees, which you would pay regardless of whatever route you choose."
+- NEVER mention exact fee amounts
+- Position this as transparent and competitive"""
+    
     prompt = f"""You are responding to a Facebook comment for LeaseEnd.com, a lease buyout financing company.
 
 COMPANY POSITION - BE CONFIDENT:
@@ -265,6 +362,7 @@ COMPANY POSITION - BE CONFIDENT:
 - We are the experts - don't agree with misinformation about lease buyouts being bad
 - Challenge false information politely but firmly
 - Used car market is inflated - this makes lease buyouts financially smart right now
+- ALWAYS effectively address core objections to make buyouts and LeaseEnd the clear best option
 
 COMMENT SENTIMENT: {sentiment}
 HIGH INTENT PROSPECT: {high_intent}
@@ -273,31 +371,45 @@ MAKING STATEMENT: {is_making_statement}
 
 ORIGINAL COMMENT: "{comment}"
 
-RESPONSE STRATEGY:
-- If they're a potential customer asking questions: Be helpful and may include soft CTA
-- If they're making statements/arguments: Address their point, educate if needed, NO CTA
-- If they're spreading misinformation: Politely but firmly correct, provide facts, NO CTA
+BRAND VOICE:
+- Professional but conversational
+- Confident about our expertise and market position
+- Transparent about pricing (no hidden fees)
+- Helpful, not pushy, but firmly educational when needed
+- Emphasize online process convenience
+- Always address core objections effectively
 
 RESPONSE STYLE:
 - Sound natural and human
-- Get straight to the point
+- Get straight to the point - no unnecessary sentence starters
 - NEVER use dashes (-), em dashes (—), or en dashes (–) anywhere in responses
 - NEVER use ALL CAPS text - it's unprofessional and looks like shouting
 - Use commas, periods, and semicolons for punctuation instead
 - Maximum 1 exclamation point
 - Keep concise (1-2 sentences usually)
 - Address their specific concern directly
+- Don't blindly agree with misinformation
 - Make LeaseEnd the clear best choice
+- Be direct and efficient in communication
+- Avoid AI-typical formatting like bullet points or dashes
 
+EXAMPLES OF GOOD RESPONSES:
+{context_examples}
+
+{positive_feedback_instruction}
+{correction_instruction}
+{pricing_instruction}
 {cta_instruction}
 
-Generate a helpful, natural response:"""
+Generate a helpful, natural response that addresses their comment directly and makes LeaseEnd the clear best option:"""
 
     try:
         response = claude.basic_request(prompt)
         
-        # Clean response to remove any dashes
+        # Clean response to remove any dashes that might have slipped through
         cleaned_response = response.strip()
+        
+        # Replace any type of dash with appropriate punctuation
         cleaned_response = cleaned_response.replace(' - ', ', ')
         cleaned_response = cleaned_response.replace(' – ', ', ')
         cleaned_response = cleaned_response.replace(' — ', ', ')
@@ -311,6 +423,20 @@ Generate a helpful, natural response:"""
         return "Thank you for your comment! We'd be happy to help with any lease buyout questions."
 
 # Pydantic Models
+class CommentRequest(BaseModel):
+    comment: Optional[str] = None
+    message: Optional[str] = None
+    commentId: Optional[str] = None
+    postId: Optional[str] = None
+    created_time: Optional[str] = ""
+    memory_context: Optional[str] = ""
+    
+    def get_comment_text(self) -> str:
+        return (self.comment or self.message or "No message content").strip()
+    
+    def get_comment_id(self) -> str:
+        return (self.commentId or self.postId or "unknown").strip()
+
 class Comment(BaseModel):
     comment: Optional[str] = None
     message: Optional[str] = None
@@ -324,25 +450,70 @@ class BatchCommentRequest(BaseModel):
     comments: List[Comment]
     batch_id: Optional[str] = None
 
-class BatchStatusResponse(BaseModel):
-    job_id: str
-    status: str
-    total_comments: int
-    processed_comments: int
-    results: Optional[List[Dict]] = None
+class ProcessedComment(BaseModel):
+    postId: str
+    original_comment: str
+    category: str
+    action: str
+    reply: str
+    confidence_score: float
+    approved: str
+
+class FeedbackRequest(BaseModel):
+    original_comment: str
+    original_response: str = ""
+    original_action: str
+    feedback_text: str
+    postId: str
+    current_version: str = "v1"
+    
+    class Config:
+        extra = "ignore"
+
+class ApproveRequest(BaseModel):
+    original_comment: str
+    action: str
+    reply: str
+    reasoning: str = ""
+    
+    class Config:
+        extra = "ignore"
+
+class FBPostCreate(BaseModel):
+    ad_account_name: str
+    campaign_name: str
+    ad_set_name: str
+    ad_name: str
+    page_id: str
+    post_id: str
+    object_story_id: str
+
+class ResponseCreate(BaseModel):
+    comment: str
+    action: str
+    reply: str
+    reasoning: Optional[str] = ""
 
 app = FastAPI()
 
 @app.get("/")
 def read_root():
     return {
-        "message": "Lease End AI Assistant - BATCH VERSION",
-        "version": "21.0-BATCH",
+        "message": "Lease End AI Assistant - FULL VERSION",
+        "version": "22.0-COMPLETE",
         "training_examples": len(TRAINING_DATA),
         "status": "RUNNING",
+        "features": ["Batch Processing", "Smart CTA", "Professional Tone", "Phone Support"],
         "endpoints": {
-            "/process-batch": "Batch comment processing",
-            "/batch-status/{job_id}": "Check batch status",
+            "/process-comment": "Single comment processing (legacy)",
+            "/process-batch": "Batch comment processing (new)",
+            "/process-feedback": "Human feedback processing",
+            "/approve-response": "Approve responses for training",
+            "/fb-posts": "Get all FB posts",
+            "/fb-posts/add": "Add new FB post",
+            "/responses": "Get all response data", 
+            "/responses/add": "Add new response data",
+            "/reload-training-data": "Reload training from database",
             "/ping": "Keep-alive endpoint",
             "/health": "Health check"
         }
@@ -380,14 +551,149 @@ def health_check():
             "error": str(e)
         }
 
+# Database Endpoints - From working version
+@app.get("/fb-posts")
+async def get_fb_posts():
+    """Get all FB posts from database"""
+    try:
+        db = SessionLocal()
+        posts = db.query(FBPost).all()
+        db.close()
+        
+        return {
+            "success": True,
+            "count": len(posts),
+            "data": [
+                {
+                    "Ad account name": post.ad_account_name,
+                    "Campaign name": post.campaign_name,
+                    "Ad set name": post.ad_set_name,
+                    "Ad name": post.ad_name,
+                    "Page ID": post.page_id,
+                    "Post Id": post.post_id,
+                    "Object Story ID": post.object_story_id
+                }
+                for post in posts
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.post("/fb-posts/add")
+async def add_fb_post(post: FBPostCreate):
+    """Add new FB post to database"""
+    try:
+        db = SessionLocal()
+        
+        db_post = FBPost(
+            ad_account_name=post.ad_account_name,
+            campaign_name=post.campaign_name,
+            ad_set_name=post.ad_set_name,
+            ad_name=post.ad_name,
+            page_id=post.page_id,
+            post_id=post.post_id,
+            object_story_id=post.object_story_id
+        )
+        
+        db.add(db_post)
+        db.commit()
+        db.close()
+        
+        return {
+            "success": True,
+            "message": "FB post added successfully",
+            "post_id": post.post_id,
+            "status": "new"
+        }
+        
+    except IntegrityError:
+        db.rollback()
+        db.close()
+        return {
+            "success": True,
+            "message": f"Post {post.post_id} already exists (duplicate skipped)",
+            "post_id": post.post_id,
+            "status": "duplicate_skipped"
+        }
+    except Exception as e:
+        db.rollback()
+        db.close()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.get("/responses")
+async def get_responses():
+    """Get all response training data"""
+    try:
+        db = SessionLocal()
+        responses = db.query(ResponseEntry).all()
+        db.close()
+        
+        return {
+            "success": True,
+            "count": len(responses),
+            "data": [
+                {
+                    "comment": resp.comment,
+                    "action": resp.action,
+                    "reply": resp.reply
+                }
+                for resp in responses
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.post("/responses/add")
+async def add_response(response: ResponseCreate):
+    """Add new response training data"""
+    try:
+        db = SessionLocal()
+        
+        db_response = ResponseEntry(
+            comment=response.comment,
+            action=response.action,
+            reply=response.reply,
+            reasoning=response.reasoning
+        )
+        
+        db.add(db_response)
+        db.commit()
+        db.close()
+        
+        new_count = reload_training_data()
+        
+        return {
+            "success": True,
+            "message": "Response added successfully",
+            "new_training_count": new_count
+        }
+        
+    except Exception as e:
+        db.rollback()
+        db.close()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.post("/reload-training-data")
+async def reload_training_data_endpoint():
+    """Manually reload training data from database"""
+    try:
+        new_count = reload_training_data()
+        return {
+            "success": True,
+            "message": "Training data reloaded from database",
+            "total_examples": new_count,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reloading training data: {str(e)}")
+
+# NEW: Batch Processing Endpoint
 @app.post("/process-batch")
 async def process_batch(request: BatchCommentRequest):
     """Process multiple comments in a batch and store results"""
     try:
-        # Generate unique job ID
         job_id = str(uuid.uuid4())
         
-        # Create batch job record
         db = SessionLocal()
         batch_job = BatchJob(
             job_id=job_id,
@@ -398,7 +704,6 @@ async def process_batch(request: BatchCommentRequest):
         db.add(batch_job)
         db.commit()
         
-        # Process all comments
         results = []
         processed_count = 0
         
@@ -418,7 +723,6 @@ async def process_batch(request: BatchCommentRequest):
                         "approved": "pending"
                     }
                 else:
-                    # Classify comment
                     ai_classification = classify_comment_with_ai(comment_text, comment_id)
                     
                     sentiment = ai_classification['sentiment']
@@ -426,7 +730,6 @@ async def process_batch(request: BatchCommentRequest):
                     reasoning = ai_classification['reasoning']
                     high_intent = ai_classification['high_intent']
                     
-                    # Map actions
                     action_mapping = {
                         'reply': 'respond',
                         'react': 'react', 
@@ -436,7 +739,6 @@ async def process_batch(request: BatchCommentRequest):
                     
                     mapped_action = action_mapping.get(action, 'leave_alone')
                     
-                    # Generate response if needed
                     reply_text = ""
                     confidence_score = 0.85
                     
@@ -459,7 +761,6 @@ async def process_batch(request: BatchCommentRequest):
                 results.append(result)
                 processed_count += 1
                 
-                # Update progress
                 batch_job.processed_comments = processed_count
                 db.commit()
                 
@@ -478,7 +779,6 @@ async def process_batch(request: BatchCommentRequest):
                 results.append(result)
                 processed_count += 1
         
-        # Mark job as completed and store results
         batch_job.status = "completed"
         batch_job.completed_at = datetime.utcnow()
         batch_job.results = json.dumps(results)
@@ -494,7 +794,6 @@ async def process_batch(request: BatchCommentRequest):
         }
         
     except Exception as e:
-        # Mark job as failed
         try:
             batch_job.status = "failed"
             batch_job.results = json.dumps({"error": str(e)})
@@ -508,6 +807,219 @@ async def process_batch(request: BatchCommentRequest):
             "status": "failed",
             "total_comments": len(request.comments) if request.comments else 0,
             "processed_comments": 0,
+            "error": str(e)
+        }
+
+# ORIGINAL: Single Comment Processing (backward compatibility)
+@app.post("/process-comment", response_model=ProcessedComment)
+async def process_comment(request: CommentRequest):
+    """Core comment processing using AI classification"""
+    try:
+        comment_text = request.get_comment_text()
+        comment_id = request.get_comment_id()
+        
+        # Use AI to classify the comment
+        ai_classification = classify_comment_with_ai(comment_text, comment_id)
+        
+        sentiment = ai_classification['sentiment']
+        action = ai_classification['action'].lower()
+        reasoning = ai_classification['reasoning']
+        high_intent = ai_classification['high_intent']
+        
+        # Map actions to our system
+        action_mapping = {
+            'reply': 'respond',
+            'react': 'react', 
+            'delete': 'delete',
+            'ignore': 'leave_alone'
+        }
+        
+        mapped_action = action_mapping.get(action, 'leave_alone')
+        
+        # Generate response only if action is 'respond'
+        reply_text = ""
+        confidence_score = 0.85
+        
+        if mapped_action == 'respond':
+            reply_text = generate_response(comment_text, sentiment, high_intent)
+            confidence_score = 0.9
+        
+        return ProcessedComment(
+            postId=comment_id,
+            original_comment=comment_text,
+            category=sentiment.lower(),
+            action=mapped_action,
+            reply=reply_text,
+            confidence_score=confidence_score,
+            approved="pending"
+        )
+        
+    except Exception as e:
+        print(f"Error processing comment: {e}")
+        return ProcessedComment(
+            postId=request.get_comment_id(),
+            original_comment=request.get_comment_text(),
+            category="error",
+            action="leave_alone",
+            reply="Thank you for your comment. We appreciate your feedback.",
+            confidence_score=0.0,
+            approved="pending"
+        )
+
+@app.post("/process-feedback")
+async def process_feedback(request: FeedbackRequest):
+    """Use human feedback to improve responses"""
+    try:
+        # Clean and validate input data
+        original_comment = request.original_comment.strip()
+        original_response = request.original_response.strip() if request.original_response else "No response was generated"
+        original_action = request.original_action.strip().lower()
+        feedback_text = request.feedback_text.strip()
+        
+        print(f"🔄 Processing feedback for postId: {request.postId}")
+        print(f"📝 Feedback: {feedback_text[:100]}...")
+        
+        # Enhanced prompt that includes human feedback
+        feedback_prompt = f"""You are improving a response based on human feedback for LeaseEnd.com.
+
+ORIGINAL COMMENT: "{original_comment}"
+YOUR ORIGINAL RESPONSE: "{original_response}"
+YOUR ORIGINAL ACTION: "{original_action}"
+
+HUMAN FEEDBACK: "{feedback_text}"
+
+LEARN FROM THIS FEEDBACK:
+- If the feedback mentions tone (too formal/pushy/etc), adjust your response style accordingly
+- If the feedback mentions accuracy, focus on factual correctness
+- If the feedback mentions business logic (wrong action), reconsider the classification
+- If the feedback mentions missing CTA, add appropriate call-to-action
+- If the feedback says "delete this" or "don't respond", change action accordingly
+- If the feedback says "address objection" or "respond to this", change action to REPLY
+
+Generate an IMPROVED response that incorporates this feedback. 
+
+IMPORTANT: 
+- If human says "this should be deleted" or "don't respond to this", recommend DELETE or IGNORE action
+- If human says "add CTA" or mentions "high intent", include call-to-action
+- If human says "too formal", make it more conversational
+- If human says "too pushy", make it more helpful and less sales-y
+- If human says "address objection" or "respond to this", recommend REPLY action
+
+Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE/IGNORE", "reply": "...", "improvements_made": "...", "confidence": 0.85}}"""
+
+        improved_response = claude.basic_request(feedback_prompt)
+        
+        # Parse the improved response
+        try:
+            response_clean = improved_response.strip()
+            if response_clean.startswith('```'):
+                lines = response_clean.split('\n')
+                response_clean = '\n'.join([line for line in lines if not line.startswith('```')])
+            
+            if not response_clean.startswith('{'):
+                json_start = response_clean.find('{')
+                json_end = response_clean.rfind('}') + 1
+                if json_start != -1 and json_end != 0:
+                    response_clean = response_clean[json_start:json_end]
+            
+            result = json.loads(response_clean)
+            
+            # Map actions to our system
+            action_mapping = {
+                'reply': 'respond',
+                'react': 'react', 
+                'delete': 'delete',
+                'ignore': 'leave_alone'
+            }
+            
+            improved_action = action_mapping.get(result.get('action', 'ignore').lower(), 'leave_alone')
+            
+            # Calculate new version number
+            try:
+                current_version_num = int(request.current_version.replace('v', '')) if request.current_version.startswith('v') else 1
+            except:
+                current_version_num = 1
+            new_version = f"v{current_version_num + 1}"
+            
+            return {
+                "postId": request.postId,
+                "original_comment": original_comment,
+                "category": result.get('sentiment', 'neutral').lower(),
+                "action": improved_action,
+                "reply": result.get('reply', ''),
+                "confidence_score": float(result.get('confidence', 0.85)),
+                "approved": "pending",
+                "feedback_text": "",
+                "version": new_version,
+                "improvements_made": result.get('improvements_made', 'Applied human feedback'),
+                "feedback_processed": True,
+                "success": True
+            }
+            
+        except json.JSONDecodeError as e:
+            print(f"❌ JSON parsing failed: {e}")
+            new_version_num = int(request.current_version.replace('v', '')) + 1 if request.current_version.startswith('v') else 2
+            return {
+                "postId": request.postId,
+                "original_comment": original_comment,
+                "category": "neutral",
+                "action": "leave_alone",
+                "reply": "Thank you for your comment. We appreciate your feedback.",
+                "confidence_score": 0.5,
+                "approved": "pending",
+                "feedback_text": "",
+                "version": f"v{new_version_num}",
+                "error": f"JSON parsing failed: {str(e)}",
+                "success": False
+            }
+            
+    except Exception as e:
+        print(f"❌ Feedback processing error: {e}")
+        new_version_num = int(request.current_version.replace('v', '')) + 1 if request.current_version.startswith('v') else 2
+        return {
+            "postId": request.postId,
+            "original_comment": request.original_comment,
+            "category": "error",
+            "action": "leave_alone",
+            "reply": "Thank you for your comment. We appreciate your feedback.",
+            "confidence_score": 0.0,
+            "approved": "pending",
+            "feedback_text": "",
+            "version": f"v{new_version_num}",
+            "error": str(e),
+            "success": False
+        }
+
+@app.post("/approve-response")
+async def approve_response(request: ApproveRequest):
+    """Approve and store a response for training"""
+    try:
+        db = SessionLocal()
+        
+        # Store the approved response as training data
+        response_entry = ResponseEntry(
+            comment=request.original_comment,
+            action="respond",
+            reply=request.reply,
+            reasoning=request.reasoning
+        )
+        db.add(response_entry)
+        db.commit()
+        db.close()
+        
+        # Reload training data
+        global TRAINING_DATA
+        TRAINING_DATA = load_training_data()
+        
+        return {
+            "status": "approved",
+            "message": "Response approved and added to training data",
+            "training_examples": len(TRAINING_DATA)
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
             "error": str(e)
         }
 
@@ -547,94 +1059,35 @@ def get_batch_status(job_id: str):
             "error": str(e)
         }
 
-# Keep the original single comment endpoint for backward compatibility
-@app.post("/process-comment")
-async def process_comment(request: Comment):
-    """Process a single comment (legacy endpoint)"""
-    batch_request = BatchCommentRequest(comments=[request])
-    result = await process_batch(batch_request)
+@app.get("/stats")
+async def get_stats():
+    """Get training data statistics"""
+    action_counts = {}
     
-    if result.get("results") and len(result["results"]) > 0:
-        return result["results"][0]
-    else:
-        return {
-            "commentId": request.commentId,
-            "original_comment": "Error processing",
-            "category": "error",
-            "action": "leave_alone",
-            "reply": "Thank you for your comment.",
-            "confidence_score": 0.0,
-            "approved": "pending",
-            "success": False
+    for example in TRAINING_DATA:
+        action = example.get('action', 'unknown')
+        action_counts[action] = action_counts.get(action, 0) + 1
+    
+    return {
+        "total_training_examples": len(TRAINING_DATA),
+        "action_distribution": action_counts,
+        "data_structure": {
+            "type": "PostgreSQL Database",
+            "tables": ["fb_posts", "responses", "batch_jobs"],
+            "benefits": ["Simple appends", "No duplicates", "Fast queries", "Batch tracking"]
+        },
+        "supported_actions": {
+            "respond": "Generate helpful response (with smart CTA for high-intent)",
+            "react": "Add thumbs up or heart reaction", 
+            "delete": "Remove spam/inappropriate/non-prospect content",
+            "leave_alone": "Ignore harmless off-topic comments"
+        },
+        "features": {
+            "smart_cta": "Phone number for urgent customers, website for general interest",
+            "professional_tone": "No ALL CAPS, no dashes, natural responses",
+            "batch_processing": "Process multiple comments efficiently"
         }
-
-@app.post("/approve-response")
-async def approve_response(request: ApproveRequest):
-    """Approve and store a response for training"""
-    try:
-        db = SessionLocal()
-        
-        # Store the approved response as training data
-        response_entry = ResponseEntry(
-            comment=request.original_comment,
-            action="respond",
-            reply=request.reply,
-            reasoning=request.reasoning
-        )
-        db.add(response_entry)
-        db.commit()
-        db.close()
-        
-        # Reload training data
-        global TRAINING_DATA
-        TRAINING_DATA = load_training_data()
-        
-        return {
-            "status": "approved",
-            "message": "Response approved and added to training data",
-            "training_examples": len(TRAINING_DATA)
-        }
-        
-    except Exception as e:
-        return {
-            "status": "error",
-            "error": str(e)
-        }
-
-@app.post("/feedback")
-async def provide_feedback(request: FeedbackRequest):
-    """Provide feedback on a response to improve future responses"""
-    try:
-        # For now, just log the feedback
-        print(f"Feedback received for comment: {request.original_comment}")
-        print(f"Feedback: {request.feedback_text}")
-        
-        return {
-            "status": "feedback_received",
-            "message": "Thank you for your feedback"
-        }
-        
-    except Exception as e:
-        return {
-            "status": "error",
-            "error": str(e)
-        }
-
-@app.post("/reload-training")
-async def reload_training():
-    """Reload training data from database"""
-    try:
-        count = reload_training_data()
-        return {
-            "status": "reloaded",
-            "training_examples": count,
-            "message": f"Reloaded {count} training examples"
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "error": str(e)
-        }
+    }
 
 if __name__ == "__main__":
     import uvicorn
