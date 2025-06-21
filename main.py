@@ -419,12 +419,6 @@ class CommentRequest(BaseModel):
             ""
         ).strip()
 
-class BatchCommentRequest(BaseModel):
-    comments: List[CommentRequest]
-    
-    class Config:
-        extra = "ignore"
-
 class ProcessedComment(BaseModel):
     postId: str
     original_comment: str
