@@ -51,7 +51,9 @@ class ResponseEntry(Base):
     action = Column(String, index=True)
     reply = Column(Text)
     reasoning = Column(Text)
+    feedback_text = Column(Text)  # Add feedback_text column
     created_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime)
 
 class BatchJob(Base):
     __tablename__ = "batch_jobs"
@@ -475,6 +477,8 @@ class ApproveRequest(BaseModel):
     action: str
     reply: str
     reasoning: str = ""
+    feedback_text: str = ""  # Add feedback_text field
+    created_time: Optional[str] = ""
     
     class Config:
         extra = "ignore"
@@ -905,7 +909,7 @@ IMPORTANT:
 - If human says "too pushy", make it more helpful and less sales-y
 - If human says "address objection" or "respond to this", recommend REPLY action
 
-Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE/IGNORE", "reply": "...", "improvements_made": "...", "confidence": 0.85}}"""
+Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE/IGNORE", "reply": "...", "reasoning": "Explain why this action and response make sense for this comment based on analysis and human feedback", "confidence": 0.85}}"""
 
         improved_response = claude.basic_request(feedback_prompt)
         
@@ -949,9 +953,9 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
                 "reply": result.get('reply', ''),
                 "confidence_score": float(result.get('confidence', 0.85)),
                 "approved": "pending",
-                "feedback_text": "",
+                "feedback_text": feedback_text,  # Return the feedback_text
                 "version": new_version,
-                "improvements_made": result.get('improvements_made', 'Applied human feedback'),
+                "reasoning": result.get('reasoning', 'Applied human feedback to improve response'),
                 "feedback_processed": True,
                 "success": True
             }
@@ -967,8 +971,9 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
                 "reply": "Thank you for your comment. We appreciate your feedback.",
                 "confidence_score": 0.5,
                 "approved": "pending",
-                "feedback_text": "",
+                "feedback_text": feedback_text,
                 "version": f"v{new_version_num}",
+                "reasoning": "JSON parsing failed during feedback processing - applied safe fallback response",
                 "error": f"JSON parsing failed: {str(e)}",
                 "success": False
             }
@@ -984,8 +989,9 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
             "reply": "Thank you for your comment. We appreciate your feedback.",
             "confidence_score": 0.0,
             "approved": "pending",
-            "feedback_text": "",
+            "feedback_text": feedback_text,
             "version": f"v{new_version_num}",
+            "reasoning": "Error occurred during feedback processing - applied safe fallback response",
             "error": str(e),
             "success": False
         }
@@ -996,12 +1002,24 @@ async def approve_response(request: ApproveRequest):
     try:
         db = SessionLocal()
         
+        # Parse created_time if provided, otherwise use current time
+        comment_created_at = datetime.utcnow()  # Default fallback
+        if request.created_time:
+            try:
+                # Try to parse the created_time string
+                comment_created_at = datetime.fromisoformat(request.created_time.replace('Z', '+00:00'))
+            except (ValueError, AttributeError):
+                # If parsing fails, use current time
+                comment_created_at = datetime.utcnow()
+        
         # Store the approved response as training data with the ACTUAL action passed
         response_entry = ResponseEntry(
             comment=request.original_comment,
             action=request.action,  # Use the action from the request, not hardcoded "respond"
             reply=request.reply,
-            reasoning=request.reasoning
+            reasoning=request.reasoning,
+            feedback_text=request.feedback_text,  # Store feedback_text
+            created_at=comment_created_at  # Use the comment's original timestamp
         )
         db.add(response_entry)
         db.commit()
@@ -1015,7 +1033,9 @@ async def approve_response(request: ApproveRequest):
             "status": "approved",
             "message": f"Response approved and added to training data with action: {request.action}",
             "training_examples": len(TRAINING_DATA),
-            "action_stored": request.action
+            "action_stored": request.action,
+            "comment_timestamp": comment_created_at.isoformat(),
+            "created_time_received": request.created_time or "not provided"
         }
         
     except Exception as e:
