@@ -1,4 +1,24 @@
-from fastapi import FastAPI, Request, HTTPException
+@app.get("/health")
+def health_check():
+    try:
+        from sqlalchemy import text
+        db = SessionLocal()
+        db.execute(text("SELECT 1"))
+        db.close()
+        
+        return {
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "database": "connected",
+            "training_examples": len(TRAINING_DATA)
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "timestamp": datetime.now().isoformat(),
+            "database": "error",
+            "error": str(e)
+        }from fastapi import FastAPI, Request, HTTPException
 import os
 from datetime import datetime, timezone
 from anthropic import Anthropic
@@ -474,8 +494,38 @@ def ping():
         "message": "App is running"
     }
 
-@app.get("/health")
-def health_check():
+@app.get("/debug")
+def debug_info():
+    """Debug endpoint to check system health"""
+    import psutil
+    import gc
+    
+    try:
+        # Force garbage collection
+        gc.collect()
+        
+        # Get system info
+        memory = psutil.virtual_memory()
+        
+        return {
+            "status": "debug_info",
+            "timestamp": datetime.now().isoformat(),
+            "memory": {
+                "total_mb": round(memory.total / (1024*1024), 2),
+                "available_mb": round(memory.available / (1024*1024), 2),
+                "percent_used": memory.percent,
+                "free_mb": round(memory.free / (1024*1024), 2)
+            },
+            "training_data_count": len(TRAINING_DATA),
+            "database_status": "checking...",
+            "anthropic_test": "checking..."
+        }
+    except Exception as e:
+        return {
+            "status": "debug_error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
     try:
         from sqlalchemy import text
         db = SessionLocal()
