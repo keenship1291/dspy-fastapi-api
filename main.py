@@ -239,10 +239,21 @@ def generate_response(comment, sentiment, high_intent=False):
     is_potential_customer = any(indicator in comment.lower() for indicator in customer_indicators)
     is_making_statement = any(indicator in comment.lower() for indicator in statement_indicators)
     
+    # Detect urgency/personalized help needs
+    urgent_indicators = [
+        "urgent", "asap", "need help now", "time sensitive", "deadline", "expires", 
+        "confused", "don't understand", "complicated", "help me", "call me", "speak to someone"
+    ]
+    
+    needs_personal_help = any(indicator in comment.lower() for indicator in urgent_indicators)
+    
     # CTA logic: Only for potential customers, not for people making statements
     cta_instruction = ""
     if is_potential_customer and high_intent and not is_making_statement:
-        cta_instruction = "\nFor this potential customer, you may end with a soft CTA like: 'Feel free to check out our site to see your options' or 'We'd be happy to help if you have questions.' Keep it natural and not pushy."
+        if needs_personal_help:
+            cta_instruction = "\nFor this customer who seems to need immediate or personalized help, offer both options: 'Feel free to give us a call at (844) 679-1188 for immediate help, or check out our site to see your options.' Keep it natural and helpful."
+        else:
+            cta_instruction = "\nFor this potential customer, you may end with a soft CTA like: 'Feel free to check out our site to see your options' or 'We'd be happy to help if you have questions.' Keep it natural and not pushy."
     elif is_making_statement:
         cta_instruction = "\nThis person is making a statement or argument. DO NOT include any call to action. Simply address their point, correct any misinformation, and provide helpful information. No sales pitch needed."
     
@@ -271,6 +282,7 @@ RESPONSE STYLE:
 - Sound natural and human
 - Get straight to the point
 - NEVER use dashes (-), em dashes (—), or en dashes (–) anywhere in responses
+- NEVER use ALL CAPS text - it's unprofessional and looks like shouting
 - Use commas, periods, and semicolons for punctuation instead
 - Maximum 1 exclamation point
 - Keep concise (1-2 sentences usually)
@@ -554,6 +566,74 @@ async def process_comment(request: Comment):
             "confidence_score": 0.0,
             "approved": "pending",
             "success": False
+        }
+
+@app.post("/approve-response")
+async def approve_response(request: ApproveRequest):
+    """Approve and store a response for training"""
+    try:
+        db = SessionLocal()
+        
+        # Store the approved response as training data
+        response_entry = ResponseEntry(
+            comment=request.original_comment,
+            action="respond",
+            reply=request.reply,
+            reasoning=request.reasoning
+        )
+        db.add(response_entry)
+        db.commit()
+        db.close()
+        
+        # Reload training data
+        global TRAINING_DATA
+        TRAINING_DATA = load_training_data()
+        
+        return {
+            "status": "approved",
+            "message": "Response approved and added to training data",
+            "training_examples": len(TRAINING_DATA)
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
+@app.post("/feedback")
+async def provide_feedback(request: FeedbackRequest):
+    """Provide feedback on a response to improve future responses"""
+    try:
+        # For now, just log the feedback
+        print(f"Feedback received for comment: {request.original_comment}")
+        print(f"Feedback: {request.feedback_text}")
+        
+        return {
+            "status": "feedback_received",
+            "message": "Thank you for your feedback"
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
+@app.post("/reload-training")
+async def reload_training():
+    """Reload training data from database"""
+    try:
+        count = reload_training_data()
+        return {
+            "status": "reloaded",
+            "training_examples": count,
+            "message": f"Reloaded {count} training examples"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
         }
 
 if __name__ == "__main__":
