@@ -419,6 +419,12 @@ class CommentRequest(BaseModel):
             ""
         ).strip()
 
+class BatchCommentRequest(BaseModel):
+    comments: List[CommentRequest]
+    
+    class Config:
+        extra = "ignore"
+
 class ProcessedComment(BaseModel):
     postId: str
     original_comment: str
@@ -698,12 +704,6 @@ async def reload_training_data_endpoint():
         raise HTTPException(status_code=500, detail=f"Error reloading training data: {str(e)}")
 
 # Updated AI Processing Endpoints with Enhanced Logic
-class BatchCommentRequest(BaseModel):
-    comments: List[CommentRequest]
-    
-    class Config:
-        extra = "ignore"
-
 @app.post("/process-comments-batch")
 async def process_comments_batch(request: BatchCommentRequest):
     """Process multiple comments in a single API call"""
