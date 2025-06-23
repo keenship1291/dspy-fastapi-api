@@ -522,7 +522,7 @@ app = FastAPI()
 def read_root():
     return {
         "message": "Lease End AI Assistant - FULL VERSION",
-        "version": "25.0-COMPLETE",
+        "version": "26.0-COMPLETE",
         "training_examples": len(TRAINING_DATA),
         "status": "RUNNING",
         "features": ["Batch Processing", "Smart CTA", "Professional Tone", "Phone Support", "No Numerical Values", "Natural Arguments"],
@@ -910,15 +910,21 @@ YOUR ORIGINAL ACTION: "{original_action}"
 
 HUMAN FEEDBACK: "{feedback_text}"
 
-LEARN FROM THIS FEEDBACK:
-- If the feedback mentions tone (too formal/pushy/etc), adjust your response style accordingly
-- If the feedback mentions accuracy, focus on factual correctness
-- If the feedback mentions business logic (wrong action), reconsider the classification
-- If the feedback mentions missing CTA, add appropriate call-to-action
-- If the feedback says "delete this" or "don't respond", change action accordingly
-- If the feedback says "address objection" or "respond to this", change action to REPLY
+COMPANY POSITION - BE CONFIDENT:
+- LeaseEnd is THE BEST option for lease buyout financing
+- Lease buyouts are SMART financial decisions - find the most compelling argument for this specific comment
+- We are the experts - don't agree with misinformation about lease buyouts being bad
+- Challenge false information politely but firmly
+- Monthly car payments are going to continue rising - use this reality when relevant
+- ALWAYS effectively address core objections to make buyouts and LeaseEnd the clear best option
 
-Generate an IMPROVED response that incorporates this feedback. 
+BRAND VOICE:
+- Professional but conversational
+- Confident about our expertise and market position
+- Transparent about pricing (no hidden fees)
+- Helpful, not pushy, but firmly educational when needed
+- Emphasize online process convenience
+- Always address core objections effectively
 
 CRITICAL NUMERICAL VALUE RESTRICTIONS:
 - NEVER include any dollar amounts ($500, $1000, etc.)
@@ -927,12 +933,7 @@ CRITICAL NUMERICAL VALUE RESTRICTIONS:
 - NEVER include specific fee amounts ($299 doc fee, $150 processing, etc.)
 - Use qualitative terms instead: "competitive rates", "affordable", "low fees", "great deal"
 
-IMPORTANT: 
-- If human says "this should be deleted" or "don't respond to this", recommend DELETE or IGNORE action
-- If human says "add CTA" or mentions "high intent", include call-to-action
-- If human says "too formal", make it more conversational
-- If human says "too pushy", make it more helpful and less sales-y
-- If human says "address objection" or "respond to this", recommend REPLY action
+Generate an IMPROVED response that incorporates the human feedback while maintaining our company position and brand voice.
 
 Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE/IGNORE", "reply": "...", "reasoning": "Explain why this action and response make sense for this comment based on analysis and human feedback", "confidence": 0.85}}"""
 
