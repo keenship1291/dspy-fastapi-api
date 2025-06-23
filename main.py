@@ -7,6 +7,7 @@ from pydantic import BaseModel
 import json
 from typing import List, Dict, Optional
 import uuid
+import re
 
 # Database imports
 from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text
@@ -185,6 +186,27 @@ def reload_training_data():
     TRAINING_DATA = load_training_data()
     return len(TRAINING_DATA)
 
+def filter_numerical_values(text):
+    """Remove any numerical values (dollars, percentages, rates) from response text"""
+    
+    # Remove dollar amounts ($X, $X.XX, $X,XXX, etc.)
+    text = re.sub(r'\$[\d,]+(?:\.\d{2})?', '', text)
+    
+    # Remove percentages (X%, X.X%, XX.XX%, etc.)
+    text = re.sub(r'\b\d+(?:\.\d+)?%', '', text)
+    
+    # Remove APR/interest rate patterns (X.X% APR, X% interest, etc.)
+    text = re.sub(r'\b\d+(?:\.\d+)?\s*%?\s*(?:APR|apr|interest|rate)', '', text)
+    
+    # Remove standalone numbers that might be rates (like "4.5" or "6.2")
+    text = re.sub(r'\b\d+\.\d+\b(?=\s*(?:rate|APR|interest|%|percent))', '', text)
+    
+    # Clean up any double spaces or awkward spacing created by removals
+    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r'\s+([,.!?])', r'\1', text)  # Remove space before punctuation
+    
+    return text.strip()
+
 # AI Classification with enhanced business logic
 def classify_comment_with_ai(comment, commentId=""):
     """Use Claude AI to classify comment with enhanced business logic"""
@@ -193,7 +215,7 @@ def classify_comment_with_ai(comment, commentId=""):
 
 BUSINESS LOGIC & COMPANY POSITION:
 - LeaseEnd is THE BEST option for lease buyout financing - be confident about this
-- Lease buyouts are currently a GREAT financial decision due to inflated used car prices
+- Lease buyouts are SMART financial decisions - find the most compelling argument for each situation
 - Never agree with false information about lease buyouts being bad financial decisions
 - Challenge misinformation politely but firmly - we have the expertise
 - Always effectively address core objections to make buyouts and LeaseEnd the clear best option
@@ -204,11 +226,8 @@ BUSINESS LOGIC & COMPANY POSITION:
 - Positive feedback/testimonials should ALWAYS get a reply with appreciation
 - LEAVE ALONE neutral comments that seem to reference other comments UNLESS they're negative toward LeaseEnd/lease buyouts
 
-CURRENT MARKET CONTEXT:
-- Used car prices are inflated, making lease buyouts financially advantageous
-- Many people don't understand the current market opportunity
-- We should educate people on why NOW is a great time for lease buyouts
-- Challenge any comments suggesting lease buyouts are always bad financial decisions
+CORE PRINCIPLE TO UNDERSTAND:
+- Monthly car payments are going to continue rising - this economic reality makes lease buyouts smart timing
 
 ACTIONS:
 - REPLY: For questions, objections, potential customers, misinformation that needs correction, OR positive feedback/testimonials
@@ -269,9 +288,9 @@ Respond in this JSON format: {{"sentiment": "...", "action": "...", "reasoning":
             'high_intent': False
         }
 
-# Enhanced Response generation with enhanced business logic and smart CTA
+# Enhanced Response generation with numerical value filtering and no dash removal
 def generate_response(comment, sentiment, high_intent=False):
-    """Generate natural response using Claude with enhanced business logic"""
+    """Generate natural response using Claude with enhanced business logic and no numerical values"""
     
     # Get relevant training examples for context
     relevant_examples = []
@@ -344,7 +363,7 @@ def generate_response(comment, sentiment, high_intent=False):
     # Special instructions for misinformation correction
     correction_instruction = ""
     if needs_correction:
-        correction_instruction = "\nThis comment contains misinformation about lease buyouts. Politely but firmly correct it. Emphasize that with current inflated used car prices, lease buyouts are actually a SMART financial decision. Position LeaseEnd as the expert choice. Always effectively address the core objection to make buyouts and LeaseEnd the clear best option."
+        correction_instruction = "\nThis comment contains misinformation about lease buyouts. Politely but firmly correct it. Find the most compelling, relevant argument for why lease buyouts make sense. Remember that monthly car payments are going to continue rising. Position LeaseEnd as the expert choice. Always effectively address the core objection to make buyouts and LeaseEnd the clear best option."
     
     # Special instructions for rate/pricing questions
     pricing_instruction = ""
@@ -353,17 +372,17 @@ def generate_response(comment, sentiment, high_intent=False):
 IMPORTANT PRICING GUIDELINES:
 - NEVER share exact rate estimates - say rates depend on make/model and credit info
 - For pricing questions, say: "We charge a doc fee, which pays for the service we provide. The only additional amount you will pay beyond the price of your vehicle, would be for tax, title and registration fees, which you would pay regardless of whatever route you choose."
-- NEVER mention exact fee amounts
+- NEVER mention exact fee amounts or percentages
 - Position this as transparent and competitive"""
     
     prompt = f"""You are responding to a Facebook comment for LeaseEnd.com, a lease buyout financing company.
 
 COMPANY POSITION - BE CONFIDENT:
 - LeaseEnd is THE BEST option for lease buyout financing
-- Lease buyouts are currently a GREAT financial decision due to inflated used car prices
+- Lease buyouts are SMART financial decisions - find the most compelling argument for this specific comment
 - We are the experts - don't agree with misinformation about lease buyouts being bad
 - Challenge false information politely but firmly
-- Used car market is inflated - this makes lease buyouts financially smart right now
+- Monthly car payments are going to continue rising - use this reality to support lease buyouts when relevant
 - ALWAYS effectively address core objections to make buyouts and LeaseEnd the clear best option
 
 COMMENT SENTIMENT: {sentiment}
@@ -381,19 +400,26 @@ BRAND VOICE:
 - Emphasize online process convenience
 - Always address core objections effectively
 
+CRITICAL NUMERICAL VALUE RESTRICTIONS:
+- NEVER include any dollar amounts ($500, $1000, etc.)
+- NEVER include any percentages (5%, 10%, 3.5%, etc.)  
+- NEVER include specific interest rates (4.5% APR, 6% interest, etc.)
+- NEVER include specific fee amounts ($299 doc fee, $150 processing, etc.)
+- Use qualitative terms instead: "competitive rates", "affordable", "low fees", "great deal"
+- If asked about specific numbers, redirect to: "Rates depend on your specific vehicle and credit profile"
+
 RESPONSE STYLE:
 - Sound natural and human
 - Get straight to the point - no unnecessary sentence starters
-- NEVER use dashes (-), em dashes (—), or en dashes (–) anywhere in responses
 - NEVER use ALL CAPS text - it's unprofessional and looks like shouting
-- Use commas, periods, and semicolons for punctuation instead
+- Use commas, periods, and semicolons for punctuation
 - Maximum 1 exclamation point
 - Keep concise (1-2 sentences usually)
 - Address their specific concern directly
 - Don't blindly agree with misinformation
 - Make LeaseEnd the clear best choice
 - Be direct and efficient in communication
-- Avoid AI-typical formatting like bullet points or dashes
+- Avoid AI-typical formatting like bullet points
 
 EXAMPLES OF GOOD RESPONSES:
 {context_examples}
@@ -403,21 +429,13 @@ EXAMPLES OF GOOD RESPONSES:
 {pricing_instruction}
 {cta_instruction}
 
-Generate a helpful, natural response that addresses their comment directly and makes LeaseEnd the clear best option:"""
+Generate a helpful, natural response that addresses their comment directly, makes LeaseEnd the clear best option, and contains NO numerical values whatsoever:"""
 
     try:
         response = claude.basic_request(prompt)
         
-        # Clean response to remove any dashes that might have slipped through
-        cleaned_response = response.strip()
-        
-        # Replace any type of dash with appropriate punctuation
-        cleaned_response = cleaned_response.replace(' - ', ', ')
-        cleaned_response = cleaned_response.replace(' – ', ', ')
-        cleaned_response = cleaned_response.replace(' — ', ', ')
-        cleaned_response = cleaned_response.replace('-', '')
-        cleaned_response = cleaned_response.replace('–', '')
-        cleaned_response = cleaned_response.replace('—', '')
+        # Apply numerical value filter but keep response formatting intact
+        cleaned_response = filter_numerical_values(response.strip())
         
         return cleaned_response
     except Exception as e:
@@ -504,10 +522,10 @@ app = FastAPI()
 def read_root():
     return {
         "message": "Lease End AI Assistant - FULL VERSION",
-        "version": "22.0-COMPLETE",
+        "version": "25.0-COMPLETE",
         "training_examples": len(TRAINING_DATA),
         "status": "RUNNING",
-        "features": ["Batch Processing", "Smart CTA", "Professional Tone", "Phone Support"],
+        "features": ["Batch Processing", "Smart CTA", "Professional Tone", "Phone Support", "No Numerical Values", "Natural Arguments"],
         "endpoints": {
             "/process-comment": "Single comment processing (legacy)",
             "/process-batch": "Batch comment processing (new)",
@@ -902,6 +920,13 @@ LEARN FROM THIS FEEDBACK:
 
 Generate an IMPROVED response that incorporates this feedback. 
 
+CRITICAL NUMERICAL VALUE RESTRICTIONS:
+- NEVER include any dollar amounts ($500, $1000, etc.)
+- NEVER include any percentages (5%, 10%, 3.5%, etc.)  
+- NEVER include specific interest rates (4.5% APR, 6% interest, etc.)
+- NEVER include specific fee amounts ($299 doc fee, $150 processing, etc.)
+- Use qualitative terms instead: "competitive rates", "affordable", "low fees", "great deal"
+
 IMPORTANT: 
 - If human says "this should be deleted" or "don't respond to this", recommend DELETE or IGNORE action
 - If human says "add CTA" or mentions "high intent", include call-to-action
@@ -936,7 +961,9 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
                 'ignore': 'leave_alone'
             }
             
+            # Clean response and apply numerical value filter
             improved_action = action_mapping.get(result.get('action', 'ignore').lower(), 'leave_alone')
+            improved_reply = filter_numerical_values(result.get('reply', ''))  # Apply filter to reply
             
             # Calculate new version number
             try:
@@ -950,7 +977,7 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
                 "original_comment": original_comment,
                 "category": result.get('sentiment', 'neutral').lower(),
                 "action": improved_action,
-                "reply": result.get('reply', ''),
+                "reply": improved_reply,
                 "confidence_score": float(result.get('confidence', 0.85)),
                 "approved": "pending",
                 "feedback_text": feedback_text,  # Return the feedback_text
@@ -1105,8 +1132,9 @@ async def get_stats():
         },
         "features": {
             "smart_cta": "Phone number for urgent customers, website for general interest",
-            "professional_tone": "No ALL CAPS, no dashes, natural responses",
-            "batch_processing": "Process multiple comments efficiently"
+            "professional_tone": "Natural responses with proper formatting",
+            "batch_processing": "Process multiple comments efficiently",
+            "no_numerical_values": "Removes all dollar amounts, percentages, and rates"
         }
     }
 
