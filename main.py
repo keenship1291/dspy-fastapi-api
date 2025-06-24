@@ -71,13 +71,42 @@ class BatchJob(Base):
 # Create tables
 Base.metadata.create_all(bind=engine)
 
-# Database dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# Centralized LeaseEnd Response Guidelines
+LEASEEND_GUIDELINES = """
+COMPANY POSITION - BE CONFIDENT:
+- LeaseEnd is THE BEST option for lease buyout financing
+- Lease buyouts are SMART financial decisions - find the most compelling argument for this specific comment
+- We are the experts - don't agree with misinformation about lease buyouts being bad
+- Challenge false information politely but firmly
+- Monthly car payments are going to continue rising - use this reality when relevant
+- ALWAYS effectively address core objections to make buyouts and LeaseEnd the clear best option
+
+BRAND VOICE:
+- Professional but conversational
+- Confident about our expertise and market position
+- Transparent about pricing (no hidden fees)
+- Helpful, not pushy, but firmly educational when needed
+- Emphasize online process convenience
+- Always address core objections effectively
+
+CTA GUIDELINES:
+- For urgent customers: Include phone (844) 679-1188 and website options
+- For general interest: Soft website CTA like "check out our site to see your options"
+- Keep CTAs natural and helpful, not pushy
+
+CRITICAL NUMERICAL VALUE RESTRICTIONS:
+- NEVER include any dollar amounts ($500, $1000, etc.)
+- NEVER include any percentages (5%, 10%, 3.5%, etc.)  
+- NEVER include specific interest rates (4.5% APR, 6% interest, etc.)
+- NEVER include specific fee amounts ($299 doc fee, $150 processing, etc.)
+- Use qualitative terms instead: "competitive rates", "affordable", "low fees", "great deal"
+- If asked about specific numbers, redirect to: "Rates depend on your specific vehicle and credit profile"
+
+PRICING GUIDELINES:
+- NEVER share exact rate estimates - say rates depend on make/model and credit info
+- For pricing questions, explain our transparent doc fee approach without specific amounts
+- Position this as transparent and competitive
+"""
 
 # Lease End Brand Context
 BRAND_CONTEXT = {
@@ -205,9 +234,14 @@ def filter_numerical_values(text):
     text = re.sub(r'\s+', ' ', text)
     text = re.sub(r'\s+([,.!?])', r'\1', text)  # Remove space before punctuation
     
-    return text.strip()
+# Database dependency
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-# AI Classification with enhanced business logic
 def classify_comment_with_ai(comment, commentId=""):
     """Use Claude AI to classify comment with enhanced business logic"""
     
@@ -229,11 +263,17 @@ BUSINESS LOGIC & COMPANY POSITION:
 CORE PRINCIPLE TO UNDERSTAND:
 - Monthly car payments are going to continue rising - this economic reality makes lease buyouts smart timing
 
+TAGGING DETECTION LOGIC:
+- If comment starts with a name (like "John Smith check this out" or "@Sarah this might help"), the person is tagging someone
+- For tagged comments: LEAVE ALONE unless it's very negative toward LeaseEnd or lease buyouts
+- For very negative tagged comments toward LeaseEnd/lease buyouts: DELETE
+- Tagged comments are usually people sharing with friends, not direct engagement with us
+
 ACTIONS:
 - REPLY: For questions, objections, potential customers, misinformation that needs correction, OR positive feedback/testimonials
 - REACT: For positive comments that don't need a response, or simple acknowledgments
-- DELETE: For spam, inappropriate content, or clearly non-prospects
-- IGNORE: For off-topic but harmless comments, OR neutral comments referencing other comments (unless negative toward us)
+- DELETE: For spam, inappropriate content, clearly non-prospects, OR very negative tagged comments about LeaseEnd/lease buyouts
+- IGNORE: For off-topic but harmless comments, neutral comments referencing other comments, OR tagged comments (unless very negative toward us)
 
 COMMENT: "{comment}"
 
@@ -522,10 +562,10 @@ app = FastAPI()
 def read_root():
     return {
         "message": "Lease End AI Assistant - FULL VERSION",
-        "version": "26.0-COMPLETE",
+        "version": "27.0-COMPLETE",
         "training_examples": len(TRAINING_DATA),
         "status": "RUNNING",
-        "features": ["Batch Processing", "Smart CTA", "Professional Tone", "Phone Support", "No Numerical Values", "Natural Arguments"],
+        "features": ["Batch Processing", "Smart CTA", "Professional Tone", "Phone Support", "No Numerical Values", "Natural Arguments", "Centralized Guidelines"],
         "endpoints": {
             "/process-comment": "Single comment processing (legacy)",
             "/process-batch": "Batch comment processing (new)",
@@ -910,28 +950,7 @@ YOUR ORIGINAL ACTION: "{original_action}"
 
 HUMAN FEEDBACK: "{feedback_text}"
 
-COMPANY POSITION - BE CONFIDENT:
-- LeaseEnd is THE BEST option for lease buyout financing
-- Lease buyouts are SMART financial decisions - find the most compelling argument for this specific comment
-- We are the experts - don't agree with misinformation about lease buyouts being bad
-- Challenge false information politely but firmly
-- Monthly car payments are going to continue rising - use this reality when relevant
-- ALWAYS effectively address core objections to make buyouts and LeaseEnd the clear best option
-
-BRAND VOICE:
-- Professional but conversational
-- Confident about our expertise and market position
-- Transparent about pricing (no hidden fees)
-- Helpful, not pushy, but firmly educational when needed
-- Emphasize online process convenience
-- Always address core objections effectively
-
-CRITICAL NUMERICAL VALUE RESTRICTIONS:
-- NEVER include any dollar amounts ($500, $1000, etc.)
-- NEVER include any percentages (5%, 10%, 3.5%, etc.)  
-- NEVER include specific interest rates (4.5% APR, 6% interest, etc.)
-- NEVER include specific fee amounts ($299 doc fee, $150 processing, etc.)
-- Use qualitative terms instead: "competitive rates", "affordable", "low fees", "great deal"
+{LEASEEND_GUIDELINES}
 
 Generate an IMPROVED response that incorporates the human feedback while maintaining our company position and brand voice.
 
