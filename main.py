@@ -7,6 +7,7 @@ from pydantic import BaseModel
 import json
 from typing import List, Dict, Optional
 import uuid
+import re
 
 # Database imports
 from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text
@@ -106,14 +107,6 @@ PRICING GUIDELINES:
 - For pricing questions, explain our transparent doc fee approach without specific amounts
 - Position this as transparent and competitive
 """
-
-# Database dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 # Lease End Brand Context
 BRAND_CONTEXT = {
@@ -222,6 +215,35 @@ def reload_training_data():
     TRAINING_DATA = load_training_data()
     return len(TRAINING_DATA)
 
+def filter_numerical_values(text):
+    """Remove any numerical values (dollars, percentages, rates) from response text"""
+    
+    # Remove dollar amounts ($X, $X.XX, $X,XXX, etc.)
+    text = re.sub(r'\$[\d,]+(?:\.\d{2})?', '', text)
+    
+    # Remove percentages (X%, X.X%, XX.XX%, etc.)
+    text = re.sub(r'\b\d+(?:\.\d+)?%', '', text)
+    
+    # Remove APR/interest rate patterns (X.X% APR, X% interest, etc.)
+    text = re.sub(r'\b\d+(?:\.\d+)?\s*%?\s*(?:APR|apr|interest|rate)', '', text)
+    
+    # Remove standalone numbers that might be rates (like "4.5" or "6.2")
+    text = re.sub(r'\b\d+\.\d+\b(?=\s*(?:rate|APR|interest|%|percent))', '', text)
+    
+    # Clean up any double spaces or awkward spacing created by removals
+    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r'\s+([,.!?])', r'\1', text)  # Remove space before punctuation
+    
+    return text.strip()
+
+# Database dependency
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
 def classify_comment_with_ai(comment, commentId=""):
     """Use Claude AI to classify comment with enhanced business logic"""
     
@@ -308,9 +330,9 @@ Respond in this JSON format: {{"sentiment": "...", "action": "...", "reasoning":
             'high_intent': False
         }
 
-# Enhanced Response generation using centralized guidelines
+# Enhanced Response generation with numerical value filtering and no dash removal
 def generate_response(comment, sentiment, high_intent=False):
-    """Generate natural response using Claude with enhanced business logic"""
+    """Generate natural response using Claude with enhanced business logic and no numerical values"""
     
     # Get relevant training examples for context
     relevant_examples = []
@@ -397,7 +419,13 @@ IMPORTANT PRICING GUIDELINES:
     
     prompt = f"""You are responding to a Facebook comment for LeaseEnd.com, a lease buyout financing company.
 
-{LEASEEND_GUIDELINES}
+COMPANY POSITION - BE CONFIDENT:
+- LeaseEnd is THE BEST option for lease buyout financing
+- Lease buyouts are SMART financial decisions - find the most compelling argument for this specific comment
+- We are the experts - don't agree with misinformation about lease buyouts being bad
+- Challenge false information politely but firmly
+- Monthly car payments are going to continue rising - use this reality to support lease buyouts when relevant
+- ALWAYS effectively address core objections to make buyouts and LeaseEnd the clear best option
 
 COMMENT SENTIMENT: {sentiment}
 HIGH INTENT PROSPECT: {high_intent}
@@ -405,6 +433,35 @@ POTENTIAL CUSTOMER: {is_potential_customer}
 MAKING STATEMENT: {is_making_statement}
 
 ORIGINAL COMMENT: "{comment}"
+
+BRAND VOICE:
+- Professional but conversational
+- Confident about our expertise and market position
+- Transparent about pricing (no hidden fees)
+- Helpful, not pushy, but firmly educational when needed
+- Emphasize online process convenience
+- Always address core objections effectively
+
+CRITICAL NUMERICAL VALUE RESTRICTIONS:
+- NEVER include any dollar amounts ($500, $1000, etc.)
+- NEVER include any percentages (5%, 10%, 3.5%, etc.)  
+- NEVER include specific interest rates (4.5% APR, 6% interest, etc.)
+- NEVER include specific fee amounts ($299 doc fee, $150 processing, etc.)
+- Use qualitative terms instead: "competitive rates", "affordable", "low fees", "great deal"
+- If asked about specific numbers, redirect to: "Rates depend on your specific vehicle and credit profile"
+
+RESPONSE STYLE:
+- Sound natural and human
+- Get straight to the point - no unnecessary sentence starters
+- NEVER use ALL CAPS text - it's unprofessional and looks like shouting
+- Use commas, periods, and semicolons for punctuation
+- Maximum 1 exclamation point
+- Keep concise (1-2 sentences usually)
+- Address their specific concern directly
+- Don't blindly agree with misinformation
+- Make LeaseEnd the clear best choice
+- Be direct and efficient in communication
+- Avoid AI-typical formatting like bullet points
 
 EXAMPLES OF GOOD RESPONSES:
 {context_examples}
@@ -414,13 +471,15 @@ EXAMPLES OF GOOD RESPONSES:
 {pricing_instruction}
 {cta_instruction}
 
-Generate a helpful, natural response that addresses their comment directly and makes LeaseEnd the clear best option:"""
+Generate a helpful, natural response that addresses their comment directly, makes LeaseEnd the clear best option, and contains NO numerical values whatsoever:"""
 
     try:
         response = claude.basic_request(prompt)
         
-        # Return response as-is, trusting Claude to follow the numerical restrictions in the prompt
-        return response.strip()
+        # Apply numerical value filter but keep response formatting intact
+        cleaned_response = filter_numerical_values(response.strip())
+        
+        return cleaned_response
     except Exception as e:
         print(f"Error generating response: {e}")
         return "Thank you for your comment! We'd be happy to help with any lease buyout questions."
@@ -505,10 +564,10 @@ app = FastAPI()
 def read_root():
     return {
         "message": "Lease End AI Assistant - FULL VERSION",
-        "version": "29.0-COMPLETE",
+        "version": "27.1-FIXED",
         "training_examples": len(TRAINING_DATA),
         "status": "RUNNING",
-        "features": ["Batch Processing", "Smart CTA", "Professional Tone", "Phone Support", "Natural Arguments", "Centralized Guidelines", "Tagging Detection"],
+        "features": ["Batch Processing", "Smart CTA", "Professional Tone", "Phone Support", "No Numerical Values", "Natural Arguments", "Centralized Guidelines"],
         "endpoints": {
             "/process-comment": "Single comment processing (legacy)",
             "/process-batch": "Batch comment processing (new)",
@@ -924,9 +983,9 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
                 'ignore': 'leave_alone'
             }
             
-            # Get improved response without numerical filtering
+            # Clean response and apply numerical value filter
             improved_action = action_mapping.get(result.get('action', 'ignore').lower(), 'leave_alone')
-            improved_reply = result.get('reply', '')
+            improved_reply = filter_numerical_values(result.get('reply', ''))  # Apply filter to reply
             
             # Calculate new version number
             try:
@@ -1097,7 +1156,7 @@ async def get_stats():
             "smart_cta": "Phone number for urgent customers, website for general interest",
             "professional_tone": "Natural responses with proper formatting",
             "batch_processing": "Process multiple comments efficiently",
-            "tagging_detection": "Handles user tags and social sharing appropriately"
+            "no_numerical_values": "Removes all dollar amounts, percentages, and rates"
         }
     }
 
