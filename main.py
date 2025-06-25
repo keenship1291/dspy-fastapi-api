@@ -52,7 +52,6 @@ class ResponseEntry(Base):
     action = Column(String, index=True)
     reply = Column(Text)
     reasoning = Column(Text)
-    feedback_text = Column(Text)  # Add feedback_text column
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime)
 
@@ -537,7 +536,6 @@ class ApproveRequest(BaseModel):
     action: str
     reply: str
     reasoning: str = ""
-    feedback_text: str = ""  # Add feedback_text field
     created_time: Optional[str] = ""
     
     class Config:
@@ -1067,7 +1065,6 @@ async def approve_response(request: ApproveRequest):
             action=request.action,  # Use the action from the request, not hardcoded "respond"
             reply=request.reply,
             reasoning=request.reasoning,
-            feedback_text=request.feedback_text,  # Store feedback_text
             created_at=comment_created_at  # Use the comment's original timestamp
         )
         db.add(response_entry)
