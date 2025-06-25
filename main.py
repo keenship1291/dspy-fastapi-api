@@ -568,7 +568,7 @@ app = FastAPI()
 def read_root():
     return {
         "message": "Lease End AI Assistant - FULL VERSION",
-        "version": "27.1-FIXED",
+        "version": "27.1-CONCISE",
         "training_examples": len(TRAINING_DATA),
         "status": "RUNNING",
         "features": ["Batch Processing", "Smart CTA", "Professional Tone", "Phone Support", "No Numerical Values", "Natural Arguments", "Centralized Guidelines"],
