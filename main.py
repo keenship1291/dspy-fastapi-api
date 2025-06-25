@@ -798,6 +798,7 @@ async def process_batch(request: BatchCommentRequest):
             "results": results
         }
         
+    except Exception as e:
         try:
             batch_job.status = "failed"
             batch_job.results = json.dumps({"error": str(e)})
