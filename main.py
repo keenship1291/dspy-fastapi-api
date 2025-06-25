@@ -273,8 +273,14 @@ TAGGING DETECTION LOGIC:
 ACTIONS:
 - REPLY: For questions, objections, potential customers, misinformation that needs correction, OR positive feedback/testimonials
 - REACT: For positive comments that don't need a response, or simple acknowledgments
-- DELETE: For spam, inappropriate content, clearly non-prospects, OR very negative tagged comments about LeaseEnd/lease buyouts
+- DELETE: For spam, inappropriate content, clearly non-prospects, very negative tagged comments about LeaseEnd/lease buyouts, OR brief negative comments (1-3 words like "scam", "ripoff", "terrible", "avoid", "fake", etc.)
 - IGNORE: For off-topic but harmless comments, neutral comments referencing other comments, OR tagged comments (unless very negative toward us)
+
+BRIEF NEGATIVE COMMENT DETECTION:
+- Comments that are 1-3 words and purely negative should be DELETED
+- Examples to DELETE: "Scam", "Ripoff", "Terrible", "Avoid this", "Fake company", "Don't trust", "Bad deal", "Waste money"
+- These add no value and only create negative perception for other potential customers
+- Brief negative comments are not worth engaging with - just remove them
 
 COMMENT: "{comment}"
 
