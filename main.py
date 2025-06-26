@@ -274,7 +274,7 @@ ACTIONS:
 - REPLY: For questions, objections, potential customers, misinformation that needs correction, OR positive feedback/testimonials
 - REACT: For positive comments that don't need a response, or simple acknowledgments
 - DELETE: For spam, inappropriate content, clearly non-prospects, very negative tagged comments about LeaseEnd/lease buyouts, OR brief negative comments like "scam", "ripoff", "terrible"
-- IGNORE: For off-topic but harmless comments, neutral comments referencing other comments, OR tagged comments (unless very negative toward us)
+- LEAVE_ALONE: For off-topic but harmless comments, neutral comments referencing other comments, OR tagged comments (unless very negative toward us)
 
 COMMENT: "{comment}"
 
@@ -316,7 +316,7 @@ Respond in this JSON format: {{"sentiment": "...", "action": "...", "reasoning":
                 action = 'REACT'
                 reasoning = "Fallback classification: Detected REACT action in response"
             else:
-                action = 'IGNORE'
+                action = 'LEAVE_ALONE'
                 reasoning = "Fallback classification: No clear action detected"
                 
             return {
@@ -330,7 +330,7 @@ Respond in this JSON format: {{"sentiment": "...", "action": "...", "reasoning":
         print(f"Error in AI classification: {e}")
         return {
             'sentiment': 'Neutral',
-            'action': 'IGNORE',
+            'action': 'LEAVE_ALONE',
             'reasoning': f'Classification error: {str(e)}',
             'high_intent': False
         }
@@ -525,6 +525,7 @@ class ProcessedComment(BaseModel):
     reply: str
     confidence_score: float
     approved: str
+    reasoning: str
 
 class FeedbackRequest(BaseModel):
     original_comment: str
@@ -899,7 +900,7 @@ async def process_comment(request: CommentRequest):
             'reply': 'respond',
             'react': 'react', 
             'delete': 'delete',
-            'ignore': 'leave_alone'
+            'leave_alone': 'leave_alone'
         }
         
         mapped_action = action_mapping.get(action, 'leave_alone')
@@ -919,7 +920,8 @@ async def process_comment(request: CommentRequest):
             action=mapped_action,
             reply=reply_text,
             confidence_score=confidence_score,
-            approved="pending"
+            approved="pending",
+            reasoning=reasoning
         )
         
     except Exception as e:
@@ -931,7 +933,8 @@ async def process_comment(request: CommentRequest):
             action="leave_alone",
             reply="Thank you for your comment. We appreciate your feedback.",
             confidence_score=0.0,
-            approved="pending"
+            approved="pending",
+            reasoning="Error occurred during processing"
         )
 
 @app.post("/process-feedback")
@@ -984,7 +987,7 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
                 'reply': 'respond',
                 'react': 'react', 
                 'delete': 'delete',
-                'ignore': 'leave_alone'
+                'leave_alone': 'leave_alone'
             }
             
             # Clean response and apply numerical value filter
