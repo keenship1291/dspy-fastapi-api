@@ -650,29 +650,10 @@ async def get_fb_posts():
 
 @app.post("/fb-posts/add")
 async def add_fb_post(post: FBPostCreate):
-    """Add new FB post to database - MINIMAL FIX"""
-    db = SessionLocal()
+    """Add new FB post to database"""
     try:
-        # Check for existing posts first to avoid IntegrityError
-        existing_post = db.query(FBPost).filter(FBPost.post_id == post.post_id).first()
-        if existing_post:
-            return {
-                "success": True,
-                "message": f"Post {post.post_id} already exists (duplicate skipped)",
-                "post_id": post.post_id,
-                "status": "duplicate_skipped"
-            }
+        db = SessionLocal()
         
-        existing_story = db.query(FBPost).filter(FBPost.object_story_id == post.object_story_id).first()
-        if existing_story:
-            return {
-                "success": True,
-                "message": f"Object story {post.object_story_id} already exists (duplicate skipped)",
-                "post_id": post.post_id,
-                "status": "duplicate_skipped"
-            }
-        
-        # Create and add new post
         db_post = FBPost(
             ad_account_name=post.ad_account_name,
             campaign_name=post.campaign_name,
@@ -685,6 +666,7 @@ async def add_fb_post(post: FBPostCreate):
         
         db.add(db_post)
         db.commit()
+        db.close()
         
         return {
             "success": True,
@@ -693,11 +675,19 @@ async def add_fb_post(post: FBPostCreate):
             "status": "new"
         }
         
+    except IntegrityError:
+        db.rollback()
+        db.close()
+        return {
+            "success": True,
+            "message": f"Post {post.post_id} already exists (duplicate skipped)",
+            "post_id": post.post_id,
+            "status": "duplicate_skipped"
+        }
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-    finally:
         db.close()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.get("/responses")
 async def get_responses():
