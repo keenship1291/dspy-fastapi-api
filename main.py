@@ -10,7 +10,7 @@ import uuid
 import re
 
 # Database imports
-from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text
+from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.exc import IntegrityError
@@ -568,21 +568,22 @@ app = FastAPI()
 @app.get("/")
 def read_root():
     return {
-        "message": "Lease End AI Assistant - FULL VERSION",
-        "version": "27.1-CONCISE",
+        "message": "Lease End AI Assistant - FIXED VERSION",
+        "version": "27.2-FIXED-DB",
         "training_examples": len(TRAINING_DATA),
         "status": "RUNNING",
-        "features": ["Batch Processing", "Smart CTA", "Professional Tone", "Phone Support", "No Numerical Values", "Natural Arguments", "Centralized Guidelines"],
+        "features": ["Fixed Database Handling", "Better Error Handling", "Session Management", "Batch Processing", "Smart CTA", "Professional Tone"],
         "endpoints": {
             "/process-comment": "Single comment processing (legacy)",
             "/process-batch": "Batch comment processing (new)",
             "/process-feedback": "Human feedback processing",
             "/approve-response": "Approve responses for training",
             "/fb-posts": "Get all FB posts",
-            "/fb-posts/add": "Add new FB post",
+            "/fb-posts/add": "Add new FB post (FIXED)",
             "/responses": "Get all response data", 
             "/responses/add": "Add new response data",
             "/reload-training-data": "Reload training from database",
+            "/test-db": "Test database connection",
             "/ping": "Keep-alive endpoint",
             "/health": "Health check"
         }
@@ -601,7 +602,6 @@ def ping():
 @app.get("/health")
 def health_check():
     try:
-        from sqlalchemy import text
         db = SessionLocal()
         db.execute(text("SELECT 1"))
         db.close()
@@ -620,14 +620,58 @@ def health_check():
             "error": str(e)
         }
 
-# Database Endpoints - From working version
+@app.get("/test-db")
+async def test_database():
+    """Test database connection and operations"""
+    try:
+        db = SessionLocal()
+        
+        # Test connection
+        result = db.execute(text("SELECT COUNT(*) FROM fb_posts")).scalar()
+        
+        # Test insert with unique timestamp
+        test_timestamp = datetime.now().timestamp()
+        test_post = FBPost(
+            ad_account_name="TEST",
+            campaign_name="TEST", 
+            ad_set_name="TEST",
+            ad_name="TEST",
+            page_id="TEST",
+            post_id=f"test_{test_timestamp}",
+            object_story_id=f"story_{test_timestamp}"
+        )
+        
+        db.add(test_post)
+        db.commit()
+        
+        new_count = db.execute(text("SELECT COUNT(*) FROM fb_posts")).scalar()
+        
+        # Clean up test post
+        db.delete(test_post)
+        db.commit()
+        db.close()
+        
+        return {
+            "connection": "OK",
+            "original_count": result,
+            "after_insert": new_count,
+            "test_insert": "SUCCESS",
+            "cleanup": "SUCCESS"
+        }
+        
+    except Exception as e:
+        return {
+            "connection": "FAILED",
+            "error": str(e)
+        }
+
+# Database Endpoints - FIXED VERSION
 @app.get("/fb-posts")
 async def get_fb_posts():
     """Get all FB posts from database"""
+    db = SessionLocal()
     try:
-        db = SessionLocal()
         posts = db.query(FBPost).all()
-        db.close()
         
         return {
             "success": True,
@@ -647,13 +691,41 @@ async def get_fb_posts():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        db.close()
 
 @app.post("/fb-posts/add")
 async def add_fb_post(post: FBPostCreate):
-    """Add new FB post to database"""
+    """Add new FB post to database - FIXED VERSION"""
+    db = SessionLocal()
     try:
-        db = SessionLocal()
+        print(f"🔍 Attempting to add post: {post.post_id}")
         
+        # Check for existing post first (prevents IntegrityError)
+        existing_post = db.query(FBPost).filter(FBPost.post_id == post.post_id).first()
+        if existing_post:
+            print(f"❌ Post {post.post_id} already exists")
+            return {
+                "success": True,
+                "message": f"Post {post.post_id} already exists (duplicate skipped)",
+                "post_id": post.post_id,
+                "status": "duplicate_skipped",
+                "debug": "Found existing post_id"
+            }
+        
+        # Check for existing object_story_id
+        existing_story = db.query(FBPost).filter(FBPost.object_story_id == post.object_story_id).first()
+        if existing_story:
+            print(f"❌ Object story {post.object_story_id} already exists")
+            return {
+                "success": True,
+                "message": f"Object story {post.object_story_id} already exists (duplicate skipped)",
+                "post_id": post.post_id,
+                "status": "duplicate_skipped",
+                "debug": "Found existing object_story_id"
+            }
+        
+        # Create new post
         db_post = FBPost(
             ad_account_name=post.ad_account_name,
             campaign_name=post.campaign_name,
@@ -666,36 +738,31 @@ async def add_fb_post(post: FBPostCreate):
         
         db.add(db_post)
         db.commit()
-        db.close()
+        db.refresh(db_post)  # Refresh to get the ID
+        
+        print(f"✅ Successfully added post: {post.post_id}")
         
         return {
             "success": True,
             "message": "FB post added successfully",
             "post_id": post.post_id,
-            "status": "new"
+            "status": "new",
+            "debug": "Successfully inserted"
         }
         
-    except IntegrityError:
-        db.rollback()
-        db.close()
-        return {
-            "success": True,
-            "message": f"Post {post.post_id} already exists (duplicate skipped)",
-            "post_id": post.post_id,
-            "status": "duplicate_skipped"
-        }
     except Exception as e:
         db.rollback()
-        db.close()
+        print(f"❌ Error adding post: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        db.close()
 
 @app.get("/responses")
 async def get_responses():
     """Get all response training data"""
+    db = SessionLocal()
     try:
-        db = SessionLocal()
         responses = db.query(ResponseEntry).all()
-        db.close()
         
         return {
             "success": True,
@@ -711,13 +778,14 @@ async def get_responses():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        db.close()
 
 @app.post("/responses/add")
 async def add_response(response: ResponseCreate):
     """Add new response training data"""
+    db = SessionLocal()
     try:
-        db = SessionLocal()
-        
         db_response = ResponseEntry(
             comment=response.comment,
             action=response.action,
@@ -727,7 +795,6 @@ async def add_response(response: ResponseCreate):
         
         db.add(db_response)
         db.commit()
-        db.close()
         
         new_count = reload_training_data()
         
@@ -739,8 +806,9 @@ async def add_response(response: ResponseCreate):
         
     except Exception as e:
         db.rollback()
-        db.close()
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        db.close()
 
 @app.post("/reload-training-data")
 async def reload_training_data_endpoint():
@@ -1055,9 +1123,8 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
 @app.post("/approve-response")
 async def approve_response(request: ApproveRequest):
     """Approve and store a response for training"""
+    db = SessionLocal()
     try:
-        db = SessionLocal()
-        
         # Parse created_time if provided, otherwise use current time
         comment_created_at = datetime.utcnow()  # Default fallback
         if request.created_time:
@@ -1078,7 +1145,6 @@ async def approve_response(request: ApproveRequest):
         )
         db.add(response_entry)
         db.commit()
-        db.close()
         
         # Reload training data
         global TRAINING_DATA
@@ -1094,18 +1160,20 @@ async def approve_response(request: ApproveRequest):
         }
         
     except Exception as e:
+        db.rollback()
         return {
             "status": "error",
             "error": str(e)
         }
+    finally:
+        db.close()
 
 @app.get("/batch-status/{job_id}")
 def get_batch_status(job_id: str):
     """Get status of a batch processing job"""
+    db = SessionLocal()
     try:
-        db = SessionLocal()
         batch_job = db.query(BatchJob).filter(BatchJob.job_id == job_id).first()
-        db.close()
         
         if not batch_job:
             raise HTTPException(status_code=404, detail="Job not found")
@@ -1134,6 +1202,8 @@ def get_batch_status(job_id: str):
             "status": "error",
             "error": str(e)
         }
+    finally:
+        db.close()
 
 @app.get("/stats")
 async def get_stats():
@@ -1162,7 +1232,8 @@ async def get_stats():
             "smart_cta": "Phone number for urgent customers, website for general interest",
             "professional_tone": "Natural responses with proper formatting",
             "batch_processing": "Process multiple comments efficiently",
-            "no_numerical_values": "Removes all dollar amounts, percentages, and rates"
+            "no_numerical_values": "Removes all dollar amounts, percentages, and rates",
+            "fixed_db_handling": "Proper session management and error handling"
         }
     }
 
