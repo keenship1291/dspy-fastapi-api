@@ -568,22 +568,21 @@ app = FastAPI()
 @app.get("/")
 def read_root():
     return {
-        "message": "Lease End AI Assistant - FIXED VERSION",
-        "version": "27.2-FIXED-DB",
+        "message": "Lease End AI Assistant - FULL VERSION",
+        "version": "27.1-CONCISE",
         "training_examples": len(TRAINING_DATA),
         "status": "RUNNING",
-        "features": ["Fixed Database Handling", "Better Error Handling", "Session Management", "Batch Processing", "Smart CTA", "Professional Tone"],
+        "features": ["Batch Processing", "Smart CTA", "Professional Tone", "Phone Support", "No Numerical Values", "Natural Arguments", "Centralized Guidelines"],
         "endpoints": {
             "/process-comment": "Single comment processing (legacy)",
             "/process-batch": "Batch comment processing (new)",
             "/process-feedback": "Human feedback processing",
             "/approve-response": "Approve responses for training",
             "/fb-posts": "Get all FB posts",
-            "/fb-posts/add": "Add new FB post (FIXED)",
+            "/fb-posts/add": "Add new FB post",
             "/responses": "Get all response data", 
             "/responses/add": "Add new response data",
             "/reload-training-data": "Reload training from database",
-            "/test-db": "Test database connection",
             "/ping": "Keep-alive endpoint",
             "/health": "Health check"
         }
@@ -620,52 +619,7 @@ def health_check():
             "error": str(e)
         }
 
-@app.get("/test-db")
-async def test_database():
-    """Test database connection and operations"""
-    try:
-        db = SessionLocal()
-        
-        # Test connection
-        result = db.execute(text("SELECT COUNT(*) FROM fb_posts")).scalar()
-        
-        # Test insert with unique timestamp
-        test_timestamp = datetime.now().timestamp()
-        test_post = FBPost(
-            ad_account_name="TEST",
-            campaign_name="TEST", 
-            ad_set_name="TEST",
-            ad_name="TEST",
-            page_id="TEST",
-            post_id=f"test_{test_timestamp}",
-            object_story_id=f"story_{test_timestamp}"
-        )
-        
-        db.add(test_post)
-        db.commit()
-        
-        new_count = db.execute(text("SELECT COUNT(*) FROM fb_posts")).scalar()
-        
-        # Clean up test post
-        db.delete(test_post)
-        db.commit()
-        db.close()
-        
-        return {
-            "connection": "OK",
-            "original_count": result,
-            "after_insert": new_count,
-            "test_insert": "SUCCESS",
-            "cleanup": "SUCCESS"
-        }
-        
-    except Exception as e:
-        return {
-            "connection": "FAILED",
-            "error": str(e)
-        }
-
-# Database Endpoints - FIXED VERSION
+# Database Endpoints - MINIMAL FIX VERSION
 @app.get("/fb-posts")
 async def get_fb_posts():
     """Get all FB posts from database"""
@@ -696,36 +650,29 @@ async def get_fb_posts():
 
 @app.post("/fb-posts/add")
 async def add_fb_post(post: FBPostCreate):
-    """Add new FB post to database - FIXED VERSION"""
+    """Add new FB post to database - MINIMAL FIX"""
     db = SessionLocal()
     try:
-        print(f"🔍 Attempting to add post: {post.post_id}")
-        
-        # Check for existing post first (prevents IntegrityError)
+        # Check for existing posts first to avoid IntegrityError
         existing_post = db.query(FBPost).filter(FBPost.post_id == post.post_id).first()
         if existing_post:
-            print(f"❌ Post {post.post_id} already exists")
             return {
                 "success": True,
                 "message": f"Post {post.post_id} already exists (duplicate skipped)",
                 "post_id": post.post_id,
-                "status": "duplicate_skipped",
-                "debug": "Found existing post_id"
+                "status": "duplicate_skipped"
             }
         
-        # Check for existing object_story_id
         existing_story = db.query(FBPost).filter(FBPost.object_story_id == post.object_story_id).first()
         if existing_story:
-            print(f"❌ Object story {post.object_story_id} already exists")
             return {
                 "success": True,
                 "message": f"Object story {post.object_story_id} already exists (duplicate skipped)",
                 "post_id": post.post_id,
-                "status": "duplicate_skipped",
-                "debug": "Found existing object_story_id"
+                "status": "duplicate_skipped"
             }
         
-        # Create new post
+        # Create and add new post
         db_post = FBPost(
             ad_account_name=post.ad_account_name,
             campaign_name=post.campaign_name,
@@ -738,21 +685,16 @@ async def add_fb_post(post: FBPostCreate):
         
         db.add(db_post)
         db.commit()
-        db.refresh(db_post)  # Refresh to get the ID
-        
-        print(f"✅ Successfully added post: {post.post_id}")
         
         return {
             "success": True,
             "message": "FB post added successfully",
             "post_id": post.post_id,
-            "status": "new",
-            "debug": "Successfully inserted"
+            "status": "new"
         }
         
     except Exception as e:
         db.rollback()
-        print(f"❌ Error adding post: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     finally:
         db.close()
@@ -1232,8 +1174,7 @@ async def get_stats():
             "smart_cta": "Phone number for urgent customers, website for general interest",
             "professional_tone": "Natural responses with proper formatting",
             "batch_processing": "Process multiple comments efficiently",
-            "no_numerical_values": "Removes all dollar amounts, percentages, and rates",
-            "fixed_db_handling": "Proper session management and error handling"
+            "no_numerical_values": "Removes all dollar amounts, percentages, and rates"
         }
     }
 
