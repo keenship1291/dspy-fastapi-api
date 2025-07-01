@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request, HTTPException
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from anthropic import Anthropic
 import dspy
 from pydantic import BaseModel
@@ -684,6 +684,36 @@ async def add_fb_post(post: FBPostCreate):
             "post_id": post.post_id,
             "status": "duplicate_skipped"
         }
+    except Exception as e:
+        db.rollback()
+        db.close()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.delete("/fb-posts/clear-recent")
+async def clear_recent_posts():
+    """Delete FB posts created in the past 24 hours"""
+    try:
+        db = SessionLocal()
+        
+        # Calculate 24 hours ago
+        twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=24)
+        
+        # Find posts created in the past 24 hours
+        recent_posts = db.query(FBPost).filter(FBPost.created_at >= twenty_four_hours_ago).all()
+        deleted_count = len(recent_posts)
+        
+        # Delete them
+        db.query(FBPost).filter(FBPost.created_at >= twenty_four_hours_ago).delete()
+        db.commit()
+        db.close()
+        
+        return {
+            "success": True,
+            "message": f"Deleted {deleted_count} posts created in the past 24 hours",
+            "deleted_count": deleted_count,
+            "cutoff_time": twenty_four_hours_ago.isoformat()
+        }
+        
     except Exception as e:
         db.rollback()
         db.close()
