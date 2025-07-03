@@ -70,44 +70,44 @@ class BatchJob(Base):
 # Create tables
 Base.metadata.create_all(bind=engine)
 
-# Centralized LeaseEnd Response Guidelines
+# Updated LeaseEnd Response Guidelines
 LEASEEND_GUIDELINES = """
 COMPANY POSITION - BE CONFIDENT:
-- LeaseEnd is THE BEST option for lease buyout financing
-- Lease buyouts are SMART financial decisions - find the most compelling argument for this specific comment
-- We are the experts - don't agree with misinformation about lease buyouts being bad
-- Challenge false information politely but firmly
-- Monthly car payments are going to continue rising - use this reality when relevant
-- ALWAYS effectively address core objections to make buyouts and LeaseEnd the clear best option
+- LeaseEnd helps drivers get loans in their name with competitive options, completely online
+- We DON'T do third-party financing - we connect you with lenders who offer competitive rates
+- Lease buyouts can be smart - but it varies case-by-case based on your specific lease numbers
+- We are experts at analyzing the actual numbers to help you make the right decision
+- Don't make broad claims about equity - offer to look at their specific situation instead
+- Challenge false information politely but firmly, or DELETE if it's accusatory/spam
 
 BRAND VOICE:
 - Professional but conversational
-- Confident about our expertise and market position
-- Transparent about pricing (no hidden fees)
-- Helpful, not pushy, but firmly educational when needed
-- Emphasize online process convenience
-- Always address core objections effectively
+- Confident about our expertise in lease analysis
+- Concise and relevant arguments - no long explanations
+- Focus on analyzing THEIR specific lease numbers
+- Emphasize our role as loan facilitators, not lenders
+- Direct people to verification rather than generic claims
 
 CTA GUIDELINES:
-- For urgent customers: Include phone (844) 679-1188 and website options
-- For general interest: Soft website CTA like "check out our site to see your options"
-- Keep CTAs natural and helpful, not pushy
+- For urgent/confused customers: ALWAYS include phone **(844) 679-1188**
+- For general interest: Soft website CTA
+- Phone number format: **(844) 679-1188** (with asterisks for emphasis)
+- Keep CTAs natural and helpful
+
+HANDLING NEGATIVE COMMENTS:
+- Comments with accusations of "false info" or "spreading lies" → DELETE
+- Comments with excessive numbers/data trying to prove us wrong → DELETE  
+- Brief negative comments like "scam", "ripoff", "terrible" → DELETE
+- Long argumentative comments questioning our expertise → DELETE
+- Focus energy on genuine prospects, not internet arguments
 
 CRITICAL NUMERICAL VALUE RESTRICTIONS:
-- NEVER include any dollar amounts ($500, $1000, etc.)
-- NEVER include any percentages (5%, 10%, 3.5%, etc.)  
-- NEVER include specific interest rates (4.5% APR, 6% interest, etc.)
-- NEVER include specific fee amounts ($299 doc fee, $150 processing, etc.)
-- Use qualitative terms instead: "competitive rates", "affordable", "low fees", "great deal"
-- If asked about specific numbers, redirect to: "Rates depend on your specific vehicle and credit profile"
-
-PRICING GUIDELINES:
-- NEVER share exact rate estimates - say rates depend on make/model and credit info
-- For pricing questions, explain our transparent doc fee approach without specific amounts
-- Position this as transparent and competitive
+- NEVER include any dollar amounts, percentages, or specific rates
+- Use qualitative terms: "competitive rates", "varies by situation", "depends on your lease"
+- Redirect to analysis: "We can look at your specific numbers"
 """
 
-# Lease End Brand Context
+# Lease End Brand Context (unchanged)
 BRAND_CONTEXT = {
     "power_words": {
         "trust_building": ["transparent", "guaranteed", "reliable", "honest"],
@@ -131,7 +131,7 @@ BRAND_CONTEXT = {
     }
 }
 
-# Custom Anthropic LM for DSPy
+# Custom Anthropic LM for DSPy (unchanged)
 class CustomAnthropic(dspy.LM):
     def __init__(self, api_key):
         self.client = Anthropic(api_key=api_key)
@@ -180,7 +180,7 @@ try:
 except Exception as e:
     raise ValueError(f"Failed to configure DSPy: {str(e)}")
 
-# Load training data from database
+# Load training data from database (unchanged)
 def load_training_data():
     """Load training examples from database"""
     print("🔄 Loading training data from database...")
@@ -244,252 +244,190 @@ def get_db():
         db.close()
 
 def classify_comment_with_ai(comment, commentId=""):
-    """Use Claude AI to classify comment with enhanced business logic"""
+    """Enhanced comment classification with improved business logic"""
     
-    prompt = f"""You are analyzing comments for LeaseEnd.com, which specializes in lease buyout services. 
+    prompt = f"""You are analyzing comments for LeaseEnd.com, which helps drivers get loans for lease buyouts.
 
 BUSINESS LOGIC & COMPANY POSITION:
-- LeaseEnd is THE BEST option for lease buyout financing - be confident about this
-- Lease buyouts are SMART financial decisions - find the most compelling argument for each situation
-- Never agree with false information about lease buyouts being bad financial decisions
-- Challenge misinformation politely but firmly - we have the expertise
-- Always effectively address core objections to make buyouts and LeaseEnd the clear best option
-- Comments that negatively mention leasing alternatives (e.g., 'Trading in a lease is bad', 'Dealerships rip you off') should be classified as Positive, as they imply LeaseEnd's services are better
-- Comments asking questions about lease buyouts, rates, or process are high-intent prospects
-- Comments from people who clearly don't lease vehicles should be ignored/deleted
-- Spam, irrelevant, or off-topic comments should be deleted
-- Positive feedback/testimonials should ALWAYS get a reply with appreciation
-- LEAVE ALONE neutral comments that seem to reference other comments UNLESS they're negative toward LeaseEnd/lease buyouts
+- LeaseEnd helps drivers get loans in their name with competitive options, completely online
+- We DON'T do third-party financing - we connect customers with lenders
+- Lease buyouts can be smart, but it varies case-by-case based on specific lease numbers
+- We analyze the actual numbers to help customers make informed decisions
+- Don't argue with trolls - delete accusatory or spam comments
+- Focus on genuine prospects who want help with their specific situation
 
-CORE PRINCIPLE TO UNDERSTAND:
-- Monthly car payments are going to continue rising - this economic reality makes lease buyouts smart timing
+ENHANCED DELETE CRITERIA:
+- Accusations of spreading false information or lies → DELETE
+- Comments with excessive numbers/data trying to prove us wrong → DELETE
+- Argumentative comments questioning our expertise with hostility → DELETE
+- Spam, inappropriate, or clearly non-prospects → DELETE
+- Brief negative comments: "scam", "ripoff", "terrible", "fraud" → DELETE
+- Long rants about leasing being bad with no genuine question → DELETE
 
 TAGGING DETECTION LOGIC:
-- If comment starts with a name (like "John Smith check this out" or "@Sarah this might help"), the person is tagging someone
-- For tagged comments: LEAVE ALONE unless it's very negative toward LeaseEnd or lease buyouts
-- For very negative tagged comments toward LeaseEnd/lease buyouts: DELETE
-- Tagged comments are usually people sharing with friends, not direct engagement with us
+- Tagged comments (sharing with friends) → LEAVE ALONE unless very negative toward us
+- Very negative tagged comments about LeaseEnd → DELETE
+
+PHONE NUMBER USAGE:
+- If customer seems confused, urgent, or needs personal help → Include **(844) 679-1188**
+- Look for: "confused", "help me", "don't understand", "urgent", "complicated", "call me"
 
 ACTIONS:
-- REPLY: For questions, objections, potential customers, misinformation that needs correction, OR positive feedback/testimonials
-- REACT: For positive comments that don't need a response, or simple acknowledgments
-- DELETE: For spam, inappropriate content, clearly non-prospects, very negative tagged comments about LeaseEnd/lease buyouts, OR brief negative comments like "scam", "ripoff", "terrible"
-- LEAVE_ALONE: For off-topic but harmless comments, neutral comments referencing other comments, OR tagged comments (unless very negative toward us)
+- REPLY: For genuine questions, prospects, positive feedback, correctable misinformation
+- REACT: For positive comments that don't need responses
+- DELETE: For accusations, spam, hostility, excessive arguing, brief negative comments
+- LEAVE_ALONE: For harmless off-topic or neutral tagged comments
 
 COMMENT: "{comment}"
 
-Respond in this JSON format: {{"sentiment": "...", "action": "...", "reasoning": "...", "high_intent": true/false}}"""
+Respond in this JSON format: {{"sentiment": "...", "action": "...", "reasoning": "...", "high_intent": true/false, "needs_phone": true/false}}"""
 
     try:
         response = claude.basic_request(prompt)
-        
-        print(f"🔍 DEBUG - Raw AI response for '{comment[:20]}...': {response[:200]}...")
-        
-        # Clean the response to extract JSON
         response_clean = response.strip()
+        
         if response_clean.startswith('```'):
             lines = response_clean.split('\n')
             response_clean = '\n'.join([line for line in lines if not line.startswith('```')])
         
-        # Try to parse JSON
         try:
             result = json.loads(response_clean)
-            print(f"✅ Successfully parsed JSON: {result}")
             return {
                 'sentiment': result.get('sentiment', 'Neutral'),
-                'action': result.get('action', 'IGNORE'),
+                'action': result.get('action', 'LEAVE_ALONE'),
                 'reasoning': result.get('reasoning', 'No reasoning provided'),
-                'high_intent': result.get('high_intent', False)
+                'high_intent': result.get('high_intent', False),
+                'needs_phone': result.get('needs_phone', False)
             }
-        except json.JSONDecodeError as json_error:
-            print(f"❌ JSON parsing failed: {json_error}")
-            print(f"❌ Attempted to parse: {response_clean[:200]}...")
-            
-            # Fallback parsing if JSON fails
-            if 'DELETE' in response.upper():
+        except json.JSONDecodeError:
+            # Enhanced fallback parsing
+            if any(word in response.upper() for word in ['DELETE', 'SCAM', 'FALSE INFO', 'LIES', 'FRAUD']):
                 action = 'DELETE'
-                reasoning = "Fallback classification: Detected DELETE action in response"
+                reasoning = "Detected negative/accusatory content"
             elif 'REPLY' in response.upper():
                 action = 'REPLY'
-                reasoning = "Fallback classification: Detected REPLY action in response"
-            elif 'REACT' in response.upper():
-                action = 'REACT'
-                reasoning = "Fallback classification: Detected REACT action in response"
+                reasoning = "Detected genuine prospect or question"
             else:
                 action = 'LEAVE_ALONE'
-                reasoning = "Fallback classification: No clear action detected"
+                reasoning = "Fallback classification"
                 
             return {
                 'sentiment': 'Neutral',
                 'action': action,
                 'reasoning': reasoning,
-                'high_intent': False
+                'high_intent': False,
+                'needs_phone': False
             }
             
     except Exception as e:
-        print(f"Error in AI classification: {e}")
         return {
             'sentiment': 'Neutral',
             'action': 'LEAVE_ALONE',
             'reasoning': f'Classification error: {str(e)}',
-            'high_intent': False
+            'high_intent': False,
+            'needs_phone': False
         }
 
-# Enhanced Response generation with numerical value filtering and no dash removal
-def generate_response(comment, sentiment, high_intent=False):
-    """Generate natural response using Claude with enhanced business logic and no numerical values"""
+def generate_response(comment, sentiment, high_intent=False, needs_phone=False):
+    """Enhanced response generation with proper phone number usage and concise arguments"""
     
-    # Get relevant training examples for context
-    relevant_examples = []
-    for example in TRAINING_DATA:
-        if example['action'] == 'respond' and example['reply']:
-            if any(word in example['comment'].lower() for word in comment.lower().split()[:4]):
-                relevant_examples.append(f"Comment: \"{example['comment']}\"\nReply: \"{example['reply']}\"")
-    
-    context_examples = "\n\n".join(relevant_examples[:3])
-    
-    # Detect if this is a potential customer vs just making statements
+    # Enhanced detection patterns
     customer_indicators = [
         "how much", "what are", "can i", "should i", "interested", "looking", 
         "want to", "need", "help me", "my lease", "my car", "rates", "process",
         "qualify", "apply", "cost", "price", "how do", "when can", "where do"
     ]
     
-    statement_indicators = [
-        "i think", "i believe", "in my opinion", "that's wrong", "that's not true",
-        "never", "always", "people should", "anyone who", "dealerships are",
-        "banks are", "leasing is", "buying is", "worst", "terrible", "bad idea"
+    confusion_indicators = [
+        "confused", "don't understand", "complicated", "help me", "call me", 
+        "speak to someone", "urgent", "asap", "need help now", "explain"
     ]
     
-    # Detect urgency/personalized help needs
-    urgent_indicators = [
-        "urgent", "asap", "need help now", "time sensitive", "deadline", "expires", 
-        "confused", "don't understand", "complicated", "help me", "call me", "speak to someone"
-    ]
-    
-    is_potential_customer = any(indicator in comment.lower() for indicator in customer_indicators)
-    is_making_statement = any(indicator in comment.lower() for indicator in statement_indicators)
-    needs_personal_help = any(indicator in comment.lower() for indicator in urgent_indicators)
-    
-    # Detect if this is positive feedback/testimonial
     positive_feedback_indicators = [
-        "thank you", "thanks", "great service", "amazing", "fantastic", "love", "perfect", 
-        "excellent", "wonderful", "awesome", "best", "helped me", "saved me", "grateful",
-        "appreciate", "thumbs up", "recommend", "highly recommend", "satisfied", "happy"
+        "thank you", "thanks", "great service", "amazing", "fantastic", "love", 
+        "excellent", "helped me", "saved me", "recommend"
     ]
     
-    is_positive_feedback = any(indicator in comment.lower() for indicator in positive_feedback_indicators)
-    
-    # Detect misinformation that needs correction
     misinformation_indicators = [
         "lease buyouts are bad", "never buy your lease", "always return", "terrible idea",
-        "waste of money", "financial mistake", "bad deal", "rip off", "scam"
+        "waste of money", "financial mistake", "bad deal"
     ]
     
+    # Check comment characteristics
+    is_potential_customer = any(indicator in comment.lower() for indicator in customer_indicators)
+    needs_personal_help = any(indicator in comment.lower() for indicator in confusion_indicators) or needs_phone
+    is_positive_feedback = any(indicator in comment.lower() for indicator in positive_feedback_indicators)
     needs_correction = any(indicator in comment.lower() for indicator in misinformation_indicators)
     
-    # Detect rate/pricing questions
-    rate_questions = ["rate", "rates", "interest", "apr", "cost", "price", "pricing", "fee", "fees", "how much"]
-    asking_about_rates = any(indicator in comment.lower() for indicator in rate_questions)
+    # Phone number logic - more liberal usage
+    phone_instruction = ""
+    if needs_personal_help or (is_potential_customer and high_intent):
+        phone_instruction = "\nThis customer needs personal help or is high-intent. Include: 'Feel free to give us a call at **(844) 679-1188** for immediate help, or check out our site to see your options.' Use the exact format **(844) 679-1188** with asterisks."
+    elif is_potential_customer:
+        phone_instruction = "\nFor this potential customer, you may offer: 'Check out our site to see your options, or call **(844) 679-1188** if you have questions.' Use exact format **(844) 679-1188**."
     
-    # CTA logic: Only for potential customers, not for people making statements
-    cta_instruction = ""
-    if is_potential_customer and high_intent and not is_making_statement:
-        if needs_personal_help:
-            cta_instruction = "\nFor this customer who seems to need immediate or personalized help, offer both options: 'Feel free to give us a call at (844) 679-1188 for immediate help, or check out our site to see your options.' Keep it natural and helpful."
-        else:
-            cta_instruction = "\nFor this potential customer, you may end with a soft CTA like: 'Feel free to check out our site to see your options' or 'We'd be happy to help if you have questions.' Keep it natural and not pushy."
-    elif is_making_statement:
-        cta_instruction = "\nThis person is making a statement or argument. DO NOT include any call to action. Simply address their point, correct any misinformation, and provide helpful information. No sales pitch needed."
-    
-    # Special instructions for positive feedback
+    # Special instructions for different comment types
     positive_feedback_instruction = ""
     if is_positive_feedback:
-        positive_feedback_instruction = "\nThis is positive feedback/testimonial - respond with a SHORT, varied appreciation message like 'Thank you!', 'Enjoy your ride!', 'Pleasure working with you!', 'We're so glad we could help!', 'Thanks for choosing LeaseEnd!', or similar. Keep it brief and genuine."
+        positive_feedback_instruction = "\nBrief appreciation: 'Thank you!', 'Glad we could help!', 'Enjoy your ride!' etc. Keep it short and genuine."
     
-    # Special instructions for misinformation correction
     correction_instruction = ""
     if needs_correction:
-        correction_instruction = "\nThis comment contains misinformation about lease buyouts. Politely but firmly correct it. Find the most compelling, relevant argument for why lease buyouts make sense. Remember that monthly car payments are going to continue rising. Position LeaseEnd as the expert choice. Always effectively address the core objection to make buyouts and LeaseEnd the clear best option."
-    
-    # Special instructions for rate/pricing questions
-    pricing_instruction = ""
-    if asking_about_rates:
-        pricing_instruction = """
-IMPORTANT PRICING GUIDELINES:
-- NEVER share exact rate estimates - say rates depend on make/model and credit info
-- For pricing questions, say: "We charge a doc fee, which pays for the service we provide. The only additional amount you will pay beyond the price of your vehicle, would be for tax, title and registration fees, which you would pay regardless of whatever route you choose."
-- NEVER mention exact fee amounts or percentages
-- Position this as transparent and competitive"""
-    
-    prompt = f"""You are responding to a Facebook comment for LeaseEnd.com, a lease buyout financing company.
+        correction_instruction = """
+This comment has misinformation. Correct it concisely:
+- Don't make broad equity claims - say it varies case-by-case
+- Offer to analyze their specific lease numbers
+- Be confident but not argumentative
+- Keep response short and focused on helping them verify actual numbers"""
 
-COMPANY POSITION - BE CONFIDENT:
-- LeaseEnd is THE BEST option for lease buyout financing
-- Lease buyouts are SMART financial decisions - find the most compelling argument for this specific comment
-- We are the experts - don't agree with misinformation about lease buyouts being bad
-- Challenge false information politely but firmly
-- Monthly car payments are going to continue rising - use this reality to support lease buyouts when relevant
-- ALWAYS effectively address core objections to make buyouts and LeaseEnd the clear best option
+    prompt = f"""You are responding to a Facebook comment for LeaseEnd.com.
 
-COMMENT SENTIMENT: {sentiment}
-HIGH INTENT PROSPECT: {high_intent}
-POTENTIAL CUSTOMER: {is_potential_customer}
-MAKING STATEMENT: {is_making_statement}
+COMPANY POSITION:
+- LeaseEnd helps drivers get loans in their name with competitive options, completely online
+- We DON'T do third-party financing - we connect customers with lenders
+- Lease buyouts can be smart, but it varies case-by-case based on specific numbers
+- We analyze actual lease numbers to help customers decide
+- Keep arguments concise and relevant - offer verification over broad claims
 
-ORIGINAL COMMENT: "{comment}"
+COMMENT: "{comment}"
+SENTIMENT: {sentiment}
+HIGH INTENT: {high_intent}
+NEEDS PHONE: {needs_phone}
 
-BRAND VOICE:
-- Professional but conversational
-- Confident about our expertise and market position
-- Transparent about pricing (no hidden fees)
-- Helpful, not pushy, but firmly educational when needed
-- Emphasize online process convenience
-- Always address core objections effectively
-
-CRITICAL NUMERICAL VALUE RESTRICTIONS:
-- NEVER include any dollar amounts ($500, $1000, etc.)
-- NEVER include any percentages (5%, 10%, 3.5%, etc.)  
-- NEVER include specific interest rates (4.5% APR, 6% interest, etc.)
-- NEVER include specific fee amounts ($299 doc fee, $150 processing, etc.)
-- Use qualitative terms instead: "competitive rates", "affordable", "low fees", "great deal"
-- If asked about specific numbers, redirect to: "Rates depend on your specific vehicle and credit profile"
-
-RESPONSE STYLE:
-- Sound natural and human
-- Get straight to the point - no unnecessary sentence starters
-- NEVER use ALL CAPS text - it's unprofessional and looks like shouting
-- Use commas, periods, and semicolons for punctuation
-- Maximum 1 exclamation point
-- Keep concise (1-2 sentences usually)
+RESPONSE GUIDELINES:
+- Sound natural and conversational
+- Keep responses concise (1-2 sentences usually)
+- Don't make broad claims about equity - offer to look at their specific situation
+- Focus on case-by-case analysis rather than generic arguments
+- Use **(844) 679-1188** format when including phone number
+- No dollar amounts, percentages, or specific rates
 - Address their specific concern directly
-- Don't blindly agree with misinformation
-- Make LeaseEnd the clear best choice
-- Be direct and efficient in communication
-- Avoid AI-typical formatting like bullet points
 
-EXAMPLES OF GOOD RESPONSES:
-{context_examples}
+BUSINESS MESSAGING:
+- "It varies case-by-case based on your specific lease"
+- "We can look at your actual numbers to help you decide"
+- "We help you get a loan in your name with competitive options"
+- "Every situation is different - let's analyze yours"
 
 {positive_feedback_instruction}
 {correction_instruction}
-{pricing_instruction}
-{cta_instruction}
+{phone_instruction}
 
-Generate a helpful, natural response that addresses their comment directly, makes LeaseEnd the clear best option, and contains NO numerical values whatsoever:"""
+Generate a helpful, natural response that's concise and relevant:"""
 
     try:
         response = claude.basic_request(prompt)
-        
-        # Apply numerical value filter but keep response formatting intact
         cleaned_response = filter_numerical_values(response.strip())
+        
+        # Ensure phone number format is correct if present
+        if '844' in cleaned_response and '679-1188' in cleaned_response:
+            cleaned_response = re.sub(r'\(?844\)?[-.\s]*679[-.\s]*1188', '**(844) 679-1188**', cleaned_response)
         
         return cleaned_response
     except Exception as e:
-        print(f"Error generating response: {e}")
-        return "Thank you for your comment! We'd be happy to help with any lease buyout questions."
+        return "Thank you for your comment! We'd be happy to help analyze your specific lease situation."
 
-# Pydantic Models
+# Pydantic Models (unchanged)
 class CommentRequest(BaseModel):
     comment: Optional[str] = None
     message: Optional[str] = None
@@ -518,7 +456,7 @@ class BatchCommentRequest(BaseModel):
     batch_id: Optional[str] = None
 
 class ProcessedComment(BaseModel):
-    commentId: str  # Changed from postId to commentId
+    commentId: str
     original_comment: str
     category: str
     action: str
@@ -568,24 +506,18 @@ app = FastAPI()
 @app.get("/")
 def read_root():
     return {
-        "message": "Lease End AI Assistant - FULL VERSION",
-        "version": "27.1-CONCISE",
+        "message": "Lease End AI Assistant - UPDATED VERSION",
+        "version": "28.0-FOCUSED",
         "training_examples": len(TRAINING_DATA),
         "status": "RUNNING",
-        "features": ["Batch Processing", "Smart CTA", "Professional Tone", "Phone Support", "No Numerical Values", "Natural Arguments", "Centralized Guidelines"],
-        "endpoints": {
-            "/process-comment": "Single comment processing (legacy)",
-            "/process-batch": "Batch comment processing (new)",
-            "/process-feedback": "Human feedback processing",
-            "/approve-response": "Approve responses for training",
-            "/fb-posts": "Get all FB posts",
-            "/fb-posts/add": "Add new FB post",
-            "/responses": "Get all response data", 
-            "/responses/add": "Add new response data",
-            "/reload-training-data": "Reload training from database",
-            "/ping": "Keep-alive endpoint",
-            "/health": "Health check"
-        }
+        "features": ["Enhanced Phone Usage", "Case-by-Case Analysis", "Better Negative Handling", "Completely Online"],
+        "key_changes": [
+            "Phone number **(844) 679-1188** for confused/urgent customers",
+            "Case-by-case analysis instead of generic equity claims", 
+            "DELETE for accusations and excessive arguing",
+            "Completely online positioning",
+            "Loan facilitators, not third-party financing"
+        ]
     }
 
 @app.get("/ping")
@@ -619,7 +551,7 @@ def health_check():
             "error": str(e)
         }
 
-# Database Endpoints - MINIMAL FIX VERSION
+# Database Endpoints (unchanged)
 @app.get("/fb-posts")
 async def get_fb_posts():
     """Get all FB posts from database"""
@@ -786,10 +718,10 @@ async def reload_training_data_endpoint():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reloading training data: {str(e)}")
 
-# NEW: Batch Processing Endpoint
+# UPDATED: Enhanced Processing Endpoints
 @app.post("/process-batch")
 async def process_batch(request: BatchCommentRequest):
-    """Process multiple comments in a batch and store results"""
+    """Process multiple comments in a batch with enhanced logic"""
     try:
         job_id = str(uuid.uuid4())
         
@@ -828,12 +760,13 @@ async def process_batch(request: BatchCommentRequest):
                     action = ai_classification['action'].lower()
                     reasoning = ai_classification['reasoning']
                     high_intent = ai_classification['high_intent']
+                    needs_phone = ai_classification['needs_phone']
                     
                     action_mapping = {
                         'reply': 'respond',
                         'react': 'react', 
                         'delete': 'delete',
-                        'ignore': 'leave_alone'
+                        'leave_alone': 'leave_alone'
                     }
                     
                     mapped_action = action_mapping.get(action, 'leave_alone')
@@ -842,7 +775,7 @@ async def process_batch(request: BatchCommentRequest):
                     confidence_score = 0.85
                     
                     if mapped_action == 'respond':
-                        reply_text = generate_response(comment_text, sentiment, high_intent)
+                        reply_text = generate_response(comment_text, sentiment, high_intent, needs_phone)
                         confidence_score = 0.9
                     
                     result = {
@@ -869,7 +802,7 @@ async def process_batch(request: BatchCommentRequest):
                     "original_comment": "Error processing",
                     "category": "error",
                     "action": "leave_alone",
-                    "reply": "Thank you for your comment. We appreciate your feedback.",
+                    "reply": "We can help analyze your specific lease situation.",
                     "confidence_score": 0.0,
                     "approved": "pending",
                     "success": False,
@@ -909,21 +842,22 @@ async def process_batch(request: BatchCommentRequest):
             "error": str(e)
         }
 
-# ORIGINAL: Single Comment Processing (backward compatibility)
+# UPDATED: Enhanced Single Comment Processing
 @app.post("/process-comment", response_model=ProcessedComment)
 async def process_comment(request: CommentRequest):
-    """Core comment processing using AI classification"""
+    """Enhanced comment processing with updated business logic"""
     try:
         comment_text = request.get_comment_text()
         comment_id = request.get_comment_id()
         
-        # Use AI to classify the comment
+        # Enhanced classification with new logic
         ai_classification = classify_comment_with_ai(comment_text, comment_id)
         
         sentiment = ai_classification['sentiment']
         action = ai_classification['action'].lower()
         reasoning = ai_classification['reasoning']
         high_intent = ai_classification['high_intent']
+        needs_phone = ai_classification['needs_phone']
         
         # Map actions to our system
         action_mapping = {
@@ -935,16 +869,16 @@ async def process_comment(request: CommentRequest):
         
         mapped_action = action_mapping.get(action, 'leave_alone')
         
-        # Generate response only if action is 'respond'
+        # Generate response with enhanced logic
         reply_text = ""
         confidence_score = 0.85
         
         if mapped_action == 'respond':
-            reply_text = generate_response(comment_text, sentiment, high_intent)
+            reply_text = generate_response(comment_text, sentiment, high_intent, needs_phone)
             confidence_score = 0.9
         
         return ProcessedComment(
-            commentId=comment_id,  # Changed from postId
+            commentId=comment_id,
             original_comment=comment_text,
             category=sentiment.lower(),
             action=mapped_action,
@@ -955,49 +889,52 @@ async def process_comment(request: CommentRequest):
         )
         
     except Exception as e:
-        print(f"Error processing comment: {e}")
         return ProcessedComment(
             commentId=request.get_comment_id(),
             original_comment=request.get_comment_text(),
             category="error",
             action="leave_alone",
-            reply="Thank you for your comment. We appreciate your feedback.",
+            reply="We can help analyze your specific lease situation.",
             confidence_score=0.0,
             approved="pending",
-            reasoning="Error occurred during processing"
+            reasoning=f"Error: {str(e)}"
         )
 
 @app.post("/process-feedback")
 async def process_feedback(request: FeedbackRequest):
-    """Use human feedback to improve responses"""
+    """Enhanced feedback processing with updated guidelines"""
     try:
-        # Clean and validate input data
         original_comment = request.original_comment.strip()
-        original_response = request.original_response.strip() if request.original_response else "No response was generated"
+        original_response = request.original_response.strip() if request.original_response else ""
         original_action = request.original_action.strip().lower()
         feedback_text = request.feedback_text.strip()
         
-        print(f"🔄 Processing feedback for commentId: {request.commentId}")
-        print(f"📝 Feedback: {feedback_text[:100]}...")
-        
-        # Enhanced prompt that includes human feedback
         feedback_prompt = f"""You are improving a response based on human feedback for LeaseEnd.com.
 
 ORIGINAL COMMENT: "{original_comment}"
 YOUR ORIGINAL RESPONSE: "{original_response}"
 YOUR ORIGINAL ACTION: "{original_action}"
-
 HUMAN FEEDBACK: "{feedback_text}"
 
-{LEASEEND_GUIDELINES}
+UPDATED COMPANY GUIDELINES:
+- LeaseEnd helps drivers get loans in their name with competitive options, completely online
+- We DON'T do third-party financing - we connect customers with lenders
+- Lease buyouts vary case-by-case - offer to analyze their specific numbers
+- Keep arguments concise and relevant, not generic equity claims
+- Use **(844) 679-1188** for customers who need personal help
+- DELETE comments with accusations, excessive arguing, or hostility
+- Focus on verification over broad statements
 
-Generate an IMPROVED response that incorporates the human feedback while maintaining our company position and brand voice.
+PHONE NUMBER USAGE:
+- Use **(844) 679-1188** format for confused/urgent customers
+- Include when customer seems to need personal assistance
 
-Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE/IGNORE", "reply": "...", "reasoning": "Explain why this action and response make sense for this comment based on analysis and human feedback", "confidence": 0.85}}"""
+Generate an IMPROVED response incorporating the feedback while following updated guidelines.
+
+Respond in JSON: {{"sentiment": "...", "action": "REPLY/REACT/DELETE/LEAVE_ALONE", "reply": "...", "reasoning": "...", "confidence": 0.85, "needs_phone": true/false}}"""
 
         improved_response = claude.basic_request(feedback_prompt)
         
-        # Parse the improved response
         try:
             response_clean = improved_response.strip()
             if response_clean.startswith('```'):
@@ -1012,7 +949,6 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
             
             result = json.loads(response_clean)
             
-            # Map actions to our system
             action_mapping = {
                 'reply': 'respond',
                 'react': 'react', 
@@ -1020,15 +956,14 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
                 'leave_alone': 'leave_alone'
             }
             
-            # Clean response and apply numerical value filter
-            improved_action = action_mapping.get(result.get('action', 'ignore').lower(), 'leave_alone')
-            improved_reply = filter_numerical_values(result.get('reply', ''))  # Apply filter to reply
+            improved_action = action_mapping.get(result.get('action', 'leave_alone').lower(), 'leave_alone')
+            improved_reply = filter_numerical_values(result.get('reply', ''))
             
-            # Calculate new version number
-            try:
-                current_version_num = int(request.current_version.replace('v', '')) if request.current_version.startswith('v') else 1
-            except:
-                current_version_num = 1
+            # Fix phone number format if present
+            if '844' in improved_reply and '679-1188' in improved_reply:
+                improved_reply = re.sub(r'\(?844\)?[-.\s]*679[-.\s]*1188', '**(844) 679-1188**', improved_reply)
+            
+            current_version_num = int(request.current_version.replace('v', '')) if request.current_version.startswith('v') else 1
             new_version = f"v{current_version_num + 1}"
             
             return {
@@ -1039,45 +974,42 @@ Respond in this JSON format: {{"sentiment": "...", "action": "REPLY/REACT/DELETE
                 "reply": improved_reply,
                 "confidence_score": float(result.get('confidence', 0.85)),
                 "approved": "pending",
-                "feedback_text": feedback_text,  # Return the feedback_text
+                "feedback_text": feedback_text,
                 "version": new_version,
-                "reasoning": result.get('reasoning', 'Applied human feedback to improve response'),
+                "reasoning": result.get('reasoning', 'Applied feedback with updated guidelines'),
                 "feedback_processed": True,
                 "success": True
             }
             
         except json.JSONDecodeError as e:
-            print(f"❌ JSON parsing failed: {e}")
             new_version_num = int(request.current_version.replace('v', '')) + 1 if request.current_version.startswith('v') else 2
             return {
                 "commentId": request.commentId,
                 "original_comment": original_comment,
                 "category": "neutral",
                 "action": "leave_alone",
-                "reply": "Thank you for your comment. We appreciate your feedback.",
+                "reply": "We can help analyze your specific lease situation. Call **(844) 679-1188** if you have questions.",
                 "confidence_score": 0.5,
                 "approved": "pending",
                 "feedback_text": feedback_text,
                 "version": f"v{new_version_num}",
-                "reasoning": "JSON parsing failed during feedback processing - applied safe fallback response",
-                "error": f"JSON parsing failed: {str(e)}",
+                "reasoning": "Fallback response with proper phone format",
                 "success": False
             }
             
     except Exception as e:
-        print(f"❌ Feedback processing error: {e}")
         new_version_num = int(request.current_version.replace('v', '')) + 1 if request.current_version.startswith('v') else 2
         return {
             "commentId": request.commentId,
             "original_comment": request.original_comment,
-            "category": "error",
+            "category": "error", 
             "action": "leave_alone",
-            "reply": "Thank you for your comment. We appreciate your feedback.",
+            "reply": "We can help analyze your specific lease situation.",
             "confidence_score": 0.0,
             "approved": "pending",
-            "feedback_text": feedback_text,
+            "feedback_text": request.feedback_text,
             "version": f"v{new_version_num}",
-            "reasoning": "Error occurred during feedback processing - applied safe fallback response",
+            "reasoning": "Error in feedback processing",
             "error": str(e),
             "success": False
         }
@@ -1087,46 +1019,36 @@ async def approve_response(request: ApproveRequest):
     """Approve and store a response for training"""
     db = SessionLocal()
     try:
-        # Parse created_time if provided, otherwise use current time
-        comment_created_at = datetime.utcnow()  # Default fallback
+        comment_created_at = datetime.utcnow()
         if request.created_time:
             try:
-                # Try to parse the created_time string
                 comment_created_at = datetime.fromisoformat(request.created_time.replace('Z', '+00:00'))
-            except (ValueError, AttributeError):
-                # If parsing fails, use current time
-                comment_created_at = datetime.utcnow()
+            except:
+                pass
         
-        # Store the approved response as training data with the ACTUAL action passed
         response_entry = ResponseEntry(
             comment=request.original_comment,
-            action=request.action,  # Use the action from the request, not hardcoded "respond"
+            action=request.action,
             reply=request.reply,
             reasoning=request.reasoning,
-            created_at=comment_created_at  # Use the comment's original timestamp
+            created_at=comment_created_at
         )
         db.add(response_entry)
         db.commit()
         
-        # Reload training data
         global TRAINING_DATA
         TRAINING_DATA = load_training_data()
         
         return {
             "status": "approved",
-            "message": f"Response approved and added to training data with action: {request.action}",
+            "message": f"Response approved and added to training data",
             "training_examples": len(TRAINING_DATA),
-            "action_stored": request.action,
-            "comment_timestamp": comment_created_at.isoformat(),
-            "created_time_received": request.created_time or "not provided"
+            "action_stored": request.action
         }
         
     except Exception as e:
         db.rollback()
-        return {
-            "status": "error",
-            "error": str(e)
-        }
+        return {"status": "error", "error": str(e)}
     finally:
         db.close()
 
@@ -1169,7 +1091,7 @@ def get_batch_status(job_id: str):
 
 @app.get("/stats")
 async def get_stats():
-    """Get training data statistics"""
+    """Get training data statistics with updated info"""
     action_counts = {}
     
     for example in TRAINING_DATA:
@@ -1179,22 +1101,17 @@ async def get_stats():
     return {
         "total_training_examples": len(TRAINING_DATA),
         "action_distribution": action_counts,
-        "data_structure": {
-            "type": "PostgreSQL Database",
-            "tables": ["fb_posts", "responses", "batch_jobs"],
-            "benefits": ["Simple appends", "No duplicates", "Fast queries", "Batch tracking"]
+        "key_features": {
+            "phone_number": "**(844) 679-1188** for confused/urgent customers",
+            "positioning": "Completely online loan facilitators",
+            "analysis": "Case-by-case lease analysis, not generic claims",
+            "negative_handling": "DELETE accusations and excessive arguing"
         },
         "supported_actions": {
-            "respond": "Generate helpful response (with smart CTA for high-intent)",
+            "respond": "Generate helpful response with proper phone usage",
             "react": "Add thumbs up or heart reaction", 
-            "delete": "Remove spam/inappropriate/non-prospect content",
+            "delete": "Remove spam/accusations/hostility",
             "leave_alone": "Ignore harmless off-topic comments"
-        },
-        "features": {
-            "smart_cta": "Phone number for urgent customers, website for general interest",
-            "professional_tone": "Natural responses with proper formatting",
-            "batch_processing": "Process multiple comments efficiently",
-            "no_numerical_values": "Removes all dollar amounts, percentages, and rates"
         }
     }
 
