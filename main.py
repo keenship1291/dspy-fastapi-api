@@ -88,9 +88,11 @@ BRAND VOICE:
 - Emphasize our role as loan facilitators, not lenders
 - Direct people to verification rather than generic claims
 
-CTA GUIDELINES:
-- For urgent/confused customers: ALWAYS include phone (844) 679-1188
-- For general interest: Soft website CTA
+REFINED CTA GUIDELINES:
+- For hesitant customers: Include phone (844) 679-1188
+- For contact requests: Include phone (844) 679-1188
+- For confused/urgent customers: Include phone (844) 679-1188
+- For general prospects: Website CTA only - NO phone
 - Phone number format: (844) 679-1188
 - Keep CTAs natural and helpful
 
@@ -244,7 +246,7 @@ def get_db():
         db.close()
 
 def classify_comment_with_ai(comment, commentId=""):
-    """Enhanced comment classification with improved business logic"""
+    """Enhanced comment classification with refined phone logic"""
     
     prompt = f"""You are analyzing comments for LeaseEnd.com, which helps drivers get loans for lease buyouts.
 
@@ -268,9 +270,12 @@ TAGGING DETECTION LOGIC:
 - Tagged comments (sharing with friends) → LEAVE ALONE unless very negative toward us
 - Very negative tagged comments about LeaseEnd → DELETE
 
-PHONE NUMBER USAGE:
-- If customer seems confused, urgent, or needs personal help → Include (844) 679-1188
-- Look for: "confused", "help me", "don't understand", "urgent", "complicated", "call me"
+REFINED PHONE NUMBER USAGE - ONLY flag needs_phone=true for:
+- Customer explicitly requests contact: "call me", "speak to someone", "phone number"
+- Customer shows hesitation: "not sure", "worried", "skeptical", "what's the catch"
+- Customer is confused: "don't understand", "complicated", "how does this work"
+- Customer indicates urgency: "urgent", "asap", "time sensitive"
+- DO NOT flag general interest: "interested", "looking", "how much", "can I qualify"
 
 ACTIONS:
 - REPLY: For genuine questions, prospects, positive feedback, correctable misinformation
@@ -329,18 +334,33 @@ Respond in this JSON format: {{"sentiment": "...", "action": "...", "reasoning":
         }
 
 def generate_response(comment, sentiment, high_intent=False, needs_phone=False):
-    """Enhanced response generation with proper phone number usage and concise arguments"""
+    """Enhanced response generation with refined phone number usage"""
     
-    # Enhanced detection patterns
+    # General customer indicators (no phone needed)
     customer_indicators = [
         "how much", "what are", "can i", "should i", "interested", "looking", 
         "want to", "need", "help me", "my lease", "my car", "rates", "process",
         "qualify", "apply", "cost", "price", "how do", "when can", "where do"
     ]
     
+    # SPECIFIC hesitation/contact request indicators (phone needed)
+    hesitation_indicators = [
+        "not sure about", "hesitant", "worried", "concerned", "skeptical",
+        "don't trust", "seems too good", "what's the catch", "suspicious"
+    ]
+    
+    contact_request_indicators = [
+        "call me", "speak to someone", "talk to a person", "phone number",
+        "contact you", "reach out", "give me a call", "someone call me"
+    ]
+    
     confusion_indicators = [
-        "confused", "don't understand", "complicated", "help me", "call me", 
-        "speak to someone", "urgent", "asap", "need help now", "explain"
+        "confused", "don't understand", "complicated", "explain", 
+        "how does this work", "i'm lost", "need help understanding"
+    ]
+    
+    urgent_indicators = [
+        "urgent", "asap", "need help now", "time sensitive", "deadline"
     ]
     
     positive_feedback_indicators = [
@@ -355,16 +375,26 @@ def generate_response(comment, sentiment, high_intent=False, needs_phone=False):
     
     # Check comment characteristics
     is_potential_customer = any(indicator in comment.lower() for indicator in customer_indicators)
-    needs_personal_help = any(indicator in comment.lower() for indicator in confusion_indicators) or needs_phone
+    shows_hesitation = any(indicator in comment.lower() for indicator in hesitation_indicators)
+    requests_contact = any(indicator in comment.lower() for indicator in contact_request_indicators)
+    is_confused = any(indicator in comment.lower() for indicator in confusion_indicators)
+    is_urgent = any(indicator in comment.lower() for indicator in urgent_indicators)
     is_positive_feedback = any(indicator in comment.lower() for indicator in positive_feedback_indicators)
     needs_correction = any(indicator in comment.lower() for indicator in misinformation_indicators)
     
-    # Phone number logic - more liberal usage
+    # REFINED Phone number logic - only for specific cases
     phone_instruction = ""
-    if needs_personal_help or (is_potential_customer and high_intent):
-        phone_instruction = "\nThis customer needs personal help or is high-intent. Include: 'Feel free to give us a call at (844) 679-1188 for immediate help, or check out our site to see your options.' Use the exact format (844) 679-1188 with asterisks."
-    elif is_potential_customer:
-        phone_instruction = "\nFor this potential customer, you may offer: 'Check out our site to see your options, or call (844) 679-1188 if you have questions.' Use exact format (844) 679-1188."
+    if requests_contact or (shows_hesitation and is_potential_customer):
+        phone_instruction = "\nCustomer is requesting contact or showing hesitation. Include: 'Feel free to give us a call at (844) 679-1188 if you'd prefer to speak with someone.'"
+    elif is_confused or is_urgent:
+        phone_instruction = "\nCustomer seems confused or urgent. Include: 'Call (844) 679-1188 if you need immediate help.'"
+    elif needs_phone:  # Only if explicitly flagged by AI
+        phone_instruction = "\nAI flagged this customer needs phone support. Include: 'You can reach us at (844) 679-1188 for personalized help.'"
+    
+    # For general customers - NO phone, just website CTA
+    general_customer_instruction = ""
+    if is_potential_customer and not (requests_contact or shows_hesitation or is_confused or is_urgent or needs_phone):
+        general_customer_instruction = "\nFor this potential customer, use soft website CTA: 'Check out our site to see your options' or 'Visit our website to get started' - NO phone number."
     
     # Special instructions for different comment types
     positive_feedback_instruction = ""
@@ -399,7 +429,8 @@ RESPONSE GUIDELINES:
 - Keep responses concise (1-2 sentences usually)
 - Don't make broad claims about equity - offer to look at their specific situation
 - Focus on case-by-case analysis rather than generic arguments
-- Use (844) 679-1188 format when including phone number
+- ONLY use phone number (844) 679-1188 for hesitation/contact requests/confusion
+- For general prospects, use website CTAs instead
 - No dollar amounts, percentages, or specific rates
 - Address their specific concern directly
 
@@ -411,6 +442,7 @@ BUSINESS MESSAGING:
 
 {positive_feedback_instruction}
 {correction_instruction}
+{general_customer_instruction}
 {phone_instruction}
 
 Generate a helpful, natural response that's concise and relevant:"""
@@ -507,12 +539,13 @@ app = FastAPI()
 def read_root():
     return {
         "message": "Lease End AI Assistant - UPDATED VERSION",
-        "version": "28.0-FOCUSED",
+        "version": "29.0-REFINED-PHONE",
         "training_examples": len(TRAINING_DATA),
         "status": "RUNNING",
-        "features": ["Enhanced Phone Usage", "Case-by-Case Analysis", "Better Negative Handling", "Completely Online"],
+        "features": ["Refined Phone Usage", "Case-by-Case Analysis", "Better Negative Handling", "Completely Online"],
         "key_changes": [
-            "Phone number (844) 679-1188 for confused/urgent customers",
+            "Phone number (844) 679-1188 ONLY for hesitation/contact requests/confusion",
+            "Website CTAs for general prospects",
             "Case-by-case analysis instead of generic equity claims", 
             "DELETE for accusations and excessive arguing",
             "Completely online positioning",
@@ -921,12 +954,13 @@ UPDATED COMPANY GUIDELINES:
 - We DON'T do third-party financing - we connect customers with lenders
 - Lease buyouts vary case-by-case - offer to analyze their specific numbers
 - Keep arguments concise and relevant, not generic equity claims
-- Use (844) 679-1188 for customers who need personal help
+- Use (844) 679-1188 ONLY for customers who show hesitation, request contact, or are confused
+- For general prospects, use website CTAs instead
 - DELETE comments with accusations, excessive arguing, or hostility
 - Focus on verification over broad statements
 
 PHONE NUMBER USAGE:
-- Use (844) 679-1188 format for confused/urgent customers
+- Use (844) 679-1188 format for hesitant/confused/contact-requesting customers only
 - Include when customer seems to need personal assistance
 
 Generate an IMPROVED response incorporating the feedback while following updated guidelines.
@@ -1102,13 +1136,14 @@ async def get_stats():
         "total_training_examples": len(TRAINING_DATA),
         "action_distribution": action_counts,
         "key_features": {
-            "phone_number": "(844) 679-1188 for confused/urgent customers",
+            "phone_number": "(844) 679-1188 ONLY for hesitation/contact requests/confusion",
+            "website_ctas": "General prospects get website CTAs instead",
             "positioning": "Completely online loan facilitators",
             "analysis": "Case-by-case lease analysis, not generic claims",
             "negative_handling": "DELETE accusations and excessive arguing"
         },
         "supported_actions": {
-            "respond": "Generate helpful response with proper phone usage",
+            "respond": "Generate helpful response with refined phone usage",
             "react": "Add thumbs up or heart reaction", 
             "delete": "Remove spam/accusations/hostility",
             "leave_alone": "Ignore harmless off-topic comments"
