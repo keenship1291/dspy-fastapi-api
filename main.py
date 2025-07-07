@@ -89,9 +89,9 @@ BRAND VOICE:
 - Direct people to verification rather than generic claims
 
 CTA GUIDELINES:
-- For urgent/confused customers: ALWAYS include phone **(844) 679-1188**
+- For urgent/confused customers: ALWAYS include phone (844) 679-1188
 - For general interest: Soft website CTA
-- Phone number format: **(844) 679-1188** (with asterisks for emphasis)
+- Phone number format: (844) 679-1188
 - Keep CTAs natural and helpful
 
 HANDLING NEGATIVE COMMENTS:
@@ -269,7 +269,7 @@ TAGGING DETECTION LOGIC:
 - Very negative tagged comments about LeaseEnd → DELETE
 
 PHONE NUMBER USAGE:
-- If customer seems confused, urgent, or needs personal help → Include **(844) 679-1188**
+- If customer seems confused, urgent, or needs personal help → Include (844) 679-1188
 - Look for: "confused", "help me", "don't understand", "urgent", "complicated", "call me"
 
 ACTIONS:
@@ -362,9 +362,9 @@ def generate_response(comment, sentiment, high_intent=False, needs_phone=False):
     # Phone number logic - more liberal usage
     phone_instruction = ""
     if needs_personal_help or (is_potential_customer and high_intent):
-        phone_instruction = "\nThis customer needs personal help or is high-intent. Include: 'Feel free to give us a call at **(844) 679-1188** for immediate help, or check out our site to see your options.' Use the exact format **(844) 679-1188** with asterisks."
+        phone_instruction = "\nThis customer needs personal help or is high-intent. Include: 'Feel free to give us a call at (844) 679-1188 for immediate help, or check out our site to see your options.' Use the exact format (844) 679-1188 with asterisks."
     elif is_potential_customer:
-        phone_instruction = "\nFor this potential customer, you may offer: 'Check out our site to see your options, or call **(844) 679-1188** if you have questions.' Use exact format **(844) 679-1188**."
+        phone_instruction = "\nFor this potential customer, you may offer: 'Check out our site to see your options, or call (844) 679-1188 if you have questions.' Use exact format (844) 679-1188."
     
     # Special instructions for different comment types
     positive_feedback_instruction = ""
@@ -399,7 +399,7 @@ RESPONSE GUIDELINES:
 - Keep responses concise (1-2 sentences usually)
 - Don't make broad claims about equity - offer to look at their specific situation
 - Focus on case-by-case analysis rather than generic arguments
-- Use **(844) 679-1188** format when including phone number
+- Use (844) 679-1188 format when including phone number
 - No dollar amounts, percentages, or specific rates
 - Address their specific concern directly
 
@@ -421,7 +421,7 @@ Generate a helpful, natural response that's concise and relevant:"""
         
         # Ensure phone number format is correct if present
         if '844' in cleaned_response and '679-1188' in cleaned_response:
-            cleaned_response = re.sub(r'\(?844\)?[-.\s]*679[-.\s]*1188', '**(844) 679-1188**', cleaned_response)
+            cleaned_response = re.sub(r'\(?844\)?[-.\s]*679[-.\s]*1188', '(844) 679-1188', cleaned_response)
         
         return cleaned_response
     except Exception as e:
@@ -512,7 +512,7 @@ def read_root():
         "status": "RUNNING",
         "features": ["Enhanced Phone Usage", "Case-by-Case Analysis", "Better Negative Handling", "Completely Online"],
         "key_changes": [
-            "Phone number **(844) 679-1188** for confused/urgent customers",
+            "Phone number (844) 679-1188 for confused/urgent customers",
             "Case-by-case analysis instead of generic equity claims", 
             "DELETE for accusations and excessive arguing",
             "Completely online positioning",
@@ -921,12 +921,12 @@ UPDATED COMPANY GUIDELINES:
 - We DON'T do third-party financing - we connect customers with lenders
 - Lease buyouts vary case-by-case - offer to analyze their specific numbers
 - Keep arguments concise and relevant, not generic equity claims
-- Use **(844) 679-1188** for customers who need personal help
+- Use (844) 679-1188 for customers who need personal help
 - DELETE comments with accusations, excessive arguing, or hostility
 - Focus on verification over broad statements
 
 PHONE NUMBER USAGE:
-- Use **(844) 679-1188** format for confused/urgent customers
+- Use (844) 679-1188 format for confused/urgent customers
 - Include when customer seems to need personal assistance
 
 Generate an IMPROVED response incorporating the feedback while following updated guidelines.
@@ -961,7 +961,7 @@ Respond in JSON: {{"sentiment": "...", "action": "REPLY/REACT/DELETE/LEAVE_ALONE
             
             # Fix phone number format if present
             if '844' in improved_reply and '679-1188' in improved_reply:
-                improved_reply = re.sub(r'\(?844\)?[-.\s]*679[-.\s]*1188', '**(844) 679-1188**', improved_reply)
+                improved_reply = re.sub(r'\(?844\)?[-.\s]*679[-.\s]*1188', '(844) 679-1188', improved_reply)
             
             current_version_num = int(request.current_version.replace('v', '')) if request.current_version.startswith('v') else 1
             new_version = f"v{current_version_num + 1}"
@@ -988,7 +988,7 @@ Respond in JSON: {{"sentiment": "...", "action": "REPLY/REACT/DELETE/LEAVE_ALONE
                 "original_comment": original_comment,
                 "category": "neutral",
                 "action": "leave_alone",
-                "reply": "We can help analyze your specific lease situation. Call **(844) 679-1188** if you have questions.",
+                "reply": "We can help analyze your specific lease situation. Call (844) 679-1188 if you have questions.",
                 "confidence_score": 0.5,
                 "approved": "pending",
                 "feedback_text": feedback_text,
@@ -1102,7 +1102,7 @@ async def get_stats():
         "total_training_examples": len(TRAINING_DATA),
         "action_distribution": action_counts,
         "key_features": {
-            "phone_number": "**(844) 679-1188** for confused/urgent customers",
+            "phone_number": "(844) 679-1188 for confused/urgent customers",
             "positioning": "Completely online loan facilitators",
             "analysis": "Case-by-case lease analysis, not generic claims",
             "negative_handling": "DELETE accusations and excessive arguing"
