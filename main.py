@@ -53,7 +53,6 @@ class ResponseEntry(Base):
     reply = Column(Text)
     reasoning = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
-    completed_at = Column(DateTime)
 
 class BatchJob(Base):
     __tablename__ = "batch_jobs"
@@ -182,7 +181,7 @@ try:
 except Exception as e:
     raise ValueError(f"Failed to configure DSPy: {str(e)}")
 
-# Load training data from database (unchanged)
+# Load training data from database
 def load_training_data():
     """Load training examples from database"""
     print("🔄 Loading training data from database...")
@@ -198,7 +197,7 @@ def load_training_data():
                 'comment': response.comment,
                 'action': response.action,
                 'reply': response.reply,
-                'reasoning': getattr(response, 'reasoning', '')
+                'reasoning': response.reasoning
             })
         
         print(f"✅ Loaded {len(training_data)} training examples from database")
@@ -459,7 +458,7 @@ Generate a helpful, natural response that's concise and relevant:"""
     except Exception as e:
         return "Thank you for your comment! We'd be happy to help analyze your specific lease situation."
 
-# Pydantic Models (unchanged)
+# Pydantic Models
 class CommentRequest(BaseModel):
     comment: Optional[str] = None
     message: Optional[str] = None
@@ -584,7 +583,6 @@ def health_check():
             "error": str(e)
         }
 
-# Database Endpoints (unchanged)
 @app.get("/fb-posts")
 async def get_fb_posts():
     """Get all FB posts from database"""
@@ -751,7 +749,6 @@ async def reload_training_data_endpoint():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reloading training data: {str(e)}")
 
-# UPDATED: Enhanced Processing Endpoints
 @app.post("/process-batch")
 async def process_batch(request: BatchCommentRequest):
     """Process multiple comments in a batch with enhanced logic"""
@@ -875,7 +872,6 @@ async def process_batch(request: BatchCommentRequest):
             "error": str(e)
         }
 
-# UPDATED: Enhanced Single Comment Processing
 @app.post("/process-comment", response_model=ProcessedComment)
 async def process_comment(request: CommentRequest):
     """Enhanced comment processing with updated business logic"""
