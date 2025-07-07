@@ -1049,6 +1049,21 @@ async def approve_response(request: ApproveRequest):
     """Approve and store a response for training"""
     db = SessionLocal()
     try:
+        # Check if comment already exists
+        existing_comment = db.query(ResponseEntry).filter(
+            ResponseEntry.comment == request.original_comment
+        ).first()
+        
+        if existing_comment:
+            db.close()
+            return {
+                "status": "duplicate_skipped",
+                "message": f"Comment already exists in training data (ID: {existing_comment.id})",
+                "training_examples": len(TRAINING_DATA),
+                "existing_action": existing_comment.action,
+                "duplicate": True
+            }
+        
         comment_created_at = datetime.utcnow()
         if request.created_time:
             try:
@@ -1073,7 +1088,8 @@ async def approve_response(request: ApproveRequest):
             "status": "approved",
             "message": f"Response approved and added to training data",
             "training_examples": len(TRAINING_DATA),
-            "action_stored": request.action
+            "action_stored": request.action,
+            "duplicate": False
         }
         
     except Exception as e:
