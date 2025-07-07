@@ -1047,6 +1047,8 @@ Respond in JSON: {{"sentiment": "...", "action": "REPLY/REACT/DELETE/LEAVE_ALONE
 @app.post("/approve-response")
 async def approve_response(request: ApproveRequest):
     """Approve and store a response for training"""
+    global TRAINING_DATA  # Move global declaration to the top
+    
     db = SessionLocal()
     try:
         # Check if comment already exists
@@ -1080,7 +1082,6 @@ async def approve_response(request: ApproveRequest):
         db.add(response_entry)
         db.commit()
         
-        global TRAINING_DATA
         TRAINING_DATA = load_training_data()
         
         return {
