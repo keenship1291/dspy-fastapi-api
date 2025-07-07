@@ -1055,7 +1055,6 @@ async def approve_response(request: ApproveRequest):
         ).first()
         
         if existing_comment:
-            db.close()
             return {
                 "status": "duplicate_skipped",
                 "message": f"Comment already exists in training data (ID: {existing_comment.id})",
@@ -1094,7 +1093,7 @@ async def approve_response(request: ApproveRequest):
         
     except Exception as e:
         db.rollback()
-        return {"status": "error", "error": str(e)}
+        return {"status": "error", "error": str(e), "duplicate": False}
     finally:
         db.close()
 
