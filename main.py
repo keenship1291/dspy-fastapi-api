@@ -252,46 +252,40 @@ def get_db():
         db.close()
 
 def classify_comment_with_ai(comment, commentId=""):
-    """Enhanced comment classification with refined phone logic"""
+    """Enhanced comment classification with specific feedback requirements"""
     
     prompt = f"""You are analyzing comments for LeaseEnd.com, which helps drivers get loans for lease buyouts.
 
-BUSINESS LOGIC & COMPANY POSITION:
-- LeaseEnd helps drivers get loans in their name with competitive options, completely online
-- We DON'T do third-party financing - we connect customers with lenders
-- Lease buyouts can be smart, but it varies case-by-case based on specific lease numbers
-- We analyze the actual numbers to help customers make informed decisions
-- Don't argue with trolls - delete accusatory or spam comments
-- Focus on genuine prospects who want help with their specific situation
+CRITICAL ANALYSIS REQUIREMENTS:
 
-ENHANCED DELETE CRITERIA:
-- Accusations of spreading false information or lies → DELETE
-- Comments with excessive numbers/data trying to prove us wrong → DELETE
-- Argumentative comments questioning our expertise with hostility → DELETE
-- Spam, inappropriate, or clearly non-prospects → DELETE
-- Brief negative comments: "scam", "ripoff", "terrible", "fraud" → DELETE
-- Long rants about leasing being bad with no genuine question → DELETE
+1. NAME DETECTION - If comment starts with a name (like "John", "@Sarah", "Mike Smith"), it's a conversation between users → LEAVE_ALONE
+   Examples: "John that's crazy", "@Mike thanks", "Sarah I agree" = LEAVE_ALONE
 
-TAGGING DETECTION LOGIC:
-- Tagged comments (sharing with friends) → LEAVE ALONE unless very negative toward us
-- Very negative tagged comments about LeaseEnd → DELETE
+2. LEASE BUYOUT RELEVANCE - Only engage if they seem like a potential lease buyout customer
+   Potential customers mention: lease ending, lease return, buying lease, car payments, dealership options, lease terms
+   NOT potential: general car talk, selling cars, insurance, repairs, unrelated topics
 
-REFINED PHONE NUMBER USAGE - ONLY flag needs_phone=true for:
-- Customer explicitly requests contact: "call me", "speak to someone", "phone number"
-- Customer shows hesitation: "not sure", "worried", "skeptical", "what's the catch"
-- Customer is confused: "don't understand", "complicated", "how does this work"
-- Customer indicates urgency: "urgent", "asap", "time sensitive"
-- DO NOT flag general interest: "interested", "looking", "how much", "can I qualify"
+3. SPECIFIC ENGAGEMENT - Focus on their actual question/concern, not generic responses
+   If they ask specific questions about their situation → REPLY with specific help
+   If they share experiences → REACT or targeted REPLY
+   If they're just chatting generally → LEAVE_ALONE
 
-ACTIONS:
-- REPLY: For genuine questions, prospects, positive feedback, correctable misinformation
-- REACT: For positive comments that don't need responses
-- DELETE: For accusations, spam, hostility, excessive arguing, brief negative comments
-- LEAVE_ALONE: For harmless off-topic or neutral tagged comments
+BUSINESS LOGIC:
+- LeaseEnd helps drivers get loans in their name for lease buyouts, completely online
+- We connect customers with lenders, don't do third-party financing
+- Lease buyouts vary case-by-case based on specific numbers
+- Focus on genuine prospects with actual lease decisions to make
+
+DELETE CRITERIA:
+- Accusations of false information or lies
+- Spam, inappropriate, or hostile comments
+- Brief negative: "scam", "ripoff", "terrible"
+- Excessive arguing with no genuine interest
 
 COMMENT: "{comment}"
 
-Respond in this JSON format: {{"sentiment": "...", "action": "...", "reasoning": "...", "high_intent": true/false, "needs_phone": true/false}}"""
+Analyze carefully and respond in JSON:
+{{"sentiment": "...", "action": "REPLY/REACT/DELETE/LEAVE_ALONE", "reasoning": "...", "is_conversation": true/false, "is_lease_relevant": true/false, "needs_phone": true/false}}"""
 
     try:
         response = claude.basic_request(prompt)
@@ -307,12 +301,27 @@ Respond in this JSON format: {{"sentiment": "...", "action": "...", "reasoning":
                 'sentiment': result.get('sentiment', 'Neutral'),
                 'action': result.get('action', 'LEAVE_ALONE'),
                 'reasoning': result.get('reasoning', 'No reasoning provided'),
-                'high_intent': result.get('high_intent', False),
+                'is_conversation': result.get('is_conversation', False),
+                'is_lease_relevant': result.get('is_lease_relevant', False),
                 'needs_phone': result.get('needs_phone', False)
             }
         except json.JSONDecodeError:
-            # Enhanced fallback parsing
-            if any(word in response.upper() for word in ['DELETE', 'SCAM', 'FALSE INFO', 'LIES', 'FRAUD']):
+            # Enhanced fallback with name detection
+            comment_lower = comment.lower()
+            
+            # Check for names at beginning (simple patterns)
+            name_patterns = [
+                r'^@\w+',  # @username
+                r'^\w+\s+(that|this|is|was|are|were|thanks|thank)',  # "Name that..."
+                r'^\w+\s+\w+\s+(that|this|is|was)',  # "First Last that..."
+            ]
+            
+            is_conversation = any(re.match(pattern, comment_lower) for pattern in name_patterns)
+            
+            if is_conversation:
+                action = 'LEAVE_ALONE'
+                reasoning = "Detected conversation between users"
+            elif any(word in comment.upper() for word in ['DELETE', 'SCAM', 'FALSE INFO', 'LIES', 'FRAUD']):
                 action = 'DELETE'
                 reasoning = "Detected negative/accusatory content"
             elif 'REPLY' in response.upper():
@@ -326,7 +335,8 @@ Respond in this JSON format: {{"sentiment": "...", "action": "...", "reasoning":
                 'sentiment': 'Neutral',
                 'action': action,
                 'reasoning': reasoning,
-                'high_intent': False,
+                'is_conversation': is_conversation,
+                'is_lease_relevant': False,
                 'needs_phone': False
             }
             
@@ -335,29 +345,48 @@ Respond in this JSON format: {{"sentiment": "...", "action": "...", "reasoning":
             'sentiment': 'Neutral',
             'action': 'LEAVE_ALONE',
             'reasoning': f'Classification error: {str(e)}',
-            'high_intent': False,
+            'is_conversation': False,
+            'is_lease_relevant': False,
             'needs_phone': False
         }
 
-def generate_response(comment, sentiment, high_intent=False, needs_phone=False):
-    """Enhanced response generation with refined phone number usage"""
+def generate_response(comment, sentiment, high_intent=False, needs_phone=False, is_lease_relevant=True, is_conversation=False):
+    """Enhanced response generation with specific, targeted responses"""
     
-    # General customer indicators (no phone needed)
-    customer_indicators = [
-        "how much", "what are", "can i", "should i", "interested", "looking", 
-        "want to", "need", "help me", "my lease", "my car", "rates", "process",
-        "qualify", "apply", "cost", "price", "how do", "when can", "where do"
-    ]
+    # If it's a conversation between users, don't respond
+    if is_conversation:
+        return ""
     
-    # SPECIFIC hesitation/contact request indicators (phone needed)
+    # If not lease relevant, don't include CTAs
+    if not is_lease_relevant:
+        return ""
+    
+    # Analyze the specific content of their comment
+    lease_indicators = {
+        "lease_ending": ["lease ends", "lease is up", "lease expires", "end of lease", "lease ending"],
+        "considering_buyout": ["buy my lease", "purchase my lease", "thinking about buying", "should I buy"],
+        "dealership_pressure": ["dealership wants", "dealer says", "they're telling me", "trying to sell me"],
+        "financial_concerns": ["can't afford", "too expensive", "cheaper option", "save money", "better deal"],
+        "process_questions": ["how does it work", "what's the process", "how do I", "where do I start"],
+        "comparison_shopping": ["vs returning", "vs buying", "compare options", "what's better"],
+        "specific_situation": ["my lease", "my car", "my payment", "my situation", "my lease has"],
+        "equity_questions": ["positive equity", "negative equity", "car is worth", "market value"],
+        "timeline_urgency": ["need to decide", "running out of time", "deadline", "soon", "asap"]
+    }
+    
+    # Determine the specific category of their comment
+    comment_lower = comment.lower()
+    primary_concern = None
+    for category, indicators in lease_indicators.items():
+        if any(indicator in comment_lower for indicator in indicators):
+            primary_concern = category
+            break
+    
+    # Check for hesitation/contact needs
     hesitation_indicators = [
-        "not sure about", "hesitant", "worried", "concerned", "skeptical",
-        "don't trust", "seems too good", "what's the catch", "suspicious"
-    ]
-    
-    contact_request_indicators = [
-        "call me", "speak to someone", "talk to a person", "phone number",
-        "contact you", "reach out", "give me a call", "someone call me"
+        "not sure", "hesitant", "worried", "concerned", "skeptical",
+        "don't trust", "seems too good", "what's the catch", "suspicious",
+        "call me", "speak to someone", "talk to a person", "phone number"
     ]
     
     confusion_indicators = [
@@ -365,93 +394,57 @@ def generate_response(comment, sentiment, high_intent=False, needs_phone=False):
         "how does this work", "i'm lost", "need help understanding"
     ]
     
-    urgent_indicators = [
-        "urgent", "asap", "need help now", "time sensitive", "deadline"
-    ]
+    shows_hesitation = any(indicator in comment_lower for indicator in hesitation_indicators)
+    is_confused = any(indicator in comment_lower for indicator in confusion_indicators)
     
-    positive_feedback_indicators = [
-        "thank you", "thanks", "great service", "amazing", "fantastic", "love", 
-        "excellent", "helped me", "saved me", "recommend"
-    ]
+    # Build targeted response based on their specific concern
+    response_templates = {
+        "lease_ending": "Since your lease is ending, we can help you analyze whether buying makes sense based on your specific lease numbers.",
+        "considering_buyout": "We can look at your actual lease numbers to help you decide if buying is the right choice for your situation.",
+        "dealership_pressure": "Dealerships often have their own agenda. We can give you an independent analysis of your lease numbers to help you make the best decision.",
+        "financial_concerns": "Every lease situation is different financially. We can analyze your specific numbers to see what options might work best for you.",
+        "process_questions": "We handle the entire loan process online - from application to funding. It's designed to be simple and transparent.",
+        "comparison_shopping": "We can help you compare the actual numbers between returning your lease versus buying it out with competitive financing.",
+        "specific_situation": "Every lease situation is unique. We'd be happy to look at your specific lease terms and current market value to help you decide.",
+        "equity_questions": "Equity in leases can be tricky to calculate. We can help you determine the real numbers based on your lease terms and current market value.",
+        "timeline_urgency": "We understand you're working with a deadline. Our online process is designed to be quick while still getting you competitive rates."
+    }
     
-    misinformation_indicators = [
-        "lease buyouts are bad", "never buy your lease", "always return", "terrible idea",
-        "waste of money", "financial mistake", "bad deal"
-    ]
-    
-    # Check comment characteristics
-    is_potential_customer = any(indicator in comment.lower() for indicator in customer_indicators)
-    shows_hesitation = any(indicator in comment.lower() for indicator in hesitation_indicators)
-    requests_contact = any(indicator in comment.lower() for indicator in contact_request_indicators)
-    is_confused = any(indicator in comment.lower() for indicator in confusion_indicators)
-    is_urgent = any(indicator in comment.lower() for indicator in urgent_indicators)
-    is_positive_feedback = any(indicator in comment.lower() for indicator in positive_feedback_indicators)
-    needs_correction = any(indicator in comment.lower() for indicator in misinformation_indicators)
-    
-    # REFINED Phone number logic - only for specific cases
+    # Phone number logic - only for specific needs
     phone_instruction = ""
-    if requests_contact or (shows_hesitation and is_potential_customer):
-        phone_instruction = "\nCustomer is requesting contact or showing hesitation. Include: 'Feel free to give us a call at (844) 679-1188 if you'd prefer to speak with someone.'"
-    elif is_confused or is_urgent:
-        phone_instruction = "\nCustomer seems confused or urgent. Include: 'Call (844) 679-1188 if you need immediate help.'"
-    elif needs_phone:  # Only if explicitly flagged by AI
-        phone_instruction = "\nAI flagged this customer needs phone support. Include: 'You can reach us at (844) 679-1188 for personalized help.'"
+    if shows_hesitation or is_confused or needs_phone:
+        phone_instruction = " Give us a call at (844) 679-1188 if you'd prefer to speak with someone directly."
     
-    # For general customers - NO phone, just website CTA
-    general_customer_instruction = ""
-    if is_potential_customer and not (requests_contact or shows_hesitation or is_confused or is_urgent or needs_phone):
-        general_customer_instruction = "\nFor this potential customer, use soft website CTA: 'Check out our site to see your options' or 'Visit our website to get started' - NO phone number."
+    # Website CTA for general prospects (no phone)
+    website_cta = ""
+    if not (shows_hesitation or is_confused or needs_phone):
+        website_cta = " Check out LeaseEnd.com to see your options."
     
-    # Special instructions for different comment types
-    positive_feedback_instruction = ""
-    if is_positive_feedback:
-        positive_feedback_instruction = "\nBrief appreciation: 'Thank you!', 'Glad we could help!', 'Enjoy your ride!' etc. Keep it short and genuine."
-    
-    correction_instruction = ""
-    if needs_correction:
-        correction_instruction = """
-This comment has misinformation. Correct it concisely:
-- Don't make broad equity claims - say it varies case-by-case
-- Offer to analyze their specific lease numbers
-- Be confident but not argumentative
-- Keep response short and focused on helping them verify actual numbers"""
-
-    prompt = f"""You are responding to a Facebook comment for LeaseEnd.com.
-
-COMPANY POSITION:
-- LeaseEnd helps drivers get loans in their name with competitive options, completely online
-- We DON'T do third-party financing - we connect customers with lenders
-- Lease buyouts can be smart, but it varies case-by-case based on specific numbers
-- We analyze actual lease numbers to help customers decide
-- Keep arguments concise and relevant - offer verification over broad claims
+    prompt = f"""Create a specific, targeted response to this Facebook comment for LeaseEnd.com.
 
 COMMENT: "{comment}"
+PRIMARY CONCERN: {primary_concern or "general_inquiry"}
 SENTIMENT: {sentiment}
-HIGH INTENT: {high_intent}
-NEEDS PHONE: {needs_phone}
 
-RESPONSE GUIDELINES:
-- Sound natural and conversational
-- Keep responses concise (1-2 sentences usually)
-- Don't make broad claims about equity - offer to look at their specific situation
-- Focus on case-by-case analysis rather than generic arguments
-- ONLY use phone number (844) 679-1188 for hesitation/contact requests/confusion
-- For general prospects, use website CTAs instead
-- No dollar amounts, percentages, or specific rates
-- Address their specific concern directly
+RESPONSE REQUIREMENTS:
+1. Address their SPECIFIC concern, not a generic response
+2. Be conversational and natural (1-2 sentences max)
+3. Reference their actual situation when possible
+4. Don't be overly salesy - be helpful
 
-BUSINESS MESSAGING:
-- "It varies case-by-case based on your specific lease"
-- "We can look at your actual numbers to help you decide"
-- "We help you get a loan in your name with competitive options"
-- "Every situation is different - let's analyze yours"
+COMPANY POSITIONING:
+- We help drivers get loans in their name for lease buyouts, completely online
+- We connect with multiple lenders for competitive rates
+- Every lease situation is different - we analyze specific numbers
+- No pressure, transparent process
 
-{positive_feedback_instruction}
-{correction_instruction}
-{general_customer_instruction}
+TEMPLATE TO ADAPT: "{response_templates.get(primary_concern, 'We can help analyze your specific lease situation.')}"
+
+ADDITIONAL ELEMENTS:
 {phone_instruction}
+{website_cta}
 
-Generate a helpful, natural response that's concise and relevant:"""
+Generate a natural, specific response that directly addresses their comment:"""
 
     try:
         response = claude.basic_request(prompt)
@@ -463,7 +456,16 @@ Generate a helpful, natural response that's concise and relevant:"""
         
         return cleaned_response
     except Exception as e:
-        return "Thank you for your comment! We'd be happy to help analyze your specific lease situation."
+        # Fallback to simple, specific response
+        if primary_concern and primary_concern in response_templates:
+            fallback = response_templates[primary_concern]
+            if shows_hesitation or is_confused:
+                fallback += " Call (844) 679-1188 if you have questions."
+            else:
+                fallback += " Check out LeaseEnd.com to learn more."
+            return fallback
+        
+        return "We can help analyze your specific lease situation to see what options work best for you."
 
 # Safe Pydantic Models with V2 field_validator
 class CommentRequest(BaseModel):
