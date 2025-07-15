@@ -3,7 +3,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from anthropic import Anthropic
 import dspy
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator
 import json
 from typing import List, Dict, Optional, Union
 import uuid
@@ -110,7 +110,7 @@ CRITICAL NUMERICAL VALUE RESTRICTIONS:
 - Redirect to analysis: "We can look at your specific numbers"
 """
 
-# Lease End Brand Context (unchanged)
+# Lease End Brand Context
 BRAND_CONTEXT = {
     "power_words": {
         "trust_building": ["transparent", "guaranteed", "reliable", "honest"],
@@ -134,7 +134,7 @@ BRAND_CONTEXT = {
     }
 }
 
-# Custom Anthropic LM for DSPy (unchanged)
+# Custom Anthropic LM for DSPy
 class CustomAnthropic(dspy.LM):
     def __init__(self, api_key):
         self.client = Anthropic(api_key=api_key)
@@ -210,6 +210,11 @@ def load_training_data():
 
 # Global training data
 TRAINING_DATA = load_training_data()
+
+# Global variables for duplicate prevention
+recent_requests = {}
+request_tracker = defaultdict(int)
+REQUEST_COOLDOWN = 5  # seconds
 
 def reload_training_data():
     """Reload training data from database"""
@@ -460,34 +465,48 @@ Generate a helpful, natural response that's concise and relevant:"""
     except Exception as e:
         return "Thank you for your comment! We'd be happy to help analyze your specific lease situation."
 
-# Pydantic Models with enhanced validation
+# Safe Pydantic Models with V2 field_validator
 class CommentRequest(BaseModel):
-    comment: Optional[Union[str, int, float]] = None
-    message: Optional[Union[str, int, float]] = None
+    comment: Optional[str] = None
+    message: Optional[str] = None
     commentId: Optional[str] = None
     postId: Optional[str] = None
     created_time: Optional[str] = ""
     memory_context: Optional[str] = ""
     
-    @validator('comment', pre=True)
+    @field_validator('comment', mode='before')
+    @classmethod
     def convert_comment_to_string(cls, v):
         if v is None:
             return None
-        return str(v)
+        try:
+            return str(v)
+        except:
+            return None
     
-    @validator('message', pre=True)
+    @field_validator('message', mode='before')
+    @classmethod
     def convert_message_to_string(cls, v):
         if v is None:
             return None
-        return str(v)
+        try:
+            return str(v)
+        except:
+            return None
     
     def get_comment_text(self) -> str:
-        comment_str = str(self.comment) if self.comment is not None else ""
-        message_str = str(self.message) if self.message is not None else ""
-        return (comment_str or message_str or "No message content").strip()
+        try:
+            comment_str = str(self.comment) if self.comment is not None else ""
+            message_str = str(self.message) if self.message is not None else ""
+            return (comment_str or message_str or "No message content").strip()
+        except:
+            return "No message content"
     
     def get_comment_id(self) -> str:
-        return (self.commentId or self.postId or "unknown").strip()
+        try:
+            return str(self.commentId or self.postId or "unknown").strip()
+        except:
+            return "unknown"
 
 class Comment(BaseModel):
     comment: Optional[str] = None
@@ -496,7 +515,10 @@ class Comment(BaseModel):
     created_time: Optional[str] = ""
     
     def get_comment_text(self) -> str:
-        return (self.comment or self.message or "No message content").strip()
+        try:
+            return str(self.comment or self.message or "No message content").strip()
+        except:
+            return "No message content"
 
 class BatchCommentRequest(BaseModel):
     comments: List[Comment]
@@ -513,52 +535,82 @@ class ProcessedComment(BaseModel):
     reasoning: str
 
 class FeedbackRequest(BaseModel):
-    original_comment: Union[str, int, float]
-    original_response: Union[str, int, float] = ""
+    original_comment: str
+    original_response: str = ""
     original_action: str
     feedback_text: str
     commentId: str
     current_version: str = ""
     
-    @validator('original_comment', pre=True)
+    @field_validator('original_comment', mode='before')
+    @classmethod
     def convert_comment_to_string(cls, v):
         if v is None:
             return ""
-        return str(v)
+        try:
+            return str(v)
+        except:
+            return "Error converting comment"
     
-    @validator('original_response', pre=True)
+    @field_validator('original_response', mode='before')
+    @classmethod
     def convert_response_to_string(cls, v):
         if v is None:
             return ""
-        return str(v)
+        try:
+            return str(v)
+        except:
+            return ""
     
-    @validator('feedback_text', pre=True)
+    @field_validator('feedback_text', mode='before')
+    @classmethod
     def convert_feedback_to_string(cls, v):
         if v is None:
             return ""
-        return str(v)
+        try:
+            return str(v)
+        except:
+            return "Error converting feedback"
+    
+    @field_validator('current_version', mode='before')
+    @classmethod
+    def convert_version_to_string(cls, v):
+        if v is None:
+            return ""
+        try:
+            return str(v)
+        except:
+            return ""
     
     class Config:
         extra = "ignore"
 
 class ApproveRequest(BaseModel):
-    original_comment: Union[str, int, float]
+    original_comment: str
     action: str
-    reply: Union[str, int, float]
+    reply: str
     reasoning: str = ""
     created_time: Optional[str] = ""
     
-    @validator('original_comment', pre=True)
+    @field_validator('original_comment', mode='before')
+    @classmethod
     def convert_comment_to_string(cls, v):
         if v is None:
             return ""
-        return str(v)
+        try:
+            return str(v)
+        except:
+            return "Error converting comment"
     
-    @validator('reply', pre=True)
+    @field_validator('reply', mode='before')
+    @classmethod
     def convert_reply_to_string(cls, v):
         if v is None:
             return ""
-        return str(v)
+        try:
+            return str(v)
+        except:
+            return ""
     
     class Config:
         extra = "ignore"
@@ -578,27 +630,21 @@ class ResponseCreate(BaseModel):
     reply: str
     reasoning: Optional[str] = ""
 
-# DEBUG: Add request tracking for duplicates
-request_tracker = defaultdict(int)
-request_details = []
-recent_requests = {}
-REQUEST_COOLDOWN = 5  # seconds
-
 app = FastAPI()
 
 @app.get("/")
 def read_root():
     return {
-        "message": "Lease End AI Assistant - DEBUG VERSION",
-        "version": "30.0-DEBUG-DUPLICATES",
+        "message": "Lease End AI Assistant - SAFE VERSION",
+        "version": "31.0-SAFE-DUPLICATE-PREVENTION",
         "training_examples": len(TRAINING_DATA),
         "status": "RUNNING",
-        "features": ["DEBUG Duplicate Detection", "Request Tracking", "Enhanced Logging"],
+        "features": ["Safe Type Conversion", "Duplicate Prevention", "Pydantic V2 Compatibility"],
         "key_changes": [
-            "DEBUG: Duplicate request detection and blocking",
-            "Request tracking and logging",
-            "Enhanced error handling and fallbacks",
-            "Performance monitoring"
+            "SAFE: Comprehensive error handling and type conversion",
+            "Duplicate request prevention with 5-second cooldown",
+            "Pydantic V2 field_validator compatibility",
+            "Enhanced logging and debugging capabilities"
         ]
     }
 
@@ -636,14 +682,20 @@ def health_check():
 @app.get("/debug-requests")
 async def debug_requests():
     """Get request tracking info"""
-    return {
-        "total_requests": len(request_details),
-        "unique_comments": len(request_tracker),
-        "request_counts": dict(request_tracker),
-        "recent_requests": request_details[-20:],  # Last 20 requests
-        "duplicate_comments": {k: v for k, v in request_tracker.items() if v > 1},
-        "active_cooldowns": len(recent_requests)
-    }
+    try:
+        return {
+            "total_unique_comments": len(request_tracker),
+            "request_counts": dict(request_tracker),
+            "duplicate_comments": {k: v for k, v in request_tracker.items() if v > 1},
+            "active_cooldowns": len(recent_requests),
+            "cooldown_seconds": REQUEST_COOLDOWN,
+            "status": "healthy"
+        }
+    except Exception as e:
+        return {
+            "error": str(e),
+            "status": "error"
+        }
 
 @app.get("/fb-posts")
 async def get_fb_posts():
@@ -813,74 +865,74 @@ async def reload_training_data_endpoint():
 
 @app.post("/process-feedback")
 async def process_feedback(request: FeedbackRequest):
-    """DEBUG version with duplicate detection and request tracking"""
+    """Safe feedback processing with duplicate prevention and error handling"""
     start_time = time.time()
-    request_id = f"{int(time.time() * 1000)}_{request.commentId}"
-    
-    # Create a simple key to identify duplicate requests
-    request_key = f"{request.commentId}_{str(request.feedback_text)[:20]}"
-    current_time = time.time()
-    
-    # Check if we've seen this request recently (duplicate prevention)
-    if request_key in recent_requests:
-        last_time = recent_requests[request_key]
-        if current_time - last_time < REQUEST_COOLDOWN:
-            print(f"⚠️ DUPLICATE REQUEST BLOCKED: {request_key}")
-            return {
-                "commentId": request.commentId,
-                "original_comment": str(request.original_comment),
-                "category": "duplicate",
-                "action": "leave_alone",
-                "reply": "Duplicate request blocked",
-                "confidence_score": 0.0,
-                "approved": "pending",
-                "feedback_text": str(request.feedback_text),
-                "version": "v1",
-                "reasoning": "Blocked duplicate request within cooldown period",
-                "success": True,
-                "processing_time": round(time.time() - start_time, 3),
-                "method": "duplicate_blocked",
-                "request_id": request_id
-            }
-    
-    # Record this request
-    recent_requests[request_key] = current_time
-    
-    # Clean old entries (keep last 100)
-    if len(recent_requests) > 100:
-        old_keys = sorted(recent_requests.keys(), 
-                         key=lambda k: recent_requests[k])[:-50]
-        for key in old_keys:
-            del recent_requests[key]
-    
-    # Track this request for debugging
-    request_tracker[request.commentId] += 1
-    request_details.append({
-        "timestamp": time.time(),
-        "commentId": request.commentId,
-        "comment_preview": str(request.original_comment)[:50],
-        "feedback_text": str(request.feedback_text)[:50],
-        "request_count": request_tracker[request.commentId],
-        "request_id": request_id
-    })
-    
-    # Keep only last 50 request details
-    if len(request_details) > 50:
-        request_details = request_details[-50:]
-    
-    # Log every request
-    print(f"🔍 REQUEST #{request_tracker[request.commentId]} for comment {request.commentId}")
-    print(f"   Comment: {str(request.original_comment)[:50]}...")
-    print(f"   Feedback: {str(request.feedback_text)[:30]}...")
-    print(f"   Request ID: {request_id}")
     
     try:
-        original_comment = str(request.original_comment).strip()
-        original_response = str(request.original_response).strip() if request.original_response else ""
-        original_action = str(request.original_action).strip().lower()
-        feedback_text = str(request.feedback_text).strip()
+        # Safely extract request data
+        try:
+            comment_id = str(request.commentId) if request.commentId else "unknown"
+            original_comment = str(request.original_comment) if request.original_comment else ""
+            original_response = str(request.original_response) if request.original_response else ""
+            original_action = str(request.original_action).strip().lower() if request.original_action else "unknown"
+            feedback_text = str(request.feedback_text) if request.feedback_text else ""
+            current_version = str(request.current_version) if request.current_version else ""
+        except Exception as e:
+            print(f"❌ Error extracting request data: {e}")
+            return {
+                "commentId": "error",
+                "original_comment": "Error extracting data",
+                "category": "error",
+                "action": "leave_alone",
+                "reply": "Error processing request",
+                "confidence_score": 0.0,
+                "approved": "pending",
+                "feedback_text": "Error",
+                "version": "v1",
+                "reasoning": f"Request data extraction error: {str(e)}",
+                "success": False,
+                "processing_time": round(time.time() - start_time, 3),
+                "method": "extraction_error"
+            }
         
-        print(f"🔄 Processing feedback: '{feedback_text}'")
+        # Create duplicate prevention key
+        request_key = f"{comment_id}_{feedback_text[:20] if feedback_text else 'empty'}"
+        current_time = time.time()
+        
+        # Check for duplicates
+        if request_key in recent_requests:
+            last_time = recent_requests[request_key]
+            if current_time - last_time < REQUEST_COOLDOWN:
+                print(f"⚠️ DUPLICATE REQUEST BLOCKED: {request_key}")
+                return {
+                    "commentId": comment_id,
+                    "original_comment": original_comment,
+                    "category": "duplicate",
+                    "action": "leave_alone",
+                    "reply": "Duplicate request blocked",
+                    "confidence_score": 0.0,
+                    "approved": "pending",
+                    "feedback_text": feedback_text,
+                    "version": "v1",
+                    "reasoning": "Blocked duplicate request within cooldown period",
+                    "success": True,
+                    "processing_time": round(time.time() - start_time, 3),
+                    "method": "duplicate_blocked"
+                }
+        
+        # Record this request
+        recent_requests[request_key] = current_time
+        request_tracker[comment_id] += 1
+        
+        # Clean old entries
+        if len(recent_requests) > 100:
+            old_keys = sorted(recent_requests.keys(), 
+                             key=lambda k: recent_requests[k])[:-50]
+            for key in old_keys:
+                del recent_requests[key]
+        
+        print(f"✅ Processing feedback #{request_tracker[comment_id]} for: {comment_id}")
+        print(f"   Feedback: {feedback_text[:50]}...")
         
         # FAST PATH: Handle simple feedback without AI
         simple_feedback_patterns = {
@@ -893,20 +945,21 @@ async def process_feedback(request: FeedbackRequest):
             "approved": {"action": "respond", "reply": original_response, "reasoning": "User approved response"},
         }
         
-        feedback_lower = feedback_text.lower()
+        feedback_lower = feedback_text.lower() if feedback_text else ""
         for pattern, response_data in simple_feedback_patterns.items():
             if pattern in feedback_lower:
-                print(f"⚡ FAST PATH: '{pattern}' detected - skipping AI")
+                print(f"⚡ FAST PATH: '{pattern}' detected")
                 
+                # Handle version increment safely
                 current_version_num = 1
-                if request.current_version and request.current_version.startswith('v'):
+                if current_version and current_version.startswith('v'):
                     try:
-                        current_version_num = int(request.current_version.replace('v', ''))
-                    except ValueError:
+                        current_version_num = int(current_version.replace('v', ''))
+                    except (ValueError, AttributeError):
                         current_version_num = 1
                 
                 return {
-                    "commentId": request.commentId,
+                    "commentId": comment_id,
                     "original_comment": original_comment,
                     "category": "neutral",
                     "action": response_data["action"],
@@ -919,22 +972,22 @@ async def process_feedback(request: FeedbackRequest):
                     "feedback_processed": True,
                     "success": True,
                     "processing_time": round(time.time() - start_time, 3),
-                    "method": "fast_path",
-                    "request_id": request_id
+                    "method": "fast_path"
                 }
         
-        # If we get here, we need AI processing
-        print(f"🤖 SLOW PATH: Using Claude API for complex feedback")
+        # SLOW PATH: Use Claude API
+        print(f"🤖 Using Claude API for complex feedback...")
         
-        # Simple prompt to minimize API time
-        feedback_prompt = f"""Improve this response based on feedback for LeaseEnd.com:
+        # Create prompt safely
+        try:
+            feedback_prompt = f"""You are improving a response based on human feedback for LeaseEnd.com.
 
-ORIGINAL COMMENT: "{original_comment}"
-ORIGINAL RESPONSE: "{original_response}"
-ORIGINAL ACTION: "{original_action}"
-FEEDBACK: "{feedback_text}"
+ORIGINAL COMMENT: "{original_comment[:200]}..."
+YOUR ORIGINAL RESPONSE: "{original_response[:200]}..."
+YOUR ORIGINAL ACTION: "{original_action}"
+HUMAN FEEDBACK: "{feedback_text[:100]}..."
 
-COMPANY GUIDELINES:
+GUIDELINES:
 - LeaseEnd helps drivers get loans in their name, completely online
 - Lease buyouts vary case-by-case - analyze specific numbers
 - Use (844) 679-1188 ONLY for hesitant/confused/contact-requesting customers
@@ -942,58 +995,55 @@ COMPANY GUIDELINES:
 
 Apply the feedback and respond with JSON only:
 {{"action": "respond", "reply": "improved response here", "reasoning": "brief explanation"}}"""
-
+        except Exception as e:
+            print(f"❌ Error creating prompt: {e}")
+            feedback_prompt = 'Improve the response based on feedback. Respond with JSON: {"action": "respond", "reply": "We can help analyze your specific lease situation.", "reasoning": "Fallback response"}'
+        
         try:
-            print(f"📡 Calling Claude API...")
-            api_start = time.time()
-            
+            # Call Claude API
             improved_response = claude.basic_request(feedback_prompt)
             
-            api_time = time.time() - api_start
-            print(f"✅ Claude API completed in {api_time:.2f}s")
-            
-            # Quick JSON parsing
+            # Parse response safely
             response_clean = improved_response.strip()
-            if response_clean.startswith('```json'):
-                response_clean = response_clean[7:]
-            elif response_clean.startswith('```'):
+            if response_clean.startswith('```'):
                 response_clean = response_clean[3:]
-            
             if response_clean.endswith('```'):
                 response_clean = response_clean[:-3]
             
-            response_clean = response_clean.strip()
-            
-            # Find JSON in response
+            # Find JSON
             json_start = response_clean.find('{')
             json_end = response_clean.rfind('}') + 1
             if json_start != -1 and json_end > json_start:
                 response_clean = response_clean[json_start:json_end]
             
+            # Parse JSON
             result = json.loads(response_clean)
             
-            improved_action = result.get('action', 'leave_alone').lower()
+            # Extract values safely
+            improved_action = str(result.get('action', 'leave_alone')).lower()
             if improved_action == 'reply':
                 improved_action = 'respond'
             
-            improved_reply = filter_numerical_values(result.get('reply', ''))
+            improved_reply = str(result.get('reply', 'We can help analyze your specific lease situation.'))
+            improved_reply = filter_numerical_values(improved_reply)
             
             # Fix phone number format
             if '844' in improved_reply and '679-1188' in improved_reply:
                 improved_reply = re.sub(r'\(?844\)?[-.\s]*679[-.\s]*1188', '(844) 679-1188', improved_reply)
             
+            # Handle version increment
             current_version_num = 1
-            if request.current_version and request.current_version.startswith('v'):
+            if current_version and current_version.startswith('v'):
                 try:
-                    current_version_num = int(request.current_version.replace('v', ''))
-                except ValueError:
+                    current_version_num = int(current_version.replace('v', ''))
+                except (ValueError, AttributeError):
                     current_version_num = 1
             
-            total_time = time.time() - start_time
-            print(f"✅ COMPLETED in {total_time:.2f}s (API: {api_time:.2f}s)")
+            processing_time = round(time.time() - start_time, 3)
+            print(f"✅ Completed successfully in {processing_time}s")
             
             return {
-                "commentId": request.commentId,
+                "commentId": comment_id,
                 "original_comment": original_comment,
                 "category": "neutral",
                 "action": improved_action,
@@ -1002,30 +1052,28 @@ Apply the feedback and respond with JSON only:
                 "approved": "pending",
                 "feedback_text": feedback_text,
                 "version": f"v{current_version_num + 1}",
-                "reasoning": result.get('reasoning', 'Applied feedback'),
+                "reasoning": str(result.get('reasoning', 'Applied feedback')),
                 "feedback_processed": True,
                 "success": True,
-                "processing_time": round(total_time, 3),
-                "api_time": round(api_time, 3),
-                "method": "ai_processing",
-                "request_id": request_id
+                "processing_time": processing_time,
+                "method": "ai_processing"
             }
             
         except json.JSONDecodeError as json_error:
             print(f"❌ JSON parsing error: {json_error}")
-            print(f"Raw response: {improved_response[:200]}...")
             
+            # Handle version safely
             current_version_num = 1
-            if request.current_version and request.current_version.startswith('v'):
+            if current_version and current_version.startswith('v'):
                 try:
-                    current_version_num = int(request.current_version.replace('v', ''))
-                except ValueError:
+                    current_version_num = int(current_version.replace('v', ''))
+                except (ValueError, AttributeError):
                     current_version_num = 1
             
             return {
-                "commentId": request.commentId,
+                "commentId": comment_id,
                 "original_comment": original_comment,
-                "category": "error",
+                "category": "neutral",
                 "action": "leave_alone",
                 "reply": "We can help analyze your specific lease situation.",
                 "confidence_score": 0.5,
@@ -1036,22 +1084,22 @@ Apply the feedback and respond with JSON only:
                 "success": False,
                 "error": f"JSON parsing failed: {str(json_error)}",
                 "processing_time": round(time.time() - start_time, 3),
-                "method": "json_fallback",
-                "request_id": request_id
+                "method": "json_fallback"
             }
             
         except Exception as api_error:
-            print(f"❌ API Error: {api_error}")
+            print(f"❌ Claude API error: {api_error}")
             
+            # Handle version safely
             current_version_num = 1
-            if request.current_version and request.current_version.startswith('v'):
+            if current_version and current_version.startswith('v'):
                 try:
-                    current_version_num = int(request.current_version.replace('v', ''))
-                except ValueError:
+                    current_version_num = int(current_version.replace('v', ''))
+                except (ValueError, AttributeError):
                     current_version_num = 1
             
             return {
-                "commentId": request.commentId,
+                "commentId": comment_id,
                 "original_comment": original_comment,
                 "category": "error",
                 "action": "leave_alone",
@@ -1062,38 +1110,30 @@ Apply the feedback and respond with JSON only:
                 "version": f"v{current_version_num + 1}",
                 "reasoning": "API error fallback",
                 "success": False,
-                "error": str(api_error),
+                "error": f"API error: {str(api_error)}",
                 "processing_time": round(time.time() - start_time, 3),
-                "method": "api_error_fallback",
-                "request_id": request_id
+                "method": "api_error_fallback"
             }
             
-    except Exception as e:
-        print(f"❌ GENERAL ERROR: {e}")
+    except Exception as general_error:
+        print(f"❌ GENERAL ERROR: {general_error}")
         
-        current_version_num = 1
-        if hasattr(request, 'current_version') and request.current_version and request.current_version.startswith('v'):
-            try:
-                current_version_num = int(request.current_version.replace('v', ''))
-            except ValueError:
-                current_version_num = 1
-        
+        # Ultimate fallback
         return {
-            "commentId": getattr(request, 'commentId', 'unknown'),
-            "original_comment": str(getattr(request, 'original_comment', 'Error')),
+            "commentId": "error",
+            "original_comment": "General error occurred",
             "category": "error", 
             "action": "leave_alone",
             "reply": "We can help analyze your specific lease situation.",
             "confidence_score": 0.0,
             "approved": "pending",
-            "feedback_text": str(getattr(request, 'feedback_text', 'Error')),
-            "version": f"v{current_version_num + 1}",
+            "feedback_text": "Error",
+            "version": "v1",
             "reasoning": "General error fallback",
-            "error": str(e),
+            "error": str(general_error),
             "success": False,
             "processing_time": round(time.time() - start_time, 3),
-            "method": "error_fallback",
-            "request_id": request_id
+            "method": "general_error_fallback"
         }
 
 @app.post("/process-batch")
@@ -1380,8 +1420,7 @@ async def get_stats():
         "total_training_examples": len(TRAINING_DATA),
         "action_distribution": action_counts,
         "debug_info": {
-            "total_requests_tracked": len(request_details),
-            "unique_comments_processed": len(request_tracker),
+            "total_unique_comments": len(request_tracker),
             "active_cooldowns": len(recent_requests),
             "duplicate_comments": sum(1 for v in request_tracker.values() if v > 1)
         },
