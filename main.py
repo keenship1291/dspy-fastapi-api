@@ -3,11 +3,13 @@ import os
 from datetime import datetime, timezone, timedelta
 from anthropic import Anthropic
 import dspy
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 import json
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
 import uuid
 import re
+import time
+from collections import defaultdict
 
 # Database imports
 from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text, text
@@ -458,17 +460,31 @@ Generate a helpful, natural response that's concise and relevant:"""
     except Exception as e:
         return "Thank you for your comment! We'd be happy to help analyze your specific lease situation."
 
-# Pydantic Models
+# Pydantic Models with enhanced validation
 class CommentRequest(BaseModel):
-    comment: Optional[str] = None
-    message: Optional[str] = None
+    comment: Optional[Union[str, int, float]] = None
+    message: Optional[Union[str, int, float]] = None
     commentId: Optional[str] = None
     postId: Optional[str] = None
     created_time: Optional[str] = ""
     memory_context: Optional[str] = ""
     
+    @validator('comment', pre=True)
+    def convert_comment_to_string(cls, v):
+        if v is None:
+            return None
+        return str(v)
+    
+    @validator('message', pre=True)
+    def convert_message_to_string(cls, v):
+        if v is None:
+            return None
+        return str(v)
+    
     def get_comment_text(self) -> str:
-        return (self.comment or self.message or "No message content").strip()
+        comment_str = str(self.comment) if self.comment is not None else ""
+        message_str = str(self.message) if self.message is not None else ""
+        return (comment_str or message_str or "No message content").strip()
     
     def get_comment_id(self) -> str:
         return (self.commentId or self.postId or "unknown").strip()
@@ -497,22 +513,52 @@ class ProcessedComment(BaseModel):
     reasoning: str
 
 class FeedbackRequest(BaseModel):
-    original_comment: str
-    original_response: str = ""
+    original_comment: Union[str, int, float]
+    original_response: Union[str, int, float] = ""
     original_action: str
     feedback_text: str
     commentId: str
-    current_version: str = "v1"
+    current_version: str = ""
+    
+    @validator('original_comment', pre=True)
+    def convert_comment_to_string(cls, v):
+        if v is None:
+            return ""
+        return str(v)
+    
+    @validator('original_response', pre=True)
+    def convert_response_to_string(cls, v):
+        if v is None:
+            return ""
+        return str(v)
+    
+    @validator('feedback_text', pre=True)
+    def convert_feedback_to_string(cls, v):
+        if v is None:
+            return ""
+        return str(v)
     
     class Config:
         extra = "ignore"
 
 class ApproveRequest(BaseModel):
-    original_comment: str
+    original_comment: Union[str, int, float]
     action: str
-    reply: str
+    reply: Union[str, int, float]
     reasoning: str = ""
     created_time: Optional[str] = ""
+    
+    @validator('original_comment', pre=True)
+    def convert_comment_to_string(cls, v):
+        if v is None:
+            return ""
+        return str(v)
+    
+    @validator('reply', pre=True)
+    def convert_reply_to_string(cls, v):
+        if v is None:
+            return ""
+        return str(v)
     
     class Config:
         extra = "ignore"
@@ -532,23 +578,27 @@ class ResponseCreate(BaseModel):
     reply: str
     reasoning: Optional[str] = ""
 
+# DEBUG: Add request tracking for duplicates
+request_tracker = defaultdict(int)
+request_details = []
+recent_requests = {}
+REQUEST_COOLDOWN = 5  # seconds
+
 app = FastAPI()
 
 @app.get("/")
 def read_root():
     return {
-        "message": "Lease End AI Assistant - UPDATED VERSION",
-        "version": "29.0-REFINED-PHONE",
+        "message": "Lease End AI Assistant - DEBUG VERSION",
+        "version": "30.0-DEBUG-DUPLICATES",
         "training_examples": len(TRAINING_DATA),
         "status": "RUNNING",
-        "features": ["Refined Phone Usage", "Case-by-Case Analysis", "Better Negative Handling", "Completely Online"],
+        "features": ["DEBUG Duplicate Detection", "Request Tracking", "Enhanced Logging"],
         "key_changes": [
-            "Phone number (844) 679-1188 ONLY for hesitation/contact requests/confusion",
-            "Website CTAs for general prospects",
-            "Case-by-case analysis instead of generic equity claims", 
-            "DELETE for accusations and excessive arguing",
-            "Completely online positioning",
-            "Loan facilitators, not third-party financing"
+            "DEBUG: Duplicate request detection and blocking",
+            "Request tracking and logging",
+            "Enhanced error handling and fallbacks",
+            "Performance monitoring"
         ]
     }
 
@@ -582,6 +632,18 @@ def health_check():
             "database": "error",
             "error": str(e)
         }
+
+@app.get("/debug-requests")
+async def debug_requests():
+    """Get request tracking info"""
+    return {
+        "total_requests": len(request_details),
+        "unique_comments": len(request_tracker),
+        "request_counts": dict(request_tracker),
+        "recent_requests": request_details[-20:],  # Last 20 requests
+        "duplicate_comments": {k: v for k, v in request_tracker.items() if v > 1},
+        "active_cooldowns": len(recent_requests)
+    }
 
 @app.get("/fb-posts")
 async def get_fb_posts():
@@ -748,6 +810,291 @@ async def reload_training_data_endpoint():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reloading training data: {str(e)}")
+
+@app.post("/process-feedback")
+async def process_feedback(request: FeedbackRequest):
+    """DEBUG version with duplicate detection and request tracking"""
+    start_time = time.time()
+    request_id = f"{int(time.time() * 1000)}_{request.commentId}"
+    
+    # Create a simple key to identify duplicate requests
+    request_key = f"{request.commentId}_{str(request.feedback_text)[:20]}"
+    current_time = time.time()
+    
+    # Check if we've seen this request recently (duplicate prevention)
+    if request_key in recent_requests:
+        last_time = recent_requests[request_key]
+        if current_time - last_time < REQUEST_COOLDOWN:
+            print(f"⚠️ DUPLICATE REQUEST BLOCKED: {request_key}")
+            return {
+                "commentId": request.commentId,
+                "original_comment": str(request.original_comment),
+                "category": "duplicate",
+                "action": "leave_alone",
+                "reply": "Duplicate request blocked",
+                "confidence_score": 0.0,
+                "approved": "pending",
+                "feedback_text": str(request.feedback_text),
+                "version": "v1",
+                "reasoning": "Blocked duplicate request within cooldown period",
+                "success": True,
+                "processing_time": round(time.time() - start_time, 3),
+                "method": "duplicate_blocked",
+                "request_id": request_id
+            }
+    
+    # Record this request
+    recent_requests[request_key] = current_time
+    
+    # Clean old entries (keep last 100)
+    if len(recent_requests) > 100:
+        old_keys = sorted(recent_requests.keys(), 
+                         key=lambda k: recent_requests[k])[:-50]
+        for key in old_keys:
+            del recent_requests[key]
+    
+    # Track this request for debugging
+    request_tracker[request.commentId] += 1
+    request_details.append({
+        "timestamp": time.time(),
+        "commentId": request.commentId,
+        "comment_preview": str(request.original_comment)[:50],
+        "feedback_text": str(request.feedback_text)[:50],
+        "request_count": request_tracker[request.commentId],
+        "request_id": request_id
+    })
+    
+    # Keep only last 50 request details
+    if len(request_details) > 50:
+        request_details = request_details[-50:]
+    
+    # Log every request
+    print(f"🔍 REQUEST #{request_tracker[request.commentId]} for comment {request.commentId}")
+    print(f"   Comment: {str(request.original_comment)[:50]}...")
+    print(f"   Feedback: {str(request.feedback_text)[:30]}...")
+    print(f"   Request ID: {request_id}")
+    
+    try:
+        original_comment = str(request.original_comment).strip()
+        original_response = str(request.original_response).strip() if request.original_response else ""
+        original_action = str(request.original_action).strip().lower()
+        feedback_text = str(request.feedback_text).strip()
+        
+        print(f"🔄 Processing feedback: '{feedback_text}'")
+        
+        # FAST PATH: Handle simple feedback without AI
+        simple_feedback_patterns = {
+            "leave alone": {"action": "leave_alone", "reply": "", "reasoning": "User requested to leave alone"},
+            "delete": {"action": "delete", "reply": "", "reasoning": "User requested deletion"},
+            "ignore": {"action": "leave_alone", "reply": "", "reasoning": "User requested to ignore"},
+            "skip": {"action": "leave_alone", "reply": "", "reasoning": "User requested to skip"},
+            "good": {"action": "respond", "reply": original_response, "reasoning": "User approved response"},
+            "ok": {"action": "respond", "reply": original_response, "reasoning": "User approved response"},
+            "approved": {"action": "respond", "reply": original_response, "reasoning": "User approved response"},
+        }
+        
+        feedback_lower = feedback_text.lower()
+        for pattern, response_data in simple_feedback_patterns.items():
+            if pattern in feedback_lower:
+                print(f"⚡ FAST PATH: '{pattern}' detected - skipping AI")
+                
+                current_version_num = 1
+                if request.current_version and request.current_version.startswith('v'):
+                    try:
+                        current_version_num = int(request.current_version.replace('v', ''))
+                    except ValueError:
+                        current_version_num = 1
+                
+                return {
+                    "commentId": request.commentId,
+                    "original_comment": original_comment,
+                    "category": "neutral",
+                    "action": response_data["action"],
+                    "reply": response_data["reply"],
+                    "confidence_score": 0.9,
+                    "approved": "pending",
+                    "feedback_text": feedback_text,
+                    "version": f"v{current_version_num + 1}",
+                    "reasoning": response_data["reasoning"],
+                    "feedback_processed": True,
+                    "success": True,
+                    "processing_time": round(time.time() - start_time, 3),
+                    "method": "fast_path",
+                    "request_id": request_id
+                }
+        
+        # If we get here, we need AI processing
+        print(f"🤖 SLOW PATH: Using Claude API for complex feedback")
+        
+        # Simple prompt to minimize API time
+        feedback_prompt = f"""Improve this response based on feedback for LeaseEnd.com:
+
+ORIGINAL COMMENT: "{original_comment}"
+ORIGINAL RESPONSE: "{original_response}"
+ORIGINAL ACTION: "{original_action}"
+FEEDBACK: "{feedback_text}"
+
+COMPANY GUIDELINES:
+- LeaseEnd helps drivers get loans in their name, completely online
+- Lease buyouts vary case-by-case - analyze specific numbers
+- Use (844) 679-1188 ONLY for hesitant/confused/contact-requesting customers
+- For general prospects, use website CTAs instead
+
+Apply the feedback and respond with JSON only:
+{{"action": "respond", "reply": "improved response here", "reasoning": "brief explanation"}}"""
+
+        try:
+            print(f"📡 Calling Claude API...")
+            api_start = time.time()
+            
+            improved_response = claude.basic_request(feedback_prompt)
+            
+            api_time = time.time() - api_start
+            print(f"✅ Claude API completed in {api_time:.2f}s")
+            
+            # Quick JSON parsing
+            response_clean = improved_response.strip()
+            if response_clean.startswith('```json'):
+                response_clean = response_clean[7:]
+            elif response_clean.startswith('```'):
+                response_clean = response_clean[3:]
+            
+            if response_clean.endswith('```'):
+                response_clean = response_clean[:-3]
+            
+            response_clean = response_clean.strip()
+            
+            # Find JSON in response
+            json_start = response_clean.find('{')
+            json_end = response_clean.rfind('}') + 1
+            if json_start != -1 and json_end > json_start:
+                response_clean = response_clean[json_start:json_end]
+            
+            result = json.loads(response_clean)
+            
+            improved_action = result.get('action', 'leave_alone').lower()
+            if improved_action == 'reply':
+                improved_action = 'respond'
+            
+            improved_reply = filter_numerical_values(result.get('reply', ''))
+            
+            # Fix phone number format
+            if '844' in improved_reply and '679-1188' in improved_reply:
+                improved_reply = re.sub(r'\(?844\)?[-.\s]*679[-.\s]*1188', '(844) 679-1188', improved_reply)
+            
+            current_version_num = 1
+            if request.current_version and request.current_version.startswith('v'):
+                try:
+                    current_version_num = int(request.current_version.replace('v', ''))
+                except ValueError:
+                    current_version_num = 1
+            
+            total_time = time.time() - start_time
+            print(f"✅ COMPLETED in {total_time:.2f}s (API: {api_time:.2f}s)")
+            
+            return {
+                "commentId": request.commentId,
+                "original_comment": original_comment,
+                "category": "neutral",
+                "action": improved_action,
+                "reply": improved_reply,
+                "confidence_score": 0.85,
+                "approved": "pending",
+                "feedback_text": feedback_text,
+                "version": f"v{current_version_num + 1}",
+                "reasoning": result.get('reasoning', 'Applied feedback'),
+                "feedback_processed": True,
+                "success": True,
+                "processing_time": round(total_time, 3),
+                "api_time": round(api_time, 3),
+                "method": "ai_processing",
+                "request_id": request_id
+            }
+            
+        except json.JSONDecodeError as json_error:
+            print(f"❌ JSON parsing error: {json_error}")
+            print(f"Raw response: {improved_response[:200]}...")
+            
+            current_version_num = 1
+            if request.current_version and request.current_version.startswith('v'):
+                try:
+                    current_version_num = int(request.current_version.replace('v', ''))
+                except ValueError:
+                    current_version_num = 1
+            
+            return {
+                "commentId": request.commentId,
+                "original_comment": original_comment,
+                "category": "error",
+                "action": "leave_alone",
+                "reply": "We can help analyze your specific lease situation.",
+                "confidence_score": 0.5,
+                "approved": "pending",
+                "feedback_text": feedback_text,
+                "version": f"v{current_version_num + 1}",
+                "reasoning": "JSON parsing fallback",
+                "success": False,
+                "error": f"JSON parsing failed: {str(json_error)}",
+                "processing_time": round(time.time() - start_time, 3),
+                "method": "json_fallback",
+                "request_id": request_id
+            }
+            
+        except Exception as api_error:
+            print(f"❌ API Error: {api_error}")
+            
+            current_version_num = 1
+            if request.current_version and request.current_version.startswith('v'):
+                try:
+                    current_version_num = int(request.current_version.replace('v', ''))
+                except ValueError:
+                    current_version_num = 1
+            
+            return {
+                "commentId": request.commentId,
+                "original_comment": original_comment,
+                "category": "error",
+                "action": "leave_alone",
+                "reply": "We can help analyze your specific lease situation.",
+                "confidence_score": 0.5,
+                "approved": "pending",
+                "feedback_text": feedback_text,
+                "version": f"v{current_version_num + 1}",
+                "reasoning": "API error fallback",
+                "success": False,
+                "error": str(api_error),
+                "processing_time": round(time.time() - start_time, 3),
+                "method": "api_error_fallback",
+                "request_id": request_id
+            }
+            
+    except Exception as e:
+        print(f"❌ GENERAL ERROR: {e}")
+        
+        current_version_num = 1
+        if hasattr(request, 'current_version') and request.current_version and request.current_version.startswith('v'):
+            try:
+                current_version_num = int(request.current_version.replace('v', ''))
+            except ValueError:
+                current_version_num = 1
+        
+        return {
+            "commentId": getattr(request, 'commentId', 'unknown'),
+            "original_comment": str(getattr(request, 'original_comment', 'Error')),
+            "category": "error", 
+            "action": "leave_alone",
+            "reply": "We can help analyze your specific lease situation.",
+            "confidence_score": 0.0,
+            "approved": "pending",
+            "feedback_text": str(getattr(request, 'feedback_text', 'Error')),
+            "version": f"v{current_version_num + 1}",
+            "reasoning": "General error fallback",
+            "error": str(e),
+            "success": False,
+            "processing_time": round(time.time() - start_time, 3),
+            "method": "error_fallback",
+            "request_id": request_id
+        }
 
 @app.post("/process-batch")
 async def process_batch(request: BatchCommentRequest):
@@ -929,131 +1276,16 @@ async def process_comment(request: CommentRequest):
             reasoning=f"Error: {str(e)}"
         )
 
-@app.post("/process-feedback")
-async def process_feedback(request: FeedbackRequest):
-    """Enhanced feedback processing with updated guidelines"""
-    try:
-        original_comment = request.original_comment.strip()
-        original_response = request.original_response.strip() if request.original_response else ""
-        original_action = request.original_action.strip().lower()
-        feedback_text = request.feedback_text.strip()
-        
-        feedback_prompt = f"""You are improving a response based on human feedback for LeaseEnd.com.
-
-ORIGINAL COMMENT: "{original_comment}"
-YOUR ORIGINAL RESPONSE: "{original_response}"
-YOUR ORIGINAL ACTION: "{original_action}"
-HUMAN FEEDBACK: "{feedback_text}"
-
-UPDATED COMPANY GUIDELINES:
-- LeaseEnd helps drivers get loans in their name with competitive options, completely online
-- We DON'T do third-party financing - we connect customers with lenders
-- Lease buyouts vary case-by-case - offer to analyze their specific numbers
-- Keep arguments concise and relevant, not generic equity claims
-- Use (844) 679-1188 ONLY for customers who show hesitation, request contact, or are confused
-- For general prospects, use website CTAs instead
-- DELETE comments with accusations, excessive arguing, or hostility
-- Focus on verification over broad statements
-
-PHONE NUMBER USAGE:
-- Use (844) 679-1188 format for hesitant/confused/contact-requesting customers only
-- Include when customer seems to need personal assistance
-
-Generate an IMPROVED response incorporating the feedback while following updated guidelines.
-
-Respond in JSON: {{"sentiment": "...", "action": "REPLY/REACT/DELETE/LEAVE_ALONE", "reply": "...", "reasoning": "...", "confidence": 0.85, "needs_phone": true/false}}"""
-
-        improved_response = claude.basic_request(feedback_prompt)
-        
-        try:
-            response_clean = improved_response.strip()
-            if response_clean.startswith('```'):
-                lines = response_clean.split('\n')
-                response_clean = '\n'.join([line for line in lines if not line.startswith('```')])
-            
-            if not response_clean.startswith('{'):
-                json_start = response_clean.find('{')
-                json_end = response_clean.rfind('}') + 1
-                if json_start != -1 and json_end != 0:
-                    response_clean = response_clean[json_start:json_end]
-            
-            result = json.loads(response_clean)
-            
-            action_mapping = {
-                'reply': 'respond',
-                'react': 'react', 
-                'delete': 'delete',
-                'leave_alone': 'leave_alone'
-            }
-            
-            improved_action = action_mapping.get(result.get('action', 'leave_alone').lower(), 'leave_alone')
-            improved_reply = filter_numerical_values(result.get('reply', ''))
-            
-            # Fix phone number format if present
-            if '844' in improved_reply and '679-1188' in improved_reply:
-                improved_reply = re.sub(r'\(?844\)?[-.\s]*679[-.\s]*1188', '(844) 679-1188', improved_reply)
-            
-            current_version_num = int(request.current_version.replace('v', '')) if request.current_version.startswith('v') else 1
-            new_version = f"v{current_version_num + 1}"
-            
-            return {
-                "commentId": request.commentId,
-                "original_comment": original_comment,
-                "category": result.get('sentiment', 'neutral').lower(),
-                "action": improved_action,
-                "reply": improved_reply,
-                "confidence_score": float(result.get('confidence', 0.85)),
-                "approved": "pending",
-                "feedback_text": feedback_text,
-                "version": new_version,
-                "reasoning": result.get('reasoning', 'Applied feedback with updated guidelines'),
-                "feedback_processed": True,
-                "success": True
-            }
-            
-        except json.JSONDecodeError as e:
-            new_version_num = int(request.current_version.replace('v', '')) + 1 if request.current_version.startswith('v') else 2
-            return {
-                "commentId": request.commentId,
-                "original_comment": original_comment,
-                "category": "neutral",
-                "action": "leave_alone",
-                "reply": "We can help analyze your specific lease situation. Call (844) 679-1188 if you have questions.",
-                "confidence_score": 0.5,
-                "approved": "pending",
-                "feedback_text": feedback_text,
-                "version": f"v{new_version_num}",
-                "reasoning": "Fallback response with proper phone format",
-                "success": False
-            }
-            
-    except Exception as e:
-        new_version_num = int(request.current_version.replace('v', '')) + 1 if request.current_version.startswith('v') else 2
-        return {
-            "commentId": request.commentId,
-            "original_comment": request.original_comment,
-            "category": "error", 
-            "action": "leave_alone",
-            "reply": "We can help analyze your specific lease situation.",
-            "confidence_score": 0.0,
-            "approved": "pending",
-            "feedback_text": request.feedback_text,
-            "version": f"v{new_version_num}",
-            "reasoning": "Error in feedback processing",
-            "error": str(e),
-            "success": False
-        }
-
 @app.post("/approve-response")
 async def approve_response(request: ApproveRequest):
     """Approve and store a response for training"""
-    global TRAINING_DATA  # Move global declaration to the top
+    global TRAINING_DATA
     
     db = SessionLocal()
     try:
         # Check if comment already exists
         existing_comment = db.query(ResponseEntry).filter(
-            ResponseEntry.comment == request.original_comment
+            ResponseEntry.comment == str(request.original_comment)
         ).first()
         
         if existing_comment:
@@ -1073,9 +1305,9 @@ async def approve_response(request: ApproveRequest):
                 pass
         
         response_entry = ResponseEntry(
-            comment=request.original_comment,
+            comment=str(request.original_comment),
             action=request.action,
-            reply=request.reply,
+            reply=str(request.reply),
             reasoning=request.reasoning,
             created_at=comment_created_at
         )
@@ -1147,12 +1379,18 @@ async def get_stats():
     return {
         "total_training_examples": len(TRAINING_DATA),
         "action_distribution": action_counts,
+        "debug_info": {
+            "total_requests_tracked": len(request_details),
+            "unique_comments_processed": len(request_tracker),
+            "active_cooldowns": len(recent_requests),
+            "duplicate_comments": sum(1 for v in request_tracker.values() if v > 1)
+        },
         "key_features": {
+            "duplicate_detection": "5 second cooldown per comment+feedback combination",
             "phone_number": "(844) 679-1188 ONLY for hesitation/contact requests/confusion",
             "website_ctas": "General prospects get website CTAs instead",
             "positioning": "Completely online loan facilitators",
-            "analysis": "Case-by-case lease analysis, not generic claims",
-            "negative_handling": "DELETE accusations and excessive arguing"
+            "analysis": "Case-by-case lease analysis, not generic claims"
         },
         "supported_actions": {
             "respond": "Generate helpful response with refined phone usage",
