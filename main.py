@@ -224,26 +224,35 @@ CRITICAL ANALYSIS REQUIREMENTS:
 
 1. NAME DETECTION - If comment starts with a name (like "John", "@Sarah", "Mike Smith"), it's a conversation between users → LEAVE_ALONE
    Examples: "John that's crazy", "@Mike thanks", "Sarah I agree" = LEAVE_ALONE
+   EXCEPTION: If name + vulgar/inappropriate content → DELETE
+   Examples: "John you're a fucking idiot", "@Sarah this is bullshit scam" = DELETE
 
 2. LEASE BUYOUT RELEVANCE - Only engage if they seem like a potential lease buyout customer
    Potential customers mention: lease ending, lease return, buying lease, car payments, dealership options, lease terms
    NOT potential: general car talk, selling cars, insurance, repairs, unrelated topics
 
-3. SPECIFIC ENGAGEMENT - Focus on their actual question/concern, not generic responses
-   If they ask specific questions about their situation → REPLY with specific help
-   If they share experiences → REACT or targeted REPLY
-   If they're just chatting generally → LEAVE_ALONE
+3. POSITIVE PROSPECTS ONLY - Only provide responses/CTAs to genuine positive prospects
+   REPLY to: People with real questions about their lease situation
+   LEAVE_ALONE: Haters, know-it-alls, people trying to prove us wrong, argumentative comments
+   Examples of LEAVE_ALONE: "This is wrong because...", "Actually the math shows...", "You guys don't know what you're talking about"
+
+4. ACTION MAPPING - Use exact terms:
+   - LEAVE_ALONE (not "skip" or "no_action") - for conversations, off-topic, haters, know-it-alls
+   - REPLY - only for genuine positive prospects with real questions
+   - DELETE - vulgar, spam, accusations, hostile
+   - REACT - positive supportive comments that don't need full response
 
 BUSINESS LOGIC:
 - LeaseEnd helps drivers get loans in their name for lease buyouts, completely online
 - We connect customers with lenders, don't do third-party financing
 - Lease buyouts vary case-by-case based on specific numbers
-- Focus on genuine prospects with actual lease decisions to make
+- Focus ONLY on genuine prospects with actual lease decisions to make
 
 DELETE CRITERIA:
 - Accusations of false information or lies
-- Spam, inappropriate, or hostile comments
+- Spam, inappropriate, or hostile comments  
 - Brief negative: "scam", "ripoff", "terrible"
+- Vulgar language (even with names)
 - Excessive arguing with no genuine interest
 
 COMMENT: "{comment}"
@@ -270,8 +279,12 @@ Analyze carefully and respond in JSON:
                 'needs_phone': result.get('needs_phone', False)
             }
         except json.JSONDecodeError:
-            # Enhanced fallback with name detection
+            # Enhanced fallback with name detection and vulgar content check
             comment_lower = comment.lower()
+            
+            # Check for vulgar/inappropriate content
+            vulgar_words = ['fuck', 'shit', 'damn', 'hell', 'ass', 'bitch', 'idiot', 'stupid', 'moron', 'scam', 'bullshit']
+            has_vulgar = any(word in comment_lower for word in vulgar_words)
             
             # Check for names at beginning (simple patterns)
             name_patterns = [
@@ -282,9 +295,22 @@ Analyze carefully and respond in JSON:
             
             is_conversation = any(re.match(pattern, comment_lower) for pattern in name_patterns)
             
-            if is_conversation:
+            # Check for know-it-all/argumentative patterns
+            argumentative_patterns = [
+                'this is wrong', 'you\'re wrong', 'actually', 'the math shows', 
+                'you don\'t know', 'that\'s not true', 'incorrect', 'false information'
+            ]
+            is_argumentative = any(pattern in comment_lower for pattern in argumentative_patterns)
+            
+            if is_conversation and has_vulgar:
+                action = 'DELETE'
+                reasoning = "Detected conversation with vulgar content"
+            elif is_conversation:
                 action = 'LEAVE_ALONE'
                 reasoning = "Detected conversation between users"
+            elif has_vulgar or is_argumentative:
+                action = 'DELETE' if has_vulgar else 'LEAVE_ALONE'
+                reasoning = "Detected inappropriate/argumentative content"
             elif any(word in comment.upper() for word in ['DELETE', 'SCAM', 'FALSE INFO', 'LIES', 'FRAUD']):
                 action = 'DELETE'
                 reasoning = "Detected negative/accusatory content"
@@ -315,14 +341,44 @@ Analyze carefully and respond in JSON:
         }
 
 def generate_response(comment, sentiment, high_intent=False, needs_phone=False, is_lease_relevant=True, is_conversation=False):
-    """Enhanced response generation with specific, targeted responses"""
+    """Enhanced response generation - ONLY for positive genuine prospects"""
     
     # If it's a conversation between users, don't respond
     if is_conversation:
         return ""
     
-    # If not lease relevant, don't include CTAs
+    # If not lease relevant, don't respond
     if not is_lease_relevant:
+        return ""
+    
+    # Check if this is a hater/know-it-all/argumentative comment
+    comment_lower = comment.lower()
+    
+    # Hater/argumentative patterns - NO CTAs for these
+    negative_patterns = [
+        'this is wrong', 'you\'re wrong', 'actually', 'the math shows', 
+        'you don\'t know', 'that\'s not true', 'incorrect', 'false information',
+        'you guys are', 'this company', 'scam', 'ripoff', 'terrible',
+        'don\'t believe', 'not true', 'misleading', 'lies'
+    ]
+    
+    is_negative_commenter = any(pattern in comment_lower for pattern in negative_patterns)
+    
+    # If it's a hater/argumentative person, don't provide CTAs
+    if is_negative_commenter:
+        return ""
+    
+    # Only proceed if they seem like a genuine positive prospect
+    positive_indicators = [
+        'my lease', 'help', 'question', 'how', 'what', 'when', 'where',
+        'should i', 'thinking about', 'considering', 'advice', 'options',
+        'lease ends', 'lease is up', 'need to decide', 'not sure'
+    ]
+    
+    is_positive_prospect = any(indicator in comment_lower for indicator in positive_indicators)
+    
+    # Only generate response for positive prospects
+    if not is_positive_prospect:
         return ""
     
     # Analyze the specific content of their comment
@@ -339,7 +395,6 @@ def generate_response(comment, sentiment, high_intent=False, needs_phone=False, 
     }
     
     # Determine the specific category of their comment
-    comment_lower = comment.lower()
     primary_concern = None
     for category, indicators in lease_indicators.items():
         if any(indicator in comment_lower for indicator in indicators):
@@ -395,6 +450,7 @@ RESPONSE REQUIREMENTS:
 2. Be conversational and natural (1-2 sentences max)
 3. Reference their actual situation when possible
 4. Don't be overly salesy - be helpful
+5. ONLY respond to genuine positive prospects with real questions
 
 COMPANY POSITIONING:
 - We help drivers get loans in their name for lease buyouts, completely online
