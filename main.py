@@ -61,12 +61,12 @@ BUSINESS_RULES = """
 COMPANY POSITION:
 - LeaseEnd helps drivers get loans in their name with competitive options, completely online
 - We connect customers with lenders (NOT third-party financing)
-- Challenge false information politely, DELETE if accusatory/spam
+- Challenge false information politely
 
 ACTIONS:
 - REPLY: Genuine questions, prospects, positive feedback, correctable misinformation
 - REACT: Positive comments needing no response
-- DELETE: Accusations, spam, hostility, excessive arguing, brief negatives
+- DELETE: Accusations, spam, hostility, excessive arguing, brief negatives, negative Leaseend experiences, chidlish comments
 - LEAVE_ALONE: Harmless off-topic or neutral tagged comments
 
 BRAND VOICE:
