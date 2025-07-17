@@ -56,6 +56,55 @@ class ResponseEntry(Base):
 # Create tables
 Base.metadata.create_all(bind=engine)
 
+# Centralized Business Rules - Single Source of Truth
+BUSINESS_RULES = """
+COMPANY POSITION:
+- LeaseEnd helps drivers get loans in their name with competitive options, completely online
+- We connect customers with lenders (NOT third-party financing)
+- Lease buyouts vary case-by-case - we analyze actual numbers to help decide
+- Challenge false information politely, DELETE if accusatory/spam
+
+BRAND VOICE:
+- Professional but conversational
+- Confident in lease analysis expertise
+- Concise responses focused on THEIR specific situation
+- Loan facilitators, not lenders
+
+PHONE NUMBER (844) 679-1188 - ONLY for:
+- Explicit contact requests ("call me", "speak to someone")
+- Hesitation ("not sure", "worried", "what's the catch")
+- Confusion ("don't understand", "complicated")
+- Urgency ("urgent", "asap")
+- NOT for general interest ("interested", "how much", "can I qualify")
+
+WEBSITE CTA "fill out form on our site" - ONLY for:
+- High-intent prospects showing clear purchase intent
+- NOT for casual browsers or general questions
+
+ACTIONS:
+- REPLY: Genuine questions, prospects, positive feedback, correctable misinformation
+- REACT: Positive comments needing no response
+- DELETE: Accusations, spam, hostility, excessive arguing, brief negatives
+- LEAVE_ALONE: Harmless off-topic or neutral tagged comments
+
+RESPONSE GUIDELINES (if REPLY):
+- 1-2 sentences maximum
+- Case-by-case analysis, not broad equity claims
+- NEVER include dollar amounts, percentages, or rates
+- Use: "competitive rates", "varies by situation", "depends on your lease"
+- Address their specific concern directly
+
+KEY MESSAGING:
+- "It varies case-by-case based on your specific lease"
+- "We can look at your actual numbers to help you decide"
+- "We help you get a loan in your name with competitive options"
+
+COMPETITIVE ADVANTAGES:
+- vs Dealerships: No pressure, transparent, 100% online
+- vs Credit Unions: No membership required, flexible, fast
+- vs Banks: Competitive rates, simple, customer-focused
+"""
+
 # Custom Anthropic LM for DSPy (unchanged)
 class CustomAnthropic(dspy.LM):
     def __init__(self, api_key):
@@ -169,55 +218,11 @@ def get_db():
         db.close()
 
 def process_comment_with_ai(comment, commentId=""):
-    """Unified comment analysis and response generation"""
+    """Unified comment analysis and response generation using centralized rules"""
     
     prompt = f"""You are analyzing and responding to comments for LeaseEnd.com, which helps drivers get loans for lease buyouts.
 
-COMPANY POSITION:
-- LeaseEnd helps drivers get loans in their name with competitive options, completely online
-- We connect customers with lenders (NOT third-party financing)
-- Lease buyouts vary case-by-case - we analyze actual numbers to help decide
-- Challenge false information politely, DELETE if accusatory/spam
-
-BRAND VOICE:
-- Professional but conversational
-- Confident in lease analysis expertise
-- Concise responses focused on THEIR specific situation
-- Loan facilitators, not lenders
-
-PHONE NUMBER (844) 679-1188 - ONLY for:
-- Explicit contact requests ("call me", "speak to someone")
-- Hesitation ("not sure", "worried", "what's the catch")
-- Confusion ("don't understand", "complicated")
-- Urgency ("urgent", "asap")
-- NOT for general interest ("interested", "how much", "can I qualify")
-
-WEBSITE CTA "fill out form on our site" - ONLY for:
-- High-intent prospects showing clear purchase intent
-- NOT for casual browsers or general questions
-
-ACTIONS:
-- REPLY: Genuine questions, prospects, positive feedback, correctable misinformation
-- REACT: Positive comments needing no response
-- DELETE: Accusations, spam, hostility, excessive arguing, brief negatives
-- LEAVE_ALONE: Harmless off-topic or neutral tagged comments
-
-RESPONSE GUIDELINES (if REPLY):
-- 1-2 sentences maximum
-- Case-by-case analysis, not broad equity claims
-- NEVER include dollar amounts, percentages, or rates
-- Use: "competitive rates", "varies by situation", "depends on your lease"
-- Address their specific concern directly
-
-KEY MESSAGING:
-- "It varies case-by-case based on your specific lease"
-- "We can look at your actual numbers to help you decide"
-- "We help you get a loan in your name with competitive options"
-
-COMPETITIVE ADVANTAGES:
-- vs Dealerships: No pressure, transparent, 100% online
-- vs Credit Unions: No membership required, flexible, fast
-- vs Banks: Competitive rates, simple, customer-focused
+{BUSINESS_RULES}
 
 COMMENT: "{comment}"
 
@@ -356,16 +361,16 @@ app = FastAPI()
 @app.get("/")
 def read_root():
     return {
-        "message": "Lease End AI Assistant - SIMPLIFIED VERSION",
-        "version": "30.0-SINGLE-COMMENT-ONLY",
+        "message": "Lease End AI Assistant - CENTRALIZED RULES",
+        "version": "31.0-CENTRALIZED-BUSINESS-RULES",
         "training_examples": len(TRAINING_DATA),
         "status": "RUNNING",
-        "features": ["Single Comment Processing", "Merged AI Function", "Simplified Architecture"],
+        "features": ["Centralized Business Rules", "Consistent Endpoints", "Simplified Architecture"],
         "key_changes": [
-            "Removed batch processing complexity",
-            "Single comment endpoint only",
-            "Merged classification and response generation",
-            "Simplified database schema"
+            "Centralized business rules for all endpoints",
+            "Consistent CTA and phone number logic",
+            "Single source of truth for guidelines",
+            "Eliminated endpoint inconsistencies"
         ]
     }
 
@@ -568,12 +573,12 @@ async def reload_training_data_endpoint():
 
 @app.post("/process-comment", response_model=ProcessedComment)
 async def process_comment(request: CommentRequest):
-    """Enhanced comment processing with merged function"""
+    """Enhanced comment processing using centralized business rules"""
     try:
         comment_text = request.get_comment_text()
         comment_id = request.get_comment_id()
         
-        # Use merged function
+        # Use centralized function
         ai_result = process_comment_with_ai(comment_text, comment_id)
         
         sentiment = ai_result['sentiment']
@@ -617,7 +622,7 @@ async def process_comment(request: CommentRequest):
 
 @app.post("/process-feedback")
 async def process_feedback(request: FeedbackRequest):
-    """Enhanced feedback processing with merged function approach"""
+    """Enhanced feedback processing using centralized business rules"""
     try:
         original_comment = request.original_comment.strip()
         original_response = request.original_response.strip() if request.original_response else ""
@@ -631,20 +636,9 @@ YOUR ORIGINAL RESPONSE: "{original_response}"
 YOUR ORIGINAL ACTION: "{original_action}"
 HUMAN FEEDBACK: "{feedback_text}"
 
-UPDATED COMPANY GUIDELINES:
-- LeaseEnd helps drivers get loans in their name with competitive options, completely online
-- We DON'T do third-party financing - we connect customers with lenders
-- Lease buyouts vary case-by-case - offer to analyze their specific numbers
-- Keep arguments concise and relevant, not generic equity claims
-- Use (844) 679-1188 ONLY for customers who show hesitation, request contact, or are confused
-- DELETE comments with accusations, excessive arguing, or hostility
-- Focus on verification over broad statements
+{BUSINESS_RULES}
 
-PHONE NUMBER USAGE:
-- Use (844) 679-1188 format for hesitant/confused/contact-requesting customers only
-- Include when customer seems to need personal assistance
-
-Generate an IMPROVED response incorporating the feedback while following updated guidelines.
+Generate an IMPROVED response incorporating the feedback while following the guidelines above.
 
 Respond in JSON: {{"sentiment": "...", "action": "REPLY/REACT/DELETE/LEAVE_ALONE", "reply": "...", "reasoning": "...", "confidence": 0.85, "needs_phone": true/false}}"""
 
@@ -691,7 +685,7 @@ Respond in JSON: {{"sentiment": "...", "action": "REPLY/REACT/DELETE/LEAVE_ALONE
                 "approved": "pending",
                 "feedback_text": feedback_text,
                 "version": new_version,
-                "reasoning": result.get('reasoning', 'Applied feedback with updated guidelines'),
+                "reasoning": result.get('reasoning', 'Applied feedback with centralized business rules'),
                 "feedback_processed": True,
                 "success": True
             }
@@ -796,13 +790,14 @@ async def get_stats():
         "total_training_examples": len(TRAINING_DATA),
         "action_distribution": action_counts,
         "key_features": {
+            "centralized_rules": "Single source of truth for all business logic",
             "phone_number": "(844) 679-1188 ONLY for hesitation/contact requests/confusion",
+            "website_ctas": "High-intent prospects only",
             "positioning": "Completely online loan facilitators",
-            "analysis": "Case-by-case lease analysis, not generic claims",
-            "negative_handling": "DELETE accusations and excessive arguing"
+            "analysis": "Case-by-case lease analysis, not generic claims"
         },
         "supported_actions": {
-            "respond": "Generate helpful response with merged AI function",
+            "respond": "Generate helpful response using centralized rules",
             "react": "Add thumbs up or heart reaction", 
             "delete": "Remove spam/accusations/hostility",
             "leave_alone": "Ignore harmless off-topic comments"
