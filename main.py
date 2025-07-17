@@ -61,7 +61,6 @@ BUSINESS_RULES = """
 COMPANY POSITION:
 - LeaseEnd helps drivers get loans in their name with competitive options, completely online
 - We connect customers with lenders (NOT third-party financing)
-- Lease buyouts vary case-by-case - we analyze actual numbers to help decide
 - Challenge false information politely, DELETE if accusatory/spam
 
 BRAND VOICE:
@@ -88,16 +87,10 @@ ACTIONS:
 - LEAVE_ALONE: Harmless off-topic or neutral tagged comments
 
 RESPONSE GUIDELINES (if REPLY):
-- 1-2 sentences maximum
+- 3 sentences maximum
 - Case-by-case analysis, not broad equity claims
 - NEVER include dollar amounts, percentages, or rates
-- Use: "competitive rates", "varies by situation", "depends on your lease"
 - Address their specific concern directly
-
-KEY MESSAGING:
-- "It varies case-by-case based on your specific lease"
-- "We can look at your actual numbers to help you decide"
-- "We help you get a loan in your name with competitive options"
 
 COMPETITIVE ADVANTAGES:
 - vs Dealerships: No pressure, transparent, 100% online
