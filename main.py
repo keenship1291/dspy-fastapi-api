@@ -216,7 +216,7 @@ def get_db():
         db.close()
 
 def classify_comment_with_ai(comment, commentId=""):
-    """Enhanced comment classification with specific feedback requirements"""
+    """Enhanced comment classification with improved know-it-all detection"""
     
     prompt = f"""You are analyzing comments for LeaseEnd.com, which helps drivers get loans for lease buyouts.
 
@@ -231,14 +231,24 @@ CRITICAL ANALYSIS REQUIREMENTS:
    Potential customers mention: lease ending, lease return, buying lease, car payments, dealership options, lease terms
    NOT potential: general car talk, selling cars, insurance, repairs, unrelated topics
 
-3. POSITIVE PROSPECTS ONLY - Only provide responses/CTAs to genuine positive prospects
-   REPLY to: People with real questions about their lease situation
-   LEAVE_ALONE: Haters, know-it-alls, people trying to prove us wrong, argumentative comments
-   Examples of LEAVE_ALONE: "This is wrong because...", "Actually the math shows...", "You guys don't know what you're talking about"
+3. KNOW-IT-ALL DETECTION - These people give advice or act as experts → RESPOND (refute politely)
+   Advisory patterns: "I'll tell you", "Here's what you need to know", "Let me explain", "You need to understand"
+   Instructional tone: "You should", "What you need to do", "The way this works", "I always tell people"
+   Positioning as expert: "In my experience", "I've been doing this for years", "Trust me", "Take it from me"
+   Argumentative: "This is wrong", "Actually", "You don't know", "That's not true"
+   
+4. ENGAGEMENT STRATEGY:
+   RESPOND to: 
+   - Genuine prospects with lease questions
+   - Know-it-alls spreading misinformation (refute professionally)
+   - Argumentative comments that need correction
+   LEAVE_ALONE ONLY for: 
+   - Conversations between users (names at start)
+   - Completely off-topic comments
 
-4. ACTION MAPPING - Use exact terms:
-   - LEAVE_ALONE (not "skip" or "no_action") - for conversations, off-topic, haters, know-it-alls
-   - REPLY - only for genuine positive prospects with real questions
+5. ACTION MAPPING - Use exact terms:
+   - LEAVE_ALONE (not "skip" or "no_action") - ONLY for conversations between users (names) or completely off-topic
+   - RESPOND - genuine prospects AND know-it-alls/argumentative comments that need professional refutation
    - DELETE - vulgar, spam, accusations, hostile
    - REACT - positive supportive comments that don't need full response
 
@@ -258,7 +268,7 @@ DELETE CRITERIA:
 COMMENT: "{comment}"
 
 Analyze carefully and respond in JSON:
-{{"sentiment": "...", "action": "REPLY/REACT/DELETE/LEAVE_ALONE", "reasoning": "...", "is_conversation": true/false, "is_lease_relevant": true/false, "needs_phone": true/false}}"""
+{{"sentiment": "...", "action": "RESPOND/REACT/DELETE/LEAVE_ALONE", "reasoning": "...", "is_conversation": true/false, "is_lease_relevant": true/false, "needs_phone": true/false}}"""
 
     try:
         response = claude.basic_request(prompt)
@@ -279,7 +289,7 @@ Analyze carefully and respond in JSON:
                 'needs_phone': result.get('needs_phone', False)
             }
         except json.JSONDecodeError:
-            # Enhanced fallback with name detection and vulgar content check
+            # Enhanced fallback with name detection and know-it-all handling
             comment_lower = comment.lower()
             
             # Check for vulgar/inappropriate content
@@ -295,12 +305,16 @@ Analyze carefully and respond in JSON:
             
             is_conversation = any(re.match(pattern, comment_lower) for pattern in name_patterns)
             
-            # Check for know-it-all/argumentative patterns
-            argumentative_patterns = [
+            # Check for know-it-all/argumentative patterns - these get RESPONDED to now
+            know_it_all_patterns = [
                 'this is wrong', 'you\'re wrong', 'actually', 'the math shows', 
-                'you don\'t know', 'that\'s not true', 'incorrect', 'false information'
+                'you don\'t know', 'that\'s not true', 'incorrect', 'false information',
+                'i\'ll tell you', 'here\'s what you need to know', 'let me explain',
+                'you need to understand', 'you should', 'what you need to do',
+                'the way this works', 'i always tell people', 'in my experience',
+                'trust me', 'take it from me'
             ]
-            is_argumentative = any(pattern in comment_lower for pattern in argumentative_patterns)
+            is_know_it_all = any(pattern in comment_lower for pattern in know_it_all_patterns)
             
             if is_conversation and has_vulgar:
                 action = 'DELETE'
@@ -308,14 +322,17 @@ Analyze carefully and respond in JSON:
             elif is_conversation:
                 action = 'LEAVE_ALONE'
                 reasoning = "Detected conversation between users"
-            elif has_vulgar or is_argumentative:
-                action = 'DELETE' if has_vulgar else 'LEAVE_ALONE'
-                reasoning = "Detected inappropriate/argumentative content"
-            elif any(word in comment.upper() for word in ['DELETE', 'SCAM', 'FALSE INFO', 'LIES', 'FRAUD']):
+            elif has_vulgar:
+                action = 'DELETE'
+                reasoning = "Detected vulgar/inappropriate content"
+            elif is_know_it_all:
+                action = 'RESPOND'
+                reasoning = "Detected know-it-all/argumentative comment that needs professional refutation"
+            elif any(word in comment.upper() for word in ['SCAM', 'FRAUD']):
                 action = 'DELETE'
                 reasoning = "Detected negative/accusatory content"
-            elif 'REPLY' in response.upper():
-                action = 'REPLY'
+            elif 'RESPOND' in response.upper():
+                action = 'RESPOND'
                 reasoning = "Detected genuine prospect or question"
             else:
                 action = 'LEAVE_ALONE'
@@ -340,8 +357,8 @@ Analyze carefully and respond in JSON:
             'needs_phone': False
         }
 
-def generate_response(comment, sentiment, high_intent=False, needs_phone=False, is_lease_relevant=True, is_conversation=False):
-    """Enhanced response generation - ONLY for positive genuine prospects"""
+def generate_response(comment, sentiment, comment_type="prospect", needs_phone=False, is_lease_relevant=True, is_conversation=False):
+    """Enhanced response generation - handles prospects AND know-it-alls"""
     
     # If it's a conversation between users, don't respond
     if is_conversation:
@@ -351,22 +368,47 @@ def generate_response(comment, sentiment, high_intent=False, needs_phone=False, 
     if not is_lease_relevant:
         return ""
     
-    # Check if this is a hater/know-it-all/argumentative comment
     comment_lower = comment.lower()
     
-    # Hater/argumentative patterns - NO CTAs for these
-    negative_patterns = [
-        'this is wrong', 'you\'re wrong', 'actually', 'the math shows', 
-        'you don\'t know', 'that\'s not true', 'incorrect', 'false information',
-        'you guys are', 'this company', 'scam', 'ripoff', 'terrible',
-        'don\'t believe', 'not true', 'misleading', 'lies'
+    # Detect know-it-all patterns
+    know_it_all_patterns = [
+        "i'll tell you", "here's what you need to know", "let me explain", 
+        "you need to understand", "you should", "what you need to do",
+        "the way this works", "i always tell people", "in my experience",
+        "i've been doing this", "trust me", "take it from me",
+        "this is wrong", "actually", "you don't know", "that's not true",
+        "the math shows", "incorrect", "false information"
     ]
     
-    is_negative_commenter = any(pattern in comment_lower for pattern in negative_patterns)
+    is_know_it_all = any(pattern in comment_lower for pattern in know_it_all_patterns)
     
-    # If it's a hater/argumentative person, don't provide CTAs
-    if is_negative_commenter:
-        return ""
+    # Handle know-it-alls with professional refutation
+    if is_know_it_all:
+        refutation_prompt = f"""Create a professional response that politely refutes this know-it-all comment for LeaseEnd.com.
+
+COMMENT: "{comment}"
+
+RESPONSE GUIDELINES:
+1. Be confident but respectful - don't be defensive
+2. Correct misinformation without being confrontational 
+3. Emphasize LeaseEnd's expertise in lease analysis
+4. Redirect to case-by-case analysis vs generic claims
+5. Keep it concise (1-2 sentences)
+6. Don't include CTAs for argumentative people
+
+COMPANY POSITION:
+- LeaseEnd connects drivers with competitive loan options, completely online
+- We analyze specific lease numbers case-by-case, not generic advice
+- Every lease situation is different - broad claims don't help individual decisions
+- We're experts at the actual numbers, not general theories
+
+Generate a professional refutation response:"""
+
+        try:
+            response = claude.basic_request(refutation_prompt)
+            return filter_numerical_values(response.strip())
+        except Exception as e:
+            return "Every lease situation is different. We specialize in analyzing the actual numbers for each individual case rather than making broad generalizations."
     
     # Only proceed if they seem like a genuine positive prospect
     positive_indicators = [
@@ -618,11 +660,11 @@ app = FastAPI()
 @app.get("/")
 def read_root():
     return {
-        "message": "Lease End AI Assistant - SIMPLIFIED VERSION",
-        "version": "32.0-SIMPLIFIED",
+        "message": "Lease End AI Assistant - ENHANCED KNOW-IT-ALL REFUTATION",
+        "version": "33.0-ENHANCED",
         "training_examples": len(TRAINING_DATA),
         "status": "RUNNING",
-        "features": ["Core Comment Processing", "Feedback System", "Duplicate Prevention"],
+        "features": ["Know-It-All Refutation", "Professional Counter-Arguments", "Duplicate Prevention"],
         "endpoints": [
             "/process-comment",
             "/process-feedback", 
@@ -684,7 +726,7 @@ async def process_comment(request: CommentRequest):
         
         # Map actions to our system
         action_mapping = {
-            'reply': 'respond',
+            'respond': 'respond',
             'react': 'react', 
             'delete': 'delete',
             'leave_alone': 'leave_alone'
@@ -700,7 +742,7 @@ async def process_comment(request: CommentRequest):
             reply_text = generate_response(
                 comment_text, 
                 sentiment, 
-                high_intent=False,
+                comment_type="prospect",
                 needs_phone=needs_phone,
                 is_lease_relevant=is_lease_relevant,
                 is_conversation=is_conversation
@@ -1002,6 +1044,7 @@ async def get_stats():
             "duplicate_comments": sum(1 for v in request_tracker.values() if v > 1)
         },
         "key_features": {
+            "know_it_all_refutation": "Professional counter-arguments for advisory/argumentative comments",
             "duplicate_detection": "5 second cooldown per comment+feedback combination",
             "phone_number": "(844) 679-1188 ONLY for hesitation/contact requests/confusion",
             "website_ctas": "General prospects get website CTAs instead",
@@ -1009,10 +1052,10 @@ async def get_stats():
             "analysis": "Case-by-case lease analysis, not generic claims"
         },
         "supported_actions": {
-            "respond": "Generate helpful response with refined phone usage",
+            "respond": "Generate helpful response OR professional refutation for know-it-alls",
             "react": "Add thumbs up or heart reaction", 
             "delete": "Remove spam/accusations/hostility",
-            "leave_alone": "Ignore harmless off-topic comments"
+            "leave_alone": "Ignore conversations between users or off-topic comments"
         }
     }
 
