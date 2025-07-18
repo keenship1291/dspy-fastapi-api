@@ -67,7 +67,7 @@ ACTIONS:
 - REPLY: Genuine questions, prospects, positive feedback, correctable misinformation
 - REACT: Positive comments needing no response
 - DELETE: Accusations, spam, hostility, excessive arguing, brief negatives, negative Leaseend experiences, chidlish comments
-- LEAVE_ALONE: Harmless off-topic or neutral tagged comments
+- LEAVE_ALONE: Harmless off-topic or neutral tagged comments, so anything with a name in front or referencing another name
 
 BRAND VOICE:
 - Professional but conversational
@@ -632,7 +632,7 @@ HUMAN FEEDBACK: "{feedback_text}"
 
 {BUSINESS_RULES}
 
-Generate an IMPROVED response incorporating the feedback while following the guidelines above.
+Generate an IMPROVED response incorporating the feedback while following the guidelines above. Answer the original comment NOT the feedback.
 
 Respond in JSON: {{"sentiment": "...", "action": "REPLY/REACT/DELETE/LEAVE_ALONE", "reply": "...", "reasoning": "...", "confidence": 0.85, "needs_phone": true/false}}"""
 
