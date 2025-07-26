@@ -85,15 +85,37 @@ def get_spend_data():
     print(f"DEBUG: Last 7 days: {last_7_days_start} to {last_7_days_end}")
     print(f"DEBUG: Previous 7 days: {previous_7_days_start} to {previous_7_days_end}")
     
-    # Meta spend queries
+    # Meta spend queries - UPDATED TO USE ACTUAL AVAILABLE FIELDS
     meta_queries = {
         'yesterday': f"""
-            SELECT SUM(SAFE_CAST(spend AS FLOAT64)) as spend
+            SELECT 
+                SUM(SAFE_CAST(spend AS FLOAT64)) as spend,
+                SUM(SAFE_CAST(impressions AS INT64)) as impressions,
+                SUM(SAFE_CAST(clicks AS INT64)) as clicks,
+                SUM(SAFE_CAST(reach AS INT64)) as reach,
+                SUM(SAFE_CAST(leads AS INT64)) as leads,
+                SUM(SAFE_CAST(purchases AS INT64)) as purchases,
+                SUM(SAFE_CAST(landing_page_views AS INT64)) as landing_page_views,
+                AVG(SAFE_CAST(ctr AS FLOAT64)) as avg_ctr,
+                AVG(SAFE_CAST(cpc AS FLOAT64)) as avg_cpc,
+                AVG(SAFE_CAST(cpm AS FLOAT64)) as avg_cpm,
+                SAFE_DIVIDE(SUM(SAFE_CAST(spend AS FLOAT64)), SUM(SAFE_CAST(leads AS INT64))) as cost_per_lead
             FROM `{PROJECT_ID}.{DATASET_ID}.meta_data` 
             WHERE date = "{yesterday}"
         """,
         'same_day_last_week': f"""
-            SELECT SUM(SAFE_CAST(spend AS FLOAT64)) as spend
+            SELECT 
+                SUM(SAFE_CAST(spend AS FLOAT64)) as spend,
+                SUM(SAFE_CAST(impressions AS INT64)) as impressions,
+                SUM(SAFE_CAST(clicks AS INT64)) as clicks,
+                SUM(SAFE_CAST(reach AS INT64)) as reach,
+                SUM(SAFE_CAST(leads AS INT64)) as leads,
+                SUM(SAFE_CAST(purchases AS INT64)) as purchases,
+                SUM(SAFE_CAST(landing_page_views AS INT64)) as landing_page_views,
+                AVG(SAFE_CAST(ctr AS FLOAT64)) as avg_ctr,
+                AVG(SAFE_CAST(cpc AS FLOAT64)) as avg_cpc,
+                AVG(SAFE_CAST(cpm AS FLOAT64)) as avg_cpm,
+                SAFE_DIVIDE(SUM(SAFE_CAST(spend AS FLOAT64)), SUM(SAFE_CAST(leads AS INT64))) as cost_per_lead
             FROM `{PROJECT_ID}.{DATASET_ID}.meta_data` 
             WHERE date = "{same_day_last_week}"
         """,
@@ -101,7 +123,15 @@ def get_spend_data():
             SELECT 
                 SUM(SAFE_CAST(spend AS FLOAT64)) as spend,
                 SUM(SAFE_CAST(impressions AS INT64)) as impressions,
-                SUM(SAFE_CAST(clicks AS INT64)) as clicks
+                SUM(SAFE_CAST(clicks AS INT64)) as clicks,
+                SUM(SAFE_CAST(reach AS INT64)) as reach,
+                SUM(SAFE_CAST(leads AS INT64)) as leads,
+                SUM(SAFE_CAST(purchases AS INT64)) as purchases,
+                SUM(SAFE_CAST(landing_page_views AS INT64)) as landing_page_views,
+                AVG(SAFE_CAST(ctr AS FLOAT64)) as avg_ctr,
+                AVG(SAFE_CAST(cpc AS FLOAT64)) as avg_cpc,
+                AVG(SAFE_CAST(cpm AS FLOAT64)) as avg_cpm,
+                SAFE_DIVIDE(SUM(SAFE_CAST(spend AS FLOAT64)), SUM(SAFE_CAST(leads AS INT64))) as cost_per_lead
             FROM `{PROJECT_ID}.{DATASET_ID}.meta_data` 
             WHERE date BETWEEN "{last_7_days_start}" AND "{last_7_days_end}"
         """,
@@ -109,21 +139,41 @@ def get_spend_data():
             SELECT 
                 SUM(SAFE_CAST(spend AS FLOAT64)) as spend,
                 SUM(SAFE_CAST(impressions AS INT64)) as impressions,
-                SUM(SAFE_CAST(clicks AS INT64)) as clicks
+                SUM(SAFE_CAST(clicks AS INT64)) as clicks,
+                SUM(SAFE_CAST(reach AS INT64)) as reach,
+                SUM(SAFE_CAST(leads AS INT64)) as leads,
+                SUM(SAFE_CAST(purchases AS INT64)) as purchases,
+                SUM(SAFE_CAST(landing_page_views AS INT64)) as landing_page_views,
+                AVG(SAFE_CAST(ctr AS FLOAT64)) as avg_ctr,
+                AVG(SAFE_CAST(cpc AS FLOAT64)) as avg_cpc,
+                AVG(SAFE_CAST(cpm AS FLOAT64)) as avg_cpm,
+                SAFE_DIVIDE(SUM(SAFE_CAST(spend AS FLOAT64)), SUM(SAFE_CAST(leads AS INT64))) as cost_per_lead
             FROM `{PROJECT_ID}.{DATASET_ID}.meta_data` 
             WHERE date BETWEEN "{previous_7_days_start}" AND "{previous_7_days_end}"
         """
     }
     
-    # Google spend queries (using 'cost' field as shown in your SQL)
+    # Google spend queries (using 'spend_usd' field as shown in your SQL) - UPDATED TO INCLUDE ALL METRICS
     google_queries = {
         'yesterday': f"""
-            SELECT SUM(spend_usd) as spend
+            SELECT 
+                SUM(spend_usd) as spend,
+                SUM(impressions) as impressions,
+                SUM(clicks) as clicks,
+                SUM(conversions) as conversions,
+                SAFE_DIVIDE(SUM(clicks), SUM(impressions)) * 100 as ctr_percent,
+                SAFE_DIVIDE(SUM(spend_usd), SUM(conversions)) as cost_per_conversion
             FROM `{PROJECT_ID}.{DATASET_ID}.google_data` 
             WHERE date = "{yesterday}"
         """,
         'same_day_last_week': f"""
-            SELECT SUM(spend_usd) as spend
+            SELECT 
+                SUM(spend_usd) as spend,
+                SUM(impressions) as impressions,
+                SUM(clicks) as clicks,
+                SUM(conversions) as conversions,
+                SAFE_DIVIDE(SUM(clicks), SUM(impressions)) * 100 as ctr_percent,
+                SAFE_DIVIDE(SUM(spend_usd), SUM(conversions)) as cost_per_conversion
             FROM `{PROJECT_ID}.{DATASET_ID}.google_data` 
             WHERE date = "{same_day_last_week}"
         """,
@@ -131,7 +181,10 @@ def get_spend_data():
             SELECT 
                 SUM(spend_usd) as spend,
                 SUM(impressions) as impressions,
-                SUM(clicks) as clicks
+                SUM(clicks) as clicks,
+                SUM(conversions) as conversions,
+                SAFE_DIVIDE(SUM(clicks), SUM(impressions)) * 100 as ctr_percent,
+                SAFE_DIVIDE(SUM(spend_usd), SUM(conversions)) as cost_per_conversion
             FROM `{PROJECT_ID}.{DATASET_ID}.google_data` 
             WHERE date BETWEEN "{last_7_days_start}" AND "{last_7_days_end}"
         """,
@@ -139,7 +192,10 @@ def get_spend_data():
             SELECT 
                 SUM(spend_usd) as spend,
                 SUM(impressions) as impressions,
-                SUM(clicks) as clicks
+                SUM(clicks) as clicks,
+                SUM(conversions) as conversions,
+                SAFE_DIVIDE(SUM(clicks), SUM(impressions)) * 100 as ctr_percent,
+                SAFE_DIVIDE(SUM(spend_usd), SUM(conversions)) as cost_per_conversion
             FROM `{PROJECT_ID}.{DATASET_ID}.google_data` 
             WHERE date BETWEEN "{previous_7_days_start}" AND "{previous_7_days_end}"
         """
@@ -280,16 +336,16 @@ def format_comparison(current, previous, period_name, channel_name):
     prev_estimates = safe_get(previous, 'estimates')
     prev_closings = safe_get(previous, 'closings')
     
-    # Calculate metrics
-    curr_cpm = (curr_spend / curr_impressions * 1000) if curr_impressions > 0 else 0
-    curr_cpc = (curr_spend / curr_clicks) if curr_clicks > 0 else 0
-    curr_ctr = (curr_clicks / curr_impressions * 100) if curr_impressions > 0 else 0
+    # Calculate metrics - Updated to use available fields
+    curr_cpm = safe_get(current, 'cpm')  # Use the pre-calculated CPM from queries
+    curr_cpc = safe_get(current, 'cpc')  # Use the pre-calculated CPC from queries  
+    curr_ctr = safe_get(current, 'ctr')  # Use the pre-calculated CTR from queries
     curr_estimate_cvr = (curr_estimates / curr_leads * 100) if curr_leads > 0 else 0
     curr_closings_cvr = (curr_closings / curr_estimates * 100) if curr_estimates > 0 else 0
     
-    prev_cpm = (prev_spend / prev_impressions * 1000) if prev_impressions > 0 else 0
-    prev_cpc = (prev_spend / prev_clicks) if prev_clicks > 0 else 0
-    prev_ctr = (prev_clicks / prev_impressions * 100) if prev_impressions > 0 else 0
+    prev_cpm = safe_get(previous, 'cpm')  # Use the pre-calculated CPM from queries
+    prev_cpc = safe_get(previous, 'cpc')  # Use the pre-calculated CPC from queries
+    prev_ctr = safe_get(previous, 'ctr')  # Use the pre-calculated CTR from queries
     prev_estimate_cvr = (prev_estimates / prev_leads * 100) if prev_leads > 0 else 0
     prev_closings_cvr = (prev_closings / prev_estimates * 100) if prev_estimates > 0 else 0
     
@@ -347,11 +403,25 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
                 'meta_spend': float(meta.get('spend', 0) or 0),
                 'meta_impressions': float(meta.get('impressions', 0) or 0),
                 'meta_clicks': float(meta.get('clicks', 0) or 0),
+                'meta_reach': float(meta.get('reach', 0) or 0),
+                'meta_leads': float(meta.get('leads', 0) or 0),
+                'meta_purchases': float(meta.get('purchases', 0) or 0),
+                'meta_landing_page_views': float(meta.get('landing_page_views', 0) or 0),
+                'meta_avg_ctr': float(meta.get('avg_ctr', 0) or 0),
+                'meta_avg_cpc': float(meta.get('avg_cpc', 0) or 0),
+                'meta_avg_cpm': float(meta.get('avg_cpm', 0) or 0),
+                'meta_cost_per_lead': float(meta.get('cost_per_lead', 0) or 0),
                 
                 # Google metrics  
                 'google_spend': float(google.get('spend', 0) or 0),
                 'google_impressions': float(google.get('impressions', 0) or 0),
                 'google_clicks': float(google.get('clicks', 0) or 0),
+                'google_conversions': float(google.get('conversions', 0) or 0),
+                'google_avg_ctr_percent': float(google.get('avg_ctr_percent', 0) or 0),
+                'google_avg_cpc': float(google.get('avg_cpc', 0) or 0),
+                'google_avg_cpm': float(google.get('avg_cpm', 0) or 0),
+                'google_avg_cpa': float(google.get('avg_cpa', 0) or 0),
+                'google_avg_roas': float(google.get('avg_roas', 0) or 0),
                 
                 # Hex funnel metrics (applies to both channels)
                 'total_leads': float(hex_data.get('total_leads', 0) or 0),
@@ -381,6 +451,9 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
                 'spend': cd['meta_spend'],
                 'impressions': cd['meta_impressions'], 
                 'clicks': cd['meta_clicks'],
+                'ctr': cd['meta_avg_ctr'],  # Meta has ctr as percentage already
+                'cpc': cd['meta_avg_cpc'],
+                'cpm': cd['meta_avg_cpm'],
                 'leads': cd['total_leads'] * 0.6,  # Assume 60% of leads are from Meta
                 'estimates': cd['total_estimates'] * 0.6,  # Assume 60% of estimates are from Meta
                 'closings': cd['total_closings'] * 0.6  # Assume 60% of closings are from Meta
@@ -391,6 +464,9 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
                 'spend': cd['google_spend'],
                 'impressions': cd['google_impressions'],
                 'clicks': cd['google_clicks'], 
+                'ctr': cd['google_avg_ctr_percent'],  # Google has ctr_percent field
+                'cpc': cd['google_avg_cpc'],
+                'cpm': cd['google_avg_cpm'],
                 'leads': cd['total_leads'] * 0.4,  # Assume 40% of leads are from Google
                 'estimates': cd['total_estimates'] * 0.4,  # Assume 40% of estimates are from Google
                 'closings': cd['total_closings'] * 0.4  # Assume 40% of closings are from Google
