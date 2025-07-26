@@ -244,9 +244,9 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
                 # Get corresponding meta data for paid-social
                 medium_meta = meta_df if medium == 'paid-social' else pd.DataFrame()
                 
-                total_spend = medium_meta['spend'].sum() if not medium_meta.empty else 0
-                total_leads = medium_funnel['leads'].sum()
-                total_estimates = medium_funnel['estimates'].sum()
+                total_spend = float(medium_meta['spend'].sum()) if not medium_meta.empty else 0.0
+                total_leads = int(medium_funnel['leads'].sum())
+                total_estimates = int(medium_funnel['estimates'].sum())
                 
                 group_key = 'paid-social' if medium == 'paid-social' else 'paid-search-video'
                 
@@ -266,8 +266,8 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
         # Calculate overall metrics
         for group in results:
             metrics = results[group]
-            metrics['avg_cpa'] = metrics['total_spend'] / metrics['total_leads'] if metrics['total_leads'] > 0 else 0
-            metrics['conversion_rate'] = (metrics['total_estimates'] / metrics['total_leads'] * 100) if metrics['total_leads'] > 0 else 0
+            metrics['avg_cpa'] = float(metrics['total_spend'] / metrics['total_leads']) if metrics['total_leads'] > 0 else 0.0
+            metrics['conversion_rate'] = float((metrics['total_estimates'] / metrics['total_leads'] * 100)) if metrics['total_leads'] > 0 else 0.0
 
         # Generate AI insights using Claude
         if results:
@@ -342,7 +342,7 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
                     for group, metrics in results.items()
                 ],
                 "summary": {
-                    "total_records_analyzed": len(funnel_df),
+                    "total_records_analyzed": int(len(funnel_df)),
                     "date_range": f"{since_date} to {until_date}",
                     "data_sources": ["hex_data", "meta_data"]
                 },
