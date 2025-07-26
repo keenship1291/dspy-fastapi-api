@@ -1,4 +1,4 @@
-# marketing_analytics.py - FIXED VERSION
+# marketing_analytics.py - V1 WITH FIXED META SPEND JOIN
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Dict, Optional, Any
@@ -109,7 +109,7 @@ marketing_router = APIRouter(prefix="/marketing", tags=["marketing"])
 async def marketing_root():
     return {
         "message": "Marketing Analytics API",
-        "version": "2.0.0",
+        "version": "1.0.1",
         "status": "running",
         "bigquery_available": BIGQUERY_AVAILABLE,
         "database_available": SessionLocal is not None,
@@ -172,8 +172,79 @@ async def test_bigquery_connection():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"BigQuery test failed: {str(e)}")
 
+@marketing_router.get("/debug-mapping/{date}")
+async def debug_mapping_coverage(date: str):
+    """Debug mapping table coverage for a specific date"""
+    try:
+        if not BIGQUERY_AVAILABLE or not bigquery_client:
+            return {"error": "BigQuery not available"}
+        
+        # Check mapping coverage for paid-social campaigns
+        mapping_query = f"""
+        WITH hex_campaigns AS (
+            SELECT DISTINCT utm_campaign
+            FROM `{PROJECT_ID}.{DATASET_ID}.hex_data`
+            WHERE date = '{date}' AND utm_medium = 'paid-social'
+        ),
+        mapping_coverage AS (
+            SELECT 
+                h.utm_campaign,
+                m.campaign_name_mapped,
+                m.adset_name_mapped,
+                CASE WHEN m.campaign_name_mapped IS NOT NULL THEN 'Mapped' ELSE 'Not Mapped' END as mapping_status
+            FROM hex_campaigns h
+            LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.meta_data_mapping` m ON h.utm_campaign = m.utm_campaign
+        )
+        SELECT * FROM mapping_coverage ORDER BY mapping_status, utm_campaign
+        """
+        
+        # Check Meta data for the same date
+        meta_check_query = f"""
+        SELECT 
+            campaign_name,
+            SUM(SAFE_CAST(spend AS FLOAT64)) as total_spend,
+            COUNT(*) as records
+        FROM `{PROJECT_ID}.{DATASET_ID}.meta_data`
+        WHERE date = '{date}'
+        GROUP BY campaign_name
+        ORDER BY total_spend DESC
+        """
+        
+        # Check hex_data for paid-social on that date
+        hex_check_query = f"""
+        SELECT 
+            utm_campaign,
+            SUM(leads) as leads,
+            SUM(estimates) as estimates
+        FROM `{PROJECT_ID}.{DATASET_ID}.hex_data`
+        WHERE date = '{date}' AND utm_medium = 'paid-social'
+        GROUP BY utm_campaign
+        ORDER BY leads DESC
+        """
+        
+        mapping_result = bigquery_client.query(mapping_query).to_dataframe()
+        meta_result = bigquery_client.query(meta_check_query).to_dataframe()
+        hex_result = bigquery_client.query(hex_check_query).to_dataframe()
+        
+        return {
+            "date": date,
+            "mapping_coverage": mapping_result.to_dict('records'),
+            "meta_campaigns": meta_result.to_dict('records'),
+            "hex_paid_social_campaigns": hex_result.to_dict('records'),
+            "summary": {
+                "total_hex_paid_social_campaigns": len(hex_result),
+                "mapped_campaigns": len(mapping_result[mapping_result['mapping_status'] == 'Mapped']),
+                "unmapped_campaigns": len(mapping_result[mapping_result['mapping_status'] == 'Not Mapped']),
+                "total_meta_campaigns": len(meta_result),
+                "total_meta_spend": float(meta_result['total_spend'].sum()) if not meta_result.empty else 0
+            }
+        }
+        
+    except Exception as e:
+        return {"error": str(e)}
+
 def get_comprehensive_marketing_data(since_date: str, until_date: str):
-    """Get comprehensive marketing data from all tables with proper joins"""
+    """Get comprehensive marketing data from all tables with proper joins - FIXED VERSION"""
     
     # Main query that joins all tables and gets comprehensive metrics
     comprehensive_query = f"""
@@ -197,23 +268,27 @@ def get_comprehensive_marketing_data(since_date: str, until_date: str):
         GROUP BY date, utm_campaign, utm_medium, platform
     ),
     
-    -- Get Meta data  
+    -- Get Meta data (handle STRING conversions safely)
     meta_data AS (
         SELECT 
             date,
             campaign_name,
-            CAST(impressions AS INT64) as impressions,
-            CAST(clicks AS INT64) as clicks,
-            CAST(spend AS FLOAT64) as spend,
-            CAST(reach AS INT64) as reach,
-            CAST(landing_page_views AS INT64) as landing_page_views,
-            CAST(leads AS INT64) as meta_leads,
-            CAST(ctr AS FLOAT64) as ctr,
-            CAST(cpc AS FLOAT64) as cpc,
-            CAST(cpm AS FLOAT64) as cpm,
+            SAFE_CAST(impressions AS INT64) as impressions,
+            SAFE_CAST(clicks AS INT64) as clicks,
+            SAFE_CAST(spend AS FLOAT64) as spend,
+            SAFE_CAST(reach AS INT64) as reach,
+            SAFE_CAST(landing_page_views AS INT64) as landing_page_views,
+            SAFE_CAST(leads AS INT64) as meta_leads,
+            SAFE_CAST(ctr AS FLOAT64) as ctr,
+            SAFE_CAST(cpc AS FLOAT64) as cpc,
+            SAFE_CAST(cpm AS FLOAT64) as cpm,
             platform as meta_platform
         FROM `{PROJECT_ID}.{DATASET_ID}.meta_data`
         WHERE date BETWEEN '{since_date}' AND '{until_date}'
+            AND impressions IS NOT NULL 
+            AND impressions != ''
+            AND spend IS NOT NULL 
+            AND spend != ''
     ),
     
     -- Get Google data
@@ -234,7 +309,7 @@ def get_comprehensive_marketing_data(since_date: str, until_date: str):
         WHERE date BETWEEN '{since_date}' AND '{until_date}'
     ),
     
-    -- Get mapping data (correct table name)
+    -- Get mapping data
     mapping_data AS (
         SELECT 
             utm_campaign,
@@ -243,7 +318,7 @@ def get_comprehensive_marketing_data(since_date: str, until_date: str):
         FROM `{PROJECT_ID}.{DATASET_ID}.meta_data_mapping`
     )
     
-    -- Main join query
+    -- Main join query - FIXED VERSION
     SELECT 
         f.date,
         f.utm_campaign,
@@ -258,37 +333,37 @@ def get_comprehensive_marketing_data(since_date: str, until_date: str):
         f.total_rpts,
         
         -- Meta metrics (for paid-social only, using mapping table)
-        COALESCE(m.impressions, 0) as meta_impressions,
-        COALESCE(m.clicks, 0) as meta_clicks,
-        COALESCE(m.spend, 0) as meta_spend,
-        COALESCE(m.reach, 0) as meta_reach,
-        COALESCE(m.landing_page_views, 0) as meta_landing_page_views,
-        COALESCE(m.ctr, 0) as meta_ctr,
-        COALESCE(m.cpc, 0) as meta_cpc,
-        COALESCE(m.cpm, 0) as meta_cpm,
+        CASE WHEN f.utm_medium = 'paid-social' THEN COALESCE(m.impressions, 0) ELSE 0 END as meta_impressions,
+        CASE WHEN f.utm_medium = 'paid-social' THEN COALESCE(m.clicks, 0) ELSE 0 END as meta_clicks,
+        CASE WHEN f.utm_medium = 'paid-social' THEN COALESCE(m.spend, 0) ELSE 0 END as meta_spend,
+        CASE WHEN f.utm_medium = 'paid-social' THEN COALESCE(m.reach, 0) ELSE 0 END as meta_reach,
+        CASE WHEN f.utm_medium = 'paid-social' THEN COALESCE(m.landing_page_views, 0) ELSE 0 END as meta_landing_page_views,
+        CASE WHEN f.utm_medium = 'paid-social' THEN COALESCE(m.ctr, 0) ELSE 0 END as meta_ctr,
+        CASE WHEN f.utm_medium = 'paid-social' THEN COALESCE(m.cpc, 0) ELSE 0 END as meta_cpc,
+        CASE WHEN f.utm_medium = 'paid-social' THEN COALESCE(m.cpm, 0) ELSE 0 END as meta_cpm,
         
         -- Google metrics (for paid-search/paid-video, direct join on utm_campaign = campaign_name)
-        COALESCE(g.spend_usd, 0) as google_spend,
-        COALESCE(g.clicks, 0) as google_clicks,
-        COALESCE(g.impressions, 0) as google_impressions,
-        COALESCE(g.conversions, 0) as google_conversions,
-        COALESCE(g.cpa_usd, 0) as google_cpa,
-        COALESCE(g.ctr_percent, 0) as google_ctr,
-        COALESCE(g.cpc_usd, 0) as google_cpc,
-        COALESCE(g.roas_percent, 0) as google_roas,
+        CASE WHEN f.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(g.spend_usd, 0) ELSE 0 END as google_spend,
+        CASE WHEN f.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(g.clicks, 0) ELSE 0 END as google_clicks,
+        CASE WHEN f.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(g.impressions, 0) ELSE 0 END as google_impressions,
+        CASE WHEN f.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(g.conversions, 0) ELSE 0 END as google_conversions,
+        CASE WHEN f.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(g.cpa_usd, 0) ELSE 0 END as google_cpa,
+        CASE WHEN f.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(g.ctr_percent, 0) ELSE 0 END as google_ctr,
+        CASE WHEN f.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(g.cpc_usd, 0) ELSE 0 END as google_cpc,
+        CASE WHEN f.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(g.roas_percent, 0) ELSE 0 END as google_roas,
         
         -- Mapping info (only for Meta)
-        map.campaign_name_mapped,
-        map.adset_name_mapped
+        CASE WHEN f.utm_medium = 'paid-social' THEN map.campaign_name_mapped ELSE NULL END as campaign_name_mapped,
+        CASE WHEN f.utm_medium = 'paid-social' THEN map.adset_name_mapped ELSE NULL END as adset_name_mapped
         
     FROM funnel_data f
-    -- Left join mapping only for paid-social
-    LEFT JOIN mapping_data map ON f.utm_campaign = map.utm_campaign 
-        AND f.utm_medium = 'paid-social'
-    -- Meta data join using mapping table for paid-social
+    -- Left join mapping for all campaigns (not just paid-social)
+    LEFT JOIN mapping_data map ON f.utm_campaign = map.utm_campaign
+    -- Meta data join using mapping table, only when mapping exists and medium is paid-social
     LEFT JOIN meta_data m ON f.date = m.date 
         AND map.campaign_name_mapped = m.campaign_name
         AND f.utm_medium = 'paid-social'
+        AND map.campaign_name_mapped IS NOT NULL
     -- Google data direct join on utm_campaign for paid-search/paid-video
     LEFT JOIN google_data g ON f.date = g.date 
         AND f.utm_campaign = g.campaign_name
@@ -318,13 +393,12 @@ def calculate_week_comparisons(df, target_date):
         if data.empty:
             return {}
         
-        # Filter data by channel (exclude Bing completely)
+        # Filter data by channel
         if channel_filter == 'paid-social':
             filtered_data = data[data['utm_medium'] == 'paid-social']
         elif channel_filter == 'paid-search-video':
             filtered_data = data[data['utm_medium'].isin(['paid-search', 'paid-video'])]
         else:
-            # For combined calculations, exclude any Bing data
             filtered_data = data[data['utm_medium'].isin(['paid-social', 'paid-search', 'paid-video'])]
         
         if filtered_data.empty:
@@ -372,9 +446,15 @@ def calculate_week_comparisons(df, target_date):
     
     def calculate_change(current, previous, metric):
         """Calculate percentage change between periods"""
-        if previous.get(metric, 0) == 0:
-            return 0.0 if current.get(metric, 0) == 0 else 100.0
-        return float((current.get(metric, 0) - previous.get(metric, 0)) / previous.get(metric, 0) * 100)
+        current_val = current.get(metric, 0)
+        previous_val = previous.get(metric, 0)
+        
+        if previous_val == 0:
+            if current_val == 0:
+                return 0.0
+            else:
+                return 100.0  # If previous was 0 but current has value, it's 100% increase
+        return float((current_val - previous_val) / previous_val * 100)
     
     def format_comparison_by_channel(current_metrics, previous_metrics, period_name, channel_name):
         """Format comparison in the requested bullet point format for specific channel"""
@@ -397,7 +477,7 @@ def calculate_week_comparisons(df, target_date):
         # Format with + or - signs
         def format_change(value, is_cvr=False):
             if is_cvr:
-                return f"({value:+.1f}%)" if abs(value) > 0.1 else "(0.0%)"
+                return f"({value:+.1f}pp)" if abs(value) > 0.1 else "(0.0pp)"  # pp = percentage points
             else:
                 return f"({value:+.1f}%)" if abs(value) > 0.1 else "(0.0%)"
         
@@ -473,49 +553,6 @@ def calculate_week_comparisons(df, target_date):
         }
     }
 
-@marketing_router.get("/debug-data")
-async def debug_data_sources():
-    """Debug endpoint to check data in each table"""
-    try:
-        if not BIGQUERY_AVAILABLE or not bigquery_client:
-            return {"error": "BigQuery not available"}
-        
-        # Check hex_data
-        hex_query = f"""
-        SELECT utm_medium, COUNT(*) as records, SUM(leads) as total_leads
-        FROM `{PROJECT_ID}.{DATASET_ID}.hex_data`
-        WHERE date >= '2025-07-20'
-        GROUP BY utm_medium
-        ORDER BY utm_medium
-        """
-        
-        # Check google_data  
-        google_query = f"""
-        SELECT COUNT(*) as records, SUM(spend_usd) as total_spend
-        FROM `{PROJECT_ID}.{DATASET_ID}.google_data`
-        WHERE date >= '2025-07-20'
-        """
-        
-        # Check meta_data
-        meta_query = f"""
-        SELECT COUNT(*) as records, SUM(CAST(spend AS FLOAT64)) as total_spend
-        FROM `{PROJECT_ID}.{DATASET_ID}.meta_data`
-        WHERE date >= '2025-07-20'
-        """
-        
-        hex_result = bigquery_client.query(hex_query).to_dataframe()
-        google_result = bigquery_client.query(google_query).to_dataframe()
-        meta_result = bigquery_client.query(meta_query).to_dataframe()
-        
-        return {
-            "hex_data": hex_result.to_dict('records'),
-            "google_data": google_result.to_dict('records'),
-            "meta_data": meta_result.to_dict('records')
-        }
-        
-    except Exception as e:
-        return {"error": str(e)}
-
 @marketing_router.post("/analyze-trends", response_model=TrendAnalysisResponse)
 async def analyze_marketing_trends(request: TrendAnalysisRequest):
     """Comprehensive marketing trends analysis with week-over-week comparisons"""
@@ -559,7 +596,7 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
                         'total_rpts': 0, 'total_clicks': 0, 'total_impressions': 0, 'campaigns': []
                     }
                 
-                # Use appropriate spend source (no Bing filtering needed)
+                # Use appropriate spend source
                 spend = float(medium_data['meta_spend'].sum()) if medium == 'paid-social' else float(medium_data['google_spend'].sum())
                 clicks = int(medium_data['meta_clicks'].sum()) if medium == 'paid-social' else int(medium_data['google_clicks'].sum())
                 impressions = int(medium_data['meta_impressions'].sum()) if medium == 'paid-social' else int(medium_data['google_impressions'].sum())
