@@ -417,11 +417,10 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
                 'google_impressions': float(google.get('impressions', 0) or 0),
                 'google_clicks': float(google.get('clicks', 0) or 0),
                 'google_conversions': float(google.get('conversions', 0) or 0),
-                'google_avg_ctr_percent': float(google.get('avg_ctr_percent', 0) or 0),
-                'google_avg_cpc': float(google.get('avg_cpc', 0) or 0),
-                'google_avg_cpm': float(google.get('avg_cpm', 0) or 0),
-                'google_avg_cpa': float(google.get('avg_cpa', 0) or 0),
-                'google_avg_roas': float(google.get('avg_roas', 0) or 0),
+                'google_calculated_ctr': float(google.get('calculated_ctr', 0) or 0),
+                'google_calculated_cpc': float(google.get('calculated_cpc', 0) or 0),
+                'google_calculated_cpm': float(google.get('calculated_cpm', 0) or 0),
+                'google_calculated_cpa': float(google.get('calculated_cpa', 0) or 0),
                 
                 # Hex funnel metrics (applies to both channels)
                 'total_leads': float(hex_data.get('total_leads', 0) or 0),
@@ -464,9 +463,9 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
                 'spend': cd['google_spend'],
                 'impressions': cd['google_impressions'],
                 'clicks': cd['google_clicks'], 
-                'ctr': cd['google_avg_ctr_percent'],  # Google has ctr_percent field
-                'cpc': cd['google_avg_cpc'],
-                'cpm': cd['google_avg_cpm'],
+                'ctr': cd['google_calculated_ctr'],  # Use calculated CTR
+                'cpc': cd['google_calculated_cpc'],  # Use calculated CPC
+                'cpm': cd['google_calculated_cpm'],  # Use calculated CPM
                 'leads': cd['total_leads'] * 0.4,  # Assume 40% of leads are from Google
                 'estimates': cd['total_estimates'] * 0.4,  # Assume 40% of estimates are from Google
                 'closings': cd['total_closings'] * 0.4  # Assume 40% of closings are from Google
