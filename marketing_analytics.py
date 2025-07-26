@@ -65,7 +65,7 @@ async def marketing_root():
     }
 
 def get_comprehensive_data():
-    """Get comprehensive data using proper joined queries like the SQL examples"""
+    """Get comprehensive data using separate queries first to debug, then try joins"""
     
     # Calculate date ranges
     current_date = date.today()  # 2025-07-26
@@ -85,96 +85,136 @@ def get_comprehensive_data():
     print(f"DEBUG: Last 7 days: {last_7_days_start} to {last_7_days_end}")
     print(f"DEBUG: Previous 7 days: {previous_7_days_start} to {previous_7_days_end}")
     
-    # Base query template using proper joins like your SQL examples
-    base_query_template = """
-    SELECT 
-      '{period}' as period,
-      
-      -- Hex Funnel Metrics
-      SUM(h.leads) as hex_leads,
-      SUM(h.start_flows) as hex_start_flows,
-      SUM(h.estimates) as hex_estimates,
-      SUM(h.closings) as hex_closings,
-      SUM(h.funded) as hex_funded,
-      SUM(h.rpts) as hex_rpts,
-      
-      -- Meta Advertising Metrics
-      SUM(SAFE_CAST(m.spend AS FLOAT64)) as meta_spend,
-      SUM(SAFE_CAST(m.impressions AS INT64)) as meta_impressions,
-      SUM(SAFE_CAST(m.clicks AS INT64)) as meta_clicks,
-      SUM(SAFE_CAST(m.leads AS INT64)) as meta_leads,
-      SUM(SAFE_CAST(m.purchases AS INT64)) as meta_purchases,
-      SUM(SAFE_CAST(m.landing_page_views AS INT64)) as meta_landing_page_views,
-      AVG(SAFE_CAST(m.ctr AS FLOAT64)) as meta_avg_ctr,
-      AVG(SAFE_CAST(m.cpc AS FLOAT64)) as meta_avg_cpc,
-      AVG(SAFE_CAST(m.cpm AS FLOAT64)) as meta_avg_cpm,
-      
-      -- Google Advertising Metrics
-      SUM(g.spend_usd) as google_spend,
-      SUM(g.impressions) as google_impressions,
-      SUM(g.clicks) as google_clicks,
-      SUM(g.conversions) as google_conversions,
-      AVG(g.ctr_percent) as google_avg_ctr,
-      AVG(g.cpc_usd) as google_avg_cpc,
-      AVG(g.cpm_usd) as google_avg_cpm,
-      AVG(g.cpa_usd) as google_avg_cpa,
-      
-      -- Combined Spend
-      SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd) as total_ad_spend,
-      
-      -- Conversion Rates
-      SAFE_DIVIDE(SUM(h.start_flows), SUM(h.leads)) * 100 as lead_to_start_flow_rate,
-      SAFE_DIVIDE(SUM(h.estimates), SUM(h.start_flows)) * 100 as start_flow_to_estimate_rate,
-      SAFE_DIVIDE(SUM(h.closings), SUM(h.estimates)) * 100 as estimate_to_closing_rate,
-      SAFE_DIVIDE(SUM(h.funded), SUM(h.closings)) * 100 as closing_to_funded_rate,
-      SAFE_DIVIDE(SUM(h.funded), SUM(h.leads)) * 100 as overall_lead_to_funded_rate,
-      
-      -- Cost Metrics
-      SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd), SUM(h.leads)) as cost_per_lead,
-      SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd), SUM(h.funded)) as cost_per_funded,
-      SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)), SUM(h.leads)) as meta_cost_per_lead,
-      SAFE_DIVIDE(SUM(g.spend_usd), SUM(h.leads)) as google_cost_per_lead,
-      
-      -- CTR
-      SAFE_DIVIDE(SUM(SAFE_CAST(m.clicks AS INT64)) + SUM(g.clicks), SUM(SAFE_CAST(m.impressions AS INT64)) + SUM(g.impressions)) * 100 as overall_ctr
-
-    FROM `{project_id}.{dataset_id}.hex_data` h
-    LEFT JOIN `{project_id}.{dataset_id}.meta_data_mapping` mm ON h.utm_campaign = mm.utm_campaign
-    LEFT JOIN `{project_id}.{dataset_id}.meta_data` m ON mm.adset_name_mapped = m.adset_name AND h.date = m.date
-    LEFT JOIN `{project_id}.{dataset_id}.google_data` g ON h.utm_campaign = g.campaign_name AND h.date = g.date
-    LEFT JOIN `{project_id}.{dataset_id}.google_history_data` gh ON g.campaign_name = gh.campaign_name
-    WHERE {date_filter}
-    """
-    
-    # Define queries for each period
-    queries = {
-        'yesterday': base_query_template.format(
-            period='Yesterday',
-            project_id=PROJECT_ID,
-            dataset_id=DATASET_ID,
-            date_filter=f'h.date = "{yesterday}"'
-        ),
-        'same_day_last_week': base_query_template.format(
-            period='Same Day Last Week',
-            project_id=PROJECT_ID,
-            dataset_id=DATASET_ID,
-            date_filter=f'h.date = "{same_day_last_week}"'
-        ),
-        'last_7_days': base_query_template.format(
-            period='Last 7 Days',
-            project_id=PROJECT_ID,
-            dataset_id=DATASET_ID,
-            date_filter=f'h.date BETWEEN "{last_7_days_start}" AND "{last_7_days_end}"'
-        ),
-        'previous_7_days': base_query_template.format(
-            period='Previous 7 Days',
-            project_id=PROJECT_ID,
-            dataset_id=DATASET_ID,
-            date_filter=f'h.date BETWEEN "{previous_7_days_start}" AND "{previous_7_days_end}"'
-        )
+    # First, let's check what data exists in each table for debugging
+    debug_queries = {
+        'hex_yesterday': f"""
+            SELECT COUNT(*) as count, SUM(leads) as total_leads, SUM(spend) as total_spend 
+            FROM `{PROJECT_ID}.{DATASET_ID}.hex_data` 
+            WHERE date = "{yesterday}"
+        """,
+        'meta_yesterday': f"""
+            SELECT COUNT(*) as count, SUM(SAFE_CAST(spend AS FLOAT64)) as total_spend 
+            FROM `{PROJECT_ID}.{DATASET_ID}.meta_data` 
+            WHERE date = "{yesterday}"
+        """,
+        'google_yesterday': f"""
+            SELECT COUNT(*) as count, SUM(spend_usd) as total_spend 
+            FROM `{PROJECT_ID}.{DATASET_ID}.google_data` 
+            WHERE date = "{yesterday}"
+        """
     }
     
-    # Execute all queries
+    print("=== DEBUG: Checking individual tables ===")
+    for table_name, query in debug_queries.items():
+        try:
+            result = bigquery_client.query(query).to_dataframe()
+            if not result.empty:
+                print(f"{table_name}: {result.iloc[0].to_dict()}")
+            else:
+                print(f"{table_name}: No data")
+        except Exception as e:
+            print(f"{table_name}: Error - {e}")
+    
+    # Simplified approach - get data from each table separately first
+    def get_period_data(date_filter, period_name):
+        """Get data for a specific period from each table separately"""
+        
+        # Hex data
+        hex_query = f"""
+            SELECT 
+                SUM(leads) as hex_leads,
+                SUM(start_flows) as hex_start_flows,
+                SUM(estimates) as hex_estimates,
+                SUM(closings) as hex_closings,
+                SUM(funded) as hex_funded,
+                SUM(rpts) as hex_rpts,
+                SAFE_DIVIDE(SUM(start_flows), SUM(leads)) * 100 as lead_to_start_flow_rate,
+                SAFE_DIVIDE(SUM(estimates), SUM(start_flows)) * 100 as start_flow_to_estimate_rate,
+                SAFE_DIVIDE(SUM(closings), SUM(estimates)) * 100 as estimate_to_closing_rate,
+                SAFE_DIVIDE(SUM(funded), SUM(closings)) * 100 as closing_to_funded_rate,
+                SAFE_DIVIDE(SUM(funded), SUM(leads)) * 100 as overall_lead_to_funded_rate
+            FROM `{PROJECT_ID}.{DATASET_ID}.hex_data` 
+            WHERE {date_filter}
+            AND utm_medium IN ('paid-social', 'paid-search', 'paid-video')
+        """
+        
+        # Meta data
+        meta_query = f"""
+            SELECT 
+                SUM(SAFE_CAST(spend AS FLOAT64)) as meta_spend,
+                SUM(SAFE_CAST(impressions AS INT64)) as meta_impressions,
+                SUM(SAFE_CAST(clicks AS INT64)) as meta_clicks,
+                SUM(SAFE_CAST(leads AS INT64)) as meta_leads,
+                SUM(SAFE_CAST(purchases AS INT64)) as meta_purchases,
+                SUM(SAFE_CAST(landing_page_views AS INT64)) as meta_landing_page_views,
+                AVG(SAFE_CAST(ctr AS FLOAT64)) as meta_avg_ctr,
+                AVG(SAFE_CAST(cpc AS FLOAT64)) as meta_avg_cpc,
+                AVG(SAFE_CAST(cpm AS FLOAT64)) as meta_avg_cpm
+            FROM `{PROJECT_ID}.{DATASET_ID}.meta_data` 
+            WHERE {date_filter}
+        """
+        
+        # Google data
+        google_query = f"""
+            SELECT 
+                SUM(spend_usd) as google_spend,
+                SUM(impressions) as google_impressions,
+                SUM(clicks) as google_clicks,
+                SUM(conversions) as google_conversions,
+                AVG(ctr_percent) as google_avg_ctr,
+                AVG(cpc_usd) as google_avg_cpc,
+                AVG(cpm_usd) as google_avg_cpm,
+                AVG(cpa_usd) as google_avg_cpa
+            FROM `{PROJECT_ID}.{DATASET_ID}.google_data` 
+            WHERE {date_filter}
+        """
+        
+        result = {}
+        
+        # Execute each query
+        for query_name, query in [('hex', hex_query), ('meta', meta_query), ('google', google_query)]:
+            try:
+                df = bigquery_client.query(query).to_dataframe()
+                if not df.empty:
+                    for key, value in df.iloc[0].to_dict().items():
+                        if pd.isna(value):
+                            result[key] = 0
+                        elif hasattr(value, 'item'):
+                            result[key] = value.item()
+                        else:
+                            result[key] = value
+                else:
+                    print(f"No data from {query_name} query for {period_name}")
+            except Exception as e:
+                print(f"Error executing {query_name} query for {period_name}: {e}")
+        
+        # Calculate combined metrics
+        meta_spend = result.get('meta_spend', 0) or 0
+        google_spend = result.get('google_spend', 0) or 0
+        hex_leads = result.get('hex_leads', 0) or 0
+        hex_funded = result.get('hex_funded', 0) or 0
+        meta_impressions = result.get('meta_impressions', 0) or 0
+        meta_clicks = result.get('meta_clicks', 0) or 0
+        google_impressions = result.get('google_impressions', 0) or 0
+        google_clicks = result.get('google_clicks', 0) or 0
+        
+        result['total_ad_spend'] = meta_spend + google_spend
+        result['cost_per_lead'] = (meta_spend + google_spend) / hex_leads if hex_leads > 0 else 0
+        result['cost_per_funded'] = (meta_spend + google_spend) / hex_funded if hex_funded > 0 else 0
+        result['overall_ctr'] = ((meta_clicks + google_clicks) / (meta_impressions + google_impressions) * 100) if (meta_impressions + google_impressions) > 0 else 0
+        
+        print(f"DEBUG {period_name}: Total=${result['total_ad_spend']:,.0f}, Meta=${meta_spend:,.0f}, Google=${google_spend:,.0f}, Leads={hex_leads}")
+        
+        return result
+    
+    # Get data for each period
+    periods = {
+        'yesterday': f'date = "{yesterday}"',
+        'same_day_last_week': f'date = "{same_day_last_week}"',
+        'last_7_days': f'date BETWEEN "{last_7_days_start}" AND "{last_7_days_end}"',
+        'previous_7_days': f'date BETWEEN "{previous_7_days_start}" AND "{previous_7_days_end}"'
+    }
+    
     results = {
         'dates': {
             'yesterday': str(yesterday),
@@ -186,28 +226,9 @@ def get_comprehensive_data():
         }
     }
     
-    for period, query in queries.items():
-        print(f"DEBUG: Executing query for {period}")
-        try:
-            result_df = bigquery_client.query(query).to_dataframe()
-            if not result_df.empty:
-                results[period] = result_df.iloc[0].to_dict()
-                # Convert numpy types to Python types for JSON serialization
-                for key, value in results[period].items():
-                    if pd.isna(value):
-                        results[period][key] = 0
-                    elif hasattr(value, 'item'):  # numpy scalar
-                        results[period][key] = value.item()
-                    else:
-                        results[period][key] = value
-            else:
-                results[period] = {}
-            
-            print(f"DEBUG {period}: Total Spend=${results[period].get('total_ad_spend', 0):,.0f}, Meta=${results[period].get('meta_spend', 0):,.0f}, Google=${results[period].get('google_spend', 0):,.0f}")
-            
-        except Exception as e:
-            print(f"ERROR executing query for {period}: {e}")
-            results[period] = {}
+    # Get data for each period
+    for period_name, date_filter in periods.items():
+        results[period_name] = get_period_data(date_filter, period_name)
     
     return results
 
