@@ -234,7 +234,7 @@ def get_comprehensive_marketing_data(since_date: str, until_date: str):
         WHERE date BETWEEN '{since_date}' AND '{until_date}'
     ),
     
-    -- Get mapping data (only for Meta)
+    -- Get mapping data (correct table name)
     mapping_data AS (
         SELECT 
             utm_campaign,
@@ -300,7 +300,7 @@ def get_comprehensive_marketing_data(since_date: str, until_date: str):
     return bigquery_client.query(comprehensive_query).to_dataframe()
 
 def calculate_week_comparisons(df, target_date):
-    """Calculate yesterday vs same day last week and last week vs week before comparisons"""
+    """Calculate yesterday vs same day last week and last week vs week before comparisons by channel"""
     
     target_date = pd.to_datetime(target_date).date()
     yesterday = target_date - timedelta(days=1)
@@ -313,26 +313,38 @@ def calculate_week_comparisons(df, target_date):
     week_before_start = last_week_start - timedelta(days=7)
     week_before_end = last_week_end - timedelta(days=7)
     
-    comparisons = {}
-    
-    # Yesterday vs Same Day Last Week
-    yesterday_data = df[df['date'] == yesterday]
-    same_day_last_week_data = df[df['date'] == same_day_last_week]
-    
-    # Last Week vs Week Before
-    last_week_data = df[(df['date'] >= last_week_start) & (df['date'] <= last_week_end)]
-    week_before_data = df[(df['date'] >= week_before_start) & (df['date'] <= week_before_end)]
-    
-    def aggregate_metrics(data):
-        """Aggregate metrics for a time period"""
+    def aggregate_metrics_by_channel(data, channel_filter):
+        """Aggregate metrics for a specific channel"""
         if data.empty:
             return {}
         
-        total_spend = float(data['meta_spend'].sum() + data['google_spend'].sum())
-        total_clicks = int(data['meta_clicks'].sum() + data['google_clicks'].sum())
-        total_estimates = int(data['total_estimates'].sum())
-        total_closings = int(data['total_closings'].sum())
-        total_leads = int(data['total_leads'].sum())
+        # Filter data by channel
+        if channel_filter == 'paid-social':
+            filtered_data = data[data['utm_medium'] == 'paid-social']
+        elif channel_filter == 'paid-search-video':
+            filtered_data = data[
+                (data['utm_medium'].isin(['paid-search', 'paid-video'])) & 
+                (~data['utm_campaign'].str.contains('bing', case=False, na=False))
+            ]
+        elif channel_filter == 'bing':
+            filtered_data = data[data['utm_campaign'].str.contains('bing', case=False, na=False)]
+        else:
+            filtered_data = data
+        
+        if filtered_data.empty:
+            return {}
+        
+        # Use appropriate spend/click sources based on channel
+        if channel_filter == 'paid-social':
+            total_spend = float(filtered_data['meta_spend'].sum())
+            total_clicks = int(filtered_data['meta_clicks'].sum())
+        else:
+            total_spend = float(filtered_data['google_spend'].sum())
+            total_clicks = int(filtered_data['google_clicks'].sum())
+        
+        total_estimates = int(filtered_data['total_estimates'].sum())
+        total_closings = int(filtered_data['total_closings'].sum())
+        total_leads = int(filtered_data['total_leads'].sum())
         
         # Calculate conversion rates
         estimate_cvr = (total_estimates / total_leads * 100) if total_leads > 0 else 0.0
@@ -346,7 +358,7 @@ def calculate_week_comparisons(df, target_date):
             'total_leads': total_leads,
             'estimate_cvr': float(estimate_cvr),
             'closings_cvr': float(closings_cvr),
-            'days_count': int(data['date'].nunique())
+            'days_count': int(filtered_data['date'].nunique())
         }
     
     def calculate_change(current, previous, metric):
@@ -355,8 +367,11 @@ def calculate_week_comparisons(df, target_date):
             return 0.0 if current.get(metric, 0) == 0 else 100.0
         return float((current.get(metric, 0) - previous.get(metric, 0)) / previous.get(metric, 0) * 100)
     
-    def format_comparison(current_metrics, previous_metrics, period_name):
-        """Format comparison in the requested bullet point format"""
+    def format_comparison_by_channel(current_metrics, previous_metrics, period_name, channel_name):
+        """Format comparison in the requested bullet point format for specific channel"""
+        if not current_metrics:
+            return f"\n{channel_name} - {period_name}\n• No data available for this period"
+        
         spend_change = calculate_change(current_metrics, previous_metrics, 'total_spend')
         clicks_change = calculate_change(current_metrics, previous_metrics, 'total_clicks')
         estimates_change = calculate_change(current_metrics, previous_metrics, 'total_estimates')
@@ -374,7 +389,7 @@ def calculate_week_comparisons(df, target_date):
                 return f"({value:+.1f}%)" if abs(value) > 0.1 else "(0.0%)"
         
         return f"""
-{period_name}
+{channel_name} - {period_name}
 • Total Spend: ${current_metrics.get('total_spend', 0):,.0f} {format_change(spend_change)}
 • Total Clicks: {current_metrics.get('total_clicks', 0):,} {format_change(clicks_change)}
 • Estimate CVR: {current_metrics.get('estimate_cvr', 0):.1f}% {format_change(estimate_cvr_change, True)}
@@ -383,71 +398,57 @@ def calculate_week_comparisons(df, target_date):
 • Total Closings: {current_metrics.get('total_closings', 0):,} {format_change(closings_change)}
 """
     
-    # Yesterday comparisons
-    yesterday_metrics = aggregate_metrics(yesterday_data)
-    same_day_last_week_metrics = aggregate_metrics(same_day_last_week_data)
+    # Get data for time periods
+    yesterday_data = df[df['date'] == yesterday]
+    same_day_last_week_data = df[df['date'] == same_day_last_week]
+    last_week_data = df[(df['date'] >= last_week_start) & (df['date'] <= last_week_end)]
+    week_before_data = df[(df['date'] >= week_before_start) & (df['date'] <= week_before_end)]
     
-    # Weekly comparisons
-    last_week_metrics = aggregate_metrics(last_week_data)
-    week_before_metrics = aggregate_metrics(week_before_data)
+    # Calculate for each channel
+    channels = ['paid-social', 'paid-search-video', 'bing']
+    channel_names = ['Paid Social', 'Paid Search & Video', 'Bing']
     
-    comparisons['formatted_comparisons'] = {
-        'yesterday_vs_same_day_last_week': format_comparison(
-            yesterday_metrics, same_day_last_week_metrics, "Yesterday vs Same Day Last Week"
-        ),
-        'last_7_days_vs_previous_7_days': format_comparison(
-            last_week_metrics, week_before_metrics, "Last 7 Days vs Previous 7 Days"
-        )
-    }
+    formatted_comparisons = {}
     
-    # Add raw metrics for AI analysis
-    comparisons['raw_metrics'] = {
-        'yesterday': yesterday_metrics,
-        'same_day_last_week': same_day_last_week_metrics,
-        'last_week': last_week_metrics,
-        'week_before': week_before_metrics
-    }
-    
-    # Calculate medium-specific changes for narrative
-    comparisons['medium_changes'] = {}
-    for medium in ['paid-social', 'paid-search', 'paid-video']:
-        medium_yesterday = yesterday_data[yesterday_data['utm_medium'] == medium]
-        medium_same_day_last_week = same_day_last_week_data[same_day_last_week_data['utm_medium'] == medium]
-        medium_last_week = last_week_data[last_week_data['utm_medium'] == medium]
-        medium_week_before = week_before_data[week_before_data['utm_medium'] == medium]
+    # Yesterday vs Same Day Last Week (by channel)
+    yesterday_comparisons = []
+    for channel, channel_name in zip(channels, channel_names):
+        yesterday_metrics = aggregate_metrics_by_channel(yesterday_data, channel)
+        same_day_last_week_metrics = aggregate_metrics_by_channel(same_day_last_week_data, channel)
         
-        group_key = 'paid-social' if medium == 'paid-social' else 'paid-search-video'
-        if group_key not in comparisons['medium_changes']:
-            comparisons['medium_changes'][group_key] = {
-                'yesterday_metrics': aggregate_metrics(pd.DataFrame()),
-                'last_week_metrics': aggregate_metrics(pd.DataFrame())
-            }
-        
-        # Aggregate for grouped mediums
-        if medium == 'paid-social':
-            comparisons['medium_changes'][group_key]['yesterday_metrics'] = aggregate_metrics(medium_yesterday)
-            comparisons['medium_changes'][group_key]['same_day_last_week_metrics'] = aggregate_metrics(medium_same_day_last_week)
-            comparisons['medium_changes'][group_key]['last_week_metrics'] = aggregate_metrics(medium_last_week)
-            comparisons['medium_changes'][group_key]['week_before_metrics'] = aggregate_metrics(medium_week_before)
-        else:
-            # Combine paid-search and paid-video
-            if 'yesterday_metrics' not in comparisons['medium_changes'][group_key] or not comparisons['medium_changes'][group_key]['yesterday_metrics']:
-                comparisons['medium_changes'][group_key]['yesterday_metrics'] = aggregate_metrics(medium_yesterday)
-                comparisons['medium_changes'][group_key]['same_day_last_week_metrics'] = aggregate_metrics(medium_same_day_last_week)
-                comparisons['medium_changes'][group_key]['last_week_metrics'] = aggregate_metrics(medium_last_week)
-                comparisons['medium_changes'][group_key]['week_before_metrics'] = aggregate_metrics(medium_week_before)
-            else:
-                # Add to existing metrics
-                current = comparisons['medium_changes'][group_key]['yesterday_metrics']
-                new = aggregate_metrics(medium_yesterday)
-                for key in ['total_spend', 'total_clicks', 'total_estimates', 'total_closings', 'total_leads']:
-                    current[key] = current.get(key, 0) + new.get(key, 0)
-                
-                # Recalculate CVRs
-                current['estimate_cvr'] = (current['total_estimates'] / current['total_leads'] * 100) if current['total_leads'] > 0 else 0.0
-                current['closings_cvr'] = (current['total_closings'] / current['total_estimates'] * 100) if current['total_estimates'] > 0 else 0.0
+        if yesterday_metrics:  # Only include channels that have data
+            comparison = format_comparison_by_channel(
+                yesterday_metrics, same_day_last_week_metrics, 
+                "Yesterday vs Same Day Last Week", channel_name
+            )
+            yesterday_comparisons.append(comparison)
     
-    return comparisons
+    formatted_comparisons['yesterday_vs_same_day_last_week'] = '\n'.join(yesterday_comparisons)
+    
+    # Last 7 Days vs Previous 7 Days (combined)
+    last_week_metrics = aggregate_metrics_by_channel(last_week_data, 'all')
+    week_before_metrics = aggregate_metrics_by_channel(week_before_data, 'all')
+    
+    formatted_comparisons['last_7_days_vs_previous_7_days'] = format_comparison_by_channel(
+        last_week_metrics, week_before_metrics, 
+        "Last 7 Days vs Previous 7 Days", "All Channels"
+    )
+    
+    return {
+        'formatted_comparisons': formatted_comparisons,
+        'raw_metrics': {
+            'yesterday_by_channel': {
+                channel: aggregate_metrics_by_channel(yesterday_data, channel) 
+                for channel in channels
+            },
+            'same_day_last_week_by_channel': {
+                channel: aggregate_metrics_by_channel(same_day_last_week_data, channel) 
+                for channel in channels
+            },
+            'last_week': last_week_metrics,
+            'week_before': week_before_metrics
+        }
+    }
 
 @marketing_router.get("/debug-data")
 async def debug_data_sources():
@@ -519,27 +520,57 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
         # Calculate week-over-week comparisons
         comparisons = calculate_week_comparisons(df, until_date)
         
-        # Group by medium and calculate comprehensive metrics
+        # Group by medium and calculate comprehensive metrics (including Bing separately)
         medium_analysis = {}
         
         for medium in ['paid-social', 'paid-search', 'paid-video']:
             medium_data = df[df['utm_medium'] == medium]
             
             if not medium_data.empty:
+                # Separate Bing from other paid-search/paid-video
+                if medium in ['paid-search', 'paid-video']:
+                    # Bing campaigns
+                    bing_data = medium_data[medium_data['utm_campaign'].str.contains('bing', case=False, na=False)]
+                    # Non-Bing campaigns  
+                    non_bing_data = medium_data[~medium_data['utm_campaign'].str.contains('bing', case=False, na=False)]
+                    
+                    # Process Bing separately
+                    if not bing_data.empty:
+                        if 'bing' not in medium_analysis:
+                            medium_analysis['bing'] = {
+                                'total_spend': 0.0, 'total_leads': 0, 'total_estimates': 0,
+                                'total_start_flows': 0, 'total_closings': 0, 'total_funded': 0,
+                                'total_rpts': 0, 'total_clicks': 0, 'total_impressions': 0, 'campaigns': []
+                            }
+                        
+                        # Add Bing metrics
+                        bing_spend = float(bing_data['google_spend'].sum())
+                        bing_clicks = int(bing_data['google_clicks'].sum())
+                        bing_impressions = int(bing_data['google_impressions'].sum())
+                        
+                        medium_analysis['bing']['total_spend'] += bing_spend
+                        medium_analysis['bing']['total_leads'] += int(bing_data['total_leads'].sum())
+                        medium_analysis['bing']['total_estimates'] += int(bing_data['total_estimates'].sum())
+                        medium_analysis['bing']['total_start_flows'] += int(bing_data['total_start_flows'].sum())
+                        medium_analysis['bing']['total_closings'] += int(bing_data['total_closings'].sum())
+                        medium_analysis['bing']['total_funded'] += int(bing_data['total_funded'].sum())
+                        medium_analysis['bing']['total_rpts'] += int(bing_data['total_rpts'].sum())
+                        medium_analysis['bing']['total_clicks'] += bing_clicks
+                        medium_analysis['bing']['total_impressions'] += bing_impressions
+                        medium_analysis['bing']['campaigns'].extend(bing_data['utm_campaign'].unique().tolist())
+                    
+                    # Process non-Bing as paid-search-video
+                    if not non_bing_data.empty:
+                        medium_data = non_bing_data
+                
+                # Process paid-social or non-Bing paid-search/video
                 group_key = 'paid-social' if medium == 'paid-social' else 'paid-search-video'
                 
                 if group_key not in medium_analysis:
                     medium_analysis[group_key] = {
-                        'total_spend': 0.0,
-                        'total_leads': 0,
-                        'total_estimates': 0,
-                        'total_start_flows': 0,
-                        'total_closings': 0,
-                        'total_funded': 0,
-                        'total_rpts': 0,
-                        'total_clicks': 0,
-                        'total_impressions': 0,
-                        'campaigns': []
+                        'total_spend': 0.0, 'total_leads': 0, 'total_estimates': 0,
+                        'total_start_flows': 0, 'total_closings': 0, 'total_funded': 0,
+                        'total_rpts': 0, 'total_clicks': 0, 'total_impressions': 0, 'campaigns': []
                     }
                 
                 # Use appropriate spend source
@@ -559,7 +590,7 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
                 medium_analysis[group_key]['total_impressions'] += impressions
                 medium_analysis[group_key]['campaigns'].extend(medium_data['utm_campaign'].unique().tolist())
         
-        # Calculate derived metrics
+        # Calculate derived metrics for all groups (including Bing)
         for group in medium_analysis:
             metrics = medium_analysis[group]
             metrics['avg_cpa'] = float(metrics['total_spend'] / metrics['total_leads']) if metrics['total_leads'] > 0 else 0.0
@@ -659,7 +690,7 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
                 "summary": {
                     "total_records_analyzed": int(len(df)),
                     "date_range": f"{since_date} to {until_date}",
-                    "data_sources": ["hex_data", "meta_data", "google_data", "meta_data_mapping"],
+                    "data_sources": ["hex_data", "meta_data", "google_data", "meta_mapping_table"],
                     "mediums_analyzed": list(medium_analysis.keys())
                 },
                 "analysis_metadata": {
