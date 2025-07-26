@@ -496,6 +496,66 @@ def calculate_week_comparisons(df, target_date):
         
         formatted_comparisons[period_type] = period_comparisons
     
+    # Yesterday vs Same Day Last Week (separate for each channel)
+    for period_type, period_name in [('yesterday_vs_same_day_last_week', 'Yesterday vs Same Day Last Week'), 
+                                     ('last_7_days_vs_previous_7_days', 'Last 7 Days vs Previous 7 Days')]:
+        
+        if period_type == 'yesterday_vs_same_day_last_week':
+            current_data = yesterday_data
+            previous_data = same_day_last_week_data
+            comparison_possible = can_do_daily_comparison
+        else:
+            current_data = last_week_data
+            previous_data = week_before_data
+            comparison_possible = can_do_weekly_comparison
+        
+        period_comparisons = []
+        for channel, channel_name in zip(channels, channel_names):
+            current_metrics = aggregate_metrics_by_channel(current_data, channel)
+            previous_metrics = aggregate_metrics_by_channel(previous_data, channel)
+            
+            if current_metrics:  # Only include channels that have data
+                comparison = format_comparison_by_channel(
+                    current_metrics, previous_metrics, period_name, channel_name, comparison_possible
+                )
+                period_comparisons.append(comparison)
+        
+        formatted_comparisons[period_type] = period_comparisons
+    
+    return {
+        'formatted_comparisons': formatted_comparisons,
+        'comparison_info': {
+            'can_do_daily_comparison': can_do_daily_comparison,
+            'can_do_weekly_comparison': can_do_weekly_comparison,
+            'days_of_data_available': days_of_data,
+            'data_start_date': str(data_start_date),
+            'dates_needed': {
+                'yesterday': str(yesterday),
+                'same_day_last_week': str(same_day_last_week),
+                'last_week_range': f"{last_week_start} to {last_week_end}",
+                'week_before_range': f"{week_before_start} to {week_before_end}"
+            }
+        },
+        'raw_metrics': {
+            'yesterday_by_channel': {
+                channel: aggregate_metrics_by_channel(yesterday_data, channel) 
+                for channel in channels
+            },
+            'same_day_last_week_by_channel': {
+                channel: aggregate_metrics_by_channel(same_day_last_week_data, channel) 
+                for channel in channels
+            },
+            'last_week_by_channel': {
+                channel: aggregate_metrics_by_channel(last_week_data, channel) 
+                for channel in channels
+            },
+            'week_before_by_channel': {
+                channel: aggregate_metrics_by_channel(week_before_data, channel) 
+                for channel in channels
+            }
+        }
+    }
+    
     return {
         'formatted_comparisons': formatted_comparisons,
         'comparison_info': {
