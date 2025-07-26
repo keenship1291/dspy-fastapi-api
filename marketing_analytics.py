@@ -240,7 +240,7 @@ def get_comprehensive_marketing_data(since_date: str, until_date: str):
             utm_campaign,
             campaign_name_mapped,
             adset_name_mapped
-        FROM `{PROJECT_ID}.{DATASET_ID}.meta_mapping_table`
+        FROM `{PROJECT_ID}.{DATASET_ID}.meta_data_mapping`
     )
     
     -- Main join query
@@ -659,7 +659,7 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
                 "summary": {
                     "total_records_analyzed": int(len(df)),
                     "date_range": f"{since_date} to {until_date}",
-                    "data_sources": ["hex_data", "meta_data", "google_data", "meta_mapping_table"],
+                    "data_sources": ["hex_data", "meta_data", "google_data", "meta_data_mapping"],
                     "mediums_analyzed": list(medium_analysis.keys())
                 },
                 "analysis_metadata": {
