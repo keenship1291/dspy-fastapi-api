@@ -1,3 +1,5 @@
+from google.cloud import bigquery
+import pandas as pd
 from fastapi import FastAPI, Request, HTTPException
 import os
 from datetime import datetime, timezone, timedelta
@@ -13,6 +15,7 @@ from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text, t
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.exc import IntegrityError
+from marketing_analytics import marketing_router
 
 # Load API key from environment variable (set in Railway dashboard)
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
@@ -353,21 +356,38 @@ class ResponseCreate(BaseModel):
     reasoning: Optional[str] = ""
 
 app = FastAPI()
-
+app.include_router(marketing_router)
 @app.get("/")
 def read_root():
     return {
-        "message": "Lease End AI Assistant - CENTRALIZED RULES",
-        "version": "31.0-CENTRALIZED-BUSINESS-RULES",
+        "message": "Lease End AI Assistant - CENTRALIZED RULES + Marketing Analytics",
+        "version": "32.0-WITH-MARKETING-ANALYTICS", 
         "training_examples": len(TRAINING_DATA),
         "status": "RUNNING",
-        "features": ["Centralized Business Rules", "Consistent Endpoints", "Simplified Architecture"],
-        "key_changes": [
-            "Centralized business rules for all endpoints",
-            "Consistent CTA and phone number logic",
-            "Single source of truth for guidelines",
-            "Eliminated endpoint inconsistencies"
-        ]
+        "features": [
+            "Centralized Business Rules", 
+            "Consistent Endpoints", 
+            "Simplified Architecture",
+            "Marketing Trends Analysis",  # NEW
+            "BigQuery Integration"        # NEW
+        ],
+        "endpoints": {
+            "ai_assistant": [
+                "/process-comment",
+                "/process-feedback", 
+                "/approve-response"
+            ],
+            "marketing_analytics": [    # NEW SECTION
+                "/marketing/analyze-trends",
+                "/marketing/trend-history",
+                "/marketing/test-bigquery"
+            ],
+            "data_management": [
+                "/fb-posts",
+                "/responses",
+                "/stats"
+            ]
+        }
     }
 
 @app.get("/ping")
