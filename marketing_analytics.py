@@ -197,27 +197,23 @@ def get_comprehensive_marketing_data(since_date: str, until_date: str):
         GROUP BY date, utm_campaign, utm_medium, platform
     ),
     
-    -- Get Meta data (handle STRING conversions safely)
+    -- Get Meta data  
     meta_data AS (
         SELECT 
             date,
             campaign_name,
-            SAFE_CAST(impressions AS INT64) as impressions,
-            SAFE_CAST(clicks AS INT64) as clicks,
-            SAFE_CAST(spend AS FLOAT64) as spend,
-            SAFE_CAST(reach AS INT64) as reach,
-            SAFE_CAST(landing_page_views AS INT64) as landing_page_views,
-            SAFE_CAST(leads AS INT64) as meta_leads,
-            SAFE_CAST(ctr AS FLOAT64) as ctr,
-            SAFE_CAST(cpc AS FLOAT64) as cpc,
-            SAFE_CAST(cpm AS FLOAT64) as cpm,
+            CAST(impressions AS INT64) as impressions,
+            CAST(clicks AS INT64) as clicks,
+            CAST(spend AS FLOAT64) as spend,
+            CAST(reach AS INT64) as reach,
+            CAST(landing_page_views AS INT64) as landing_page_views,
+            CAST(leads AS INT64) as meta_leads,
+            CAST(ctr AS FLOAT64) as ctr,
+            CAST(cpc AS FLOAT64) as cpc,
+            CAST(cpm AS FLOAT64) as cpm,
             platform as meta_platform
         FROM `{PROJECT_ID}.{DATASET_ID}.meta_data`
         WHERE date BETWEEN '{since_date}' AND '{until_date}'
-            AND impressions IS NOT NULL 
-            AND impressions != ''
-            AND spend IS NOT NULL 
-            AND spend != ''
     ),
     
     -- Get Google data
@@ -310,15 +306,6 @@ def calculate_week_comparisons(df, target_date):
     yesterday = target_date - timedelta(days=1)
     same_day_last_week = yesterday - timedelta(days=7)
     
-    # Debug: Print the dates being used and data availability
-    print(f"DEBUG: Target date: {target_date}")
-    print(f"DEBUG: Yesterday: {yesterday}")
-    print(f"DEBUG: Same day last week: {same_day_last_week}")
-    print(f"DEBUG: Data date range: {df['date'].min()} to {df['date'].max()}")
-    print(f"DEBUG: Available dates: {sorted(df['date'].unique())}")
-    print(f"DEBUG: Yesterday data count: {len(df[df['date'] == yesterday])}")
-    print(f"DEBUG: Same day last week data count: {len(df[df['date'] == same_day_last_week])}")
-    
     # Week ranges
     last_week_start = yesterday - timedelta(days=6)  # 7 days including yesterday
     last_week_end = yesterday
@@ -385,44 +372,14 @@ def calculate_week_comparisons(df, target_date):
     
     def calculate_change(current, previous, metric):
         """Calculate percentage change between periods"""
-        current_val = current.get(metric, 0)
-        previous_val = previous.get(metric, 0)
-        
-        # Debug output
-        print(f"DEBUG: Calculating change for {metric}: current={current_val}, previous={previous_val}")
-        
-        if previous_val == 0:
-            if current_val == 0:
-                return 0.0
-            else:
-                return 100.0  # If previous was 0 but current has value, it's 100% increase
-        return float((current_val - previous_val) / previous_val * 100)
+        if previous.get(metric, 0) == 0:
+            return 0.0 if current.get(metric, 0) == 0 else 100.0
+        return float((current.get(metric, 0) - previous.get(metric, 0)) / previous.get(metric, 0) * 100)
     
-    def format_comparison_by_channel(current_metrics, previous_metrics, period_name, channel_name, comparison_possible=True):
+    def format_comparison_by_channel(current_metrics, previous_metrics, period_name, channel_name):
         """Format comparison in the requested bullet point format for specific channel"""
         if not current_metrics:
             return f"\n{channel_name} - {period_name}\n• No data available for this period"
-        
-        if not comparison_possible or not previous_metrics:
-            # Show current metrics without comparison
-            return f"""
-{channel_name} - {period_name} (Baseline - No Comparison Data Available)
-• Total Spend: ${current_metrics.get('total_spend', 0):,.0f}
-• Total Impressions: {current_metrics.get('total_impressions', 0):,}
-• Total Clicks: {current_metrics.get('total_clicks', 0):,}
-• CPM: ${current_metrics.get('avg_cpm', 0):.2f}
-• CPC: ${current_metrics.get('avg_cpc', 0):.2f}
-• CTR: {current_metrics.get('avg_ctr', 0):.2f}%
-• Estimate CVR: {current_metrics.get('estimate_cvr', 0):.1f}%
-• Total Estimates: {current_metrics.get('total_estimates', 0):,}
-• Closings CVR: {current_metrics.get('closings_cvr', 0):.1f}%
-• Total Closings: {current_metrics.get('total_closings', 0):,}
-"""
-        
-        # Debug output
-        print(f"DEBUG: {channel_name} - {period_name}")
-        print(f"DEBUG: Current metrics: {current_metrics}")
-        print(f"DEBUG: Previous metrics: {previous_metrics}")
         
         spend_change = calculate_change(current_metrics, previous_metrics, 'total_spend')
         clicks_change = calculate_change(current_metrics, previous_metrics, 'total_clicks')
@@ -440,7 +397,7 @@ def calculate_week_comparisons(df, target_date):
         # Format with + or - signs
         def format_change(value, is_cvr=False):
             if is_cvr:
-                return f"({value:+.1f}pp)" if abs(value) > 0.1 else "(0.0pp)"  # pp = percentage points
+                return f"({value:+.1f}%)" if abs(value) > 0.1 else "(0.0%)"
             else:
                 return f"({value:+.1f}%)" if abs(value) > 0.1 else "(0.0%)"
         
@@ -477,11 +434,9 @@ def calculate_week_comparisons(df, target_date):
         if period_type == 'yesterday_vs_same_day_last_week':
             current_data = yesterday_data
             previous_data = same_day_last_week_data
-            comparison_possible = can_do_daily_comparison
         else:
             current_data = last_week_data
             previous_data = week_before_data
-            comparison_possible = can_do_weekly_comparison
         
         period_comparisons = []
         for channel, channel_name in zip(channels, channel_names):
@@ -490,7 +445,7 @@ def calculate_week_comparisons(df, target_date):
             
             if current_metrics:  # Only include channels that have data
                 comparison = format_comparison_by_channel(
-                    current_metrics, previous_metrics, period_name, channel_name, comparison_possible
+                    current_metrics, previous_metrics, period_name, channel_name
                 )
                 period_comparisons.append(comparison)
         
@@ -498,18 +453,6 @@ def calculate_week_comparisons(df, target_date):
     
     return {
         'formatted_comparisons': formatted_comparisons,
-        'comparison_info': {
-            'can_do_daily_comparison': can_do_daily_comparison,
-            'can_do_weekly_comparison': can_do_weekly_comparison,
-            'days_of_data_available': days_of_data,
-            'data_start_date': str(data_start_date),
-            'dates_needed': {
-                'yesterday': str(yesterday),
-                'same_day_last_week': str(same_day_last_week),
-                'last_week_range': f"{last_week_start} to {last_week_end}",
-                'week_before_range': f"{week_before_start} to {week_before_end}"
-            }
-        },
         'raw_metrics': {
             'yesterday_by_channel': {
                 channel: aggregate_metrics_by_channel(yesterday_data, channel) 
@@ -555,11 +498,9 @@ async def debug_data_sources():
         
         # Check meta_data
         meta_query = f"""
-        SELECT COUNT(*) as records, SUM(SAFE_CAST(spend AS FLOAT64)) as total_spend
+        SELECT COUNT(*) as records, SUM(CAST(spend AS FLOAT64)) as total_spend
         FROM `{PROJECT_ID}.{DATASET_ID}.meta_data`
         WHERE date >= '2025-07-20'
-            AND spend IS NOT NULL 
-            AND spend != ''
         """
         
         hex_result = bigquery_client.query(hex_query).to_dataframe()
@@ -570,53 +511,6 @@ async def debug_data_sources():
             "hex_data": hex_result.to_dict('records'),
             "google_data": google_result.to_dict('records'),
             "meta_data": meta_result.to_dict('records')
-        }
-        
-    except Exception as e:
-        return {"error": str(e)}
-
-@marketing_router.get("/debug-dates/{since_date}/{until_date}")
-async def debug_specific_dates(since_date: str, until_date: str):
-    """Debug endpoint to check data availability for specific date ranges"""
-    try:
-        if not BIGQUERY_AVAILABLE or not bigquery_client:
-            return {"error": "BigQuery not available"}
-        
-        # Check what dates have data
-        date_query = f"""
-        SELECT 
-            h.date,
-            h.utm_medium,
-            COUNT(h.utm_campaign) as hex_campaigns,
-            COALESCE(SUM(h.leads), 0) as total_leads,
-            COALESCE(COUNT(DISTINCT m.campaign_name), 0) as meta_campaigns,
-            COALESCE(SUM(SAFE_CAST(m.spend AS FLOAT64)), 0) as meta_spend,
-            COALESCE(COUNT(DISTINCT g.campaign_name), 0) as google_campaigns,
-            COALESCE(SUM(g.spend_usd), 0) as google_spend
-        FROM `{PROJECT_ID}.{DATASET_ID}.hex_data` h
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.meta_data_mapping` map ON h.utm_campaign = map.utm_campaign
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.meta_data` m ON h.date = m.date 
-            AND map.campaign_name_mapped = m.campaign_name
-            AND h.utm_medium = 'paid-social'
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.google_data` g ON h.date = g.date 
-            AND h.utm_campaign = g.campaign_name
-            AND h.utm_medium IN ('paid-search', 'paid-video')
-        WHERE h.date BETWEEN '{since_date}' AND '{until_date}'
-            AND h.utm_medium IN ('paid-social', 'paid-search', 'paid-video')
-        GROUP BY h.date, h.utm_medium
-        ORDER BY h.date DESC, h.utm_medium
-        """
-        
-        result = bigquery_client.query(date_query).to_dataframe()
-        
-        return {
-            "date_range": f"{since_date} to {until_date}",
-            "data_by_date": result.to_dict('records'),
-            "summary": {
-                "total_records": len(result),
-                "date_range_covered": f"{result['date'].min()} to {result['date'].max()}" if not result.empty else "No data",
-                "mediums_with_data": result['utm_medium'].unique().tolist() if not result.empty else []
-            }
         }
         
     except Exception as e:
