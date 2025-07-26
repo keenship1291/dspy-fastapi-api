@@ -1,4 +1,4 @@
-# marketing_analytics.py - COMPREHENSIVE VERSION
+# marketing_analytics.py - FIXED VERSION
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Dict, Optional, Any
@@ -609,9 +609,9 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
             - Total Estimates: {metrics['total_estimates']:,}
             - Total Closings: {metrics['total_closings']:,}
             - Total Funded: {metrics['total_funded']:,}
-            - Lead to Estimate Rate: {metrics['conversion_rate']:.1f}%
-            - Estimate to Closing Rate: {metrics['closing_rate']:.1f}%
-            - Closing to Funding Rate: {metrics['funding_rate']:.1f}%
+            - Lead to Estimate Rate: {metrics['lead_to_estimate_rate']:.1f}%
+            - Estimate to Closing Rate: {metrics['estimate_to_closing_rate']:.1f}%
+            - Closing to Funding Rate: {metrics['closing_to_funding_rate']:.1f}%
             - Active Campaigns: {metrics['campaign_count']}
             """
             
@@ -652,7 +652,7 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
                 except:
                     ai_insights = {
                         "performance_summary": comparisons['formatted_comparisons'],
-                        "cross_channel_analysis": f"Paid-social demonstrates volume efficiency with {medium_analysis.get('paid-social', {}).get('total_leads', 0):,} leads at ${medium_analysis.get('paid-social', {}).get('avg_cpa', 0):.2f} CPA, while paid-search-video shows quality focus with {medium_analysis.get('paid-search-video', {}).get('conversion_rate', 0):.1f}% conversion rates despite higher costs.",
+                        "cross_channel_analysis": f"Paid-social demonstrates volume efficiency with {medium_analysis.get('paid-social', {}).get('total_leads', 0):,} leads at ${medium_analysis.get('paid-social', {}).get('avg_cpa', 0):.2f} CPA, while paid-search-video shows quality focus with {medium_analysis.get('paid-search-video', {}).get('lead_to_estimate_rate', 0):.1f}% conversion rates despite higher costs.",
                         "paid_social_analysis": f"Paid-social generated {medium_analysis.get('paid-social', {}).get('total_estimates', 0):,} estimates from {medium_analysis.get('paid-social', {}).get('campaign_count', 0)} active campaigns, showing consistent performance across the meta platform with strong volume generation capabilities.",
                         "paid_search_video_analysis": f"Paid-search-video delivered {medium_analysis.get('paid-search-video', {}).get('total_estimates', 0):,} estimates with higher intent quality, operating across {medium_analysis.get('paid-search-video', {}).get('campaign_count', 0)} campaigns with focus on conversion efficiency over volume."
                     }
