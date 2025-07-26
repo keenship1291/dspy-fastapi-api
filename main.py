@@ -15,7 +15,6 @@ from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text, t
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.exc import IntegrityError
-from marketing_analytics import marketing_router
 
 # Load API key from environment variable (set in Railway dashboard)
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
@@ -58,6 +57,16 @@ class ResponseEntry(Base):
 
 # Create tables
 Base.metadata.create_all(bind=engine)
+
+# NOW import marketing router after database is set up
+try:
+    from marketing_analytics import marketing_router
+    MARKETING_AVAILABLE = True
+    print("✅ Marketing analytics loaded successfully")
+except Exception as e:
+    MARKETING_AVAILABLE = False
+    marketing_router = None
+    print(f"⚠️ Marketing analytics failed to load: {e}")
 
 # Centralized Business Rules - Single Source of Truth
 BUSINESS_RULES = """
@@ -356,7 +365,11 @@ class ResponseCreate(BaseModel):
     reasoning: Optional[str] = ""
 
 app = FastAPI()
-app.include_router(marketing_router)
+
+# Include marketing router only if it loaded successfully
+if MARKETING_AVAILABLE and marketing_router:
+    app.include_router(marketing_router)
+
 @app.get("/")
 def read_root():
     return {
