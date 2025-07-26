@@ -172,8 +172,119 @@ async def test_bigquery_connection():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"BigQuery test failed: {str(e)}")
 
-@marketing_router.get("/debug-mapping/{date}")
-async def debug_mapping_coverage(date: str):
+@marketing_router.get("/debug-spend-calculation/{until_date}")
+async def debug_spend_calculation(until_date: str):
+    """Debug the exact spend calculation logic"""
+    try:
+        if not BIGQUERY_AVAILABLE or not bigquery_client:
+            return {"error": "BigQuery not available"}
+        
+        # Calculate the same date ranges as the code
+        import pandas as pd
+        from datetime import timedelta
+        
+        target_date = pd.to_datetime(until_date).date()
+        yesterday = target_date - timedelta(days=1)
+        last_week_start = yesterday - timedelta(days=6)
+        last_week_end = yesterday
+        
+        # Expand date range like the main function does
+        expanded_since_date = (pd.to_datetime("2025-07-12").date() - timedelta(days=14)).strftime('%Y-%m-%d')
+        
+        print(f"DEBUG Dates:")
+        print(f"Target date: {target_date}")
+        print(f"Yesterday: {yesterday}")
+        print(f"Last week range: {last_week_start} to {last_week_end}")
+        print(f"Expanded since: {expanded_since_date}")
+        
+        # Get the same comprehensive data as the main function
+        df = get_comprehensive_marketing_data(expanded_since_date, until_date)
+        
+        # Filter to last 7 days like the comparison function does
+        last_week_data = df[(df['date'] >= last_week_start) & (df['date'] <= last_week_end)]
+        paid_social_data = last_week_data[last_week_data['utm_medium'] == 'paid-social']
+        
+        # Check what we get vs direct Meta query
+        direct_meta_query = f"""
+        SELECT 
+            date,
+            SUM(SAFE_CAST(spend AS FLOAT64)) as daily_spend,
+            COUNT(*) as records
+        FROM `{PROJECT_ID}.{DATASET_ID}.meta_data`
+        WHERE date BETWEEN '{last_week_start}' AND '{last_week_end}'
+        GROUP BY date
+        ORDER BY date DESC
+        """
+        
+        # Also check what the join produces
+        join_debug_query = f"""
+        WITH funnel_data AS (
+            SELECT 
+                date, utm_campaign, utm_medium,
+                SUM(leads) as total_leads
+            FROM `{PROJECT_ID}.{DATASET_ID}.hex_data`
+            WHERE date BETWEEN '{last_week_start}' AND '{last_week_end}'
+                AND utm_medium = 'paid-social'
+            GROUP BY date, utm_campaign, utm_medium
+        ),
+        meta_data AS (
+            SELECT 
+                date, campaign_name,
+                SAFE_CAST(spend AS FLOAT64) as spend
+            FROM `{PROJECT_ID}.{DATASET_ID}.meta_data`
+            WHERE date BETWEEN '{last_week_start}' AND '{last_week_end}'
+                AND spend IS NOT NULL AND spend != ''
+        ),
+        mapping_data AS (
+            SELECT utm_campaign, campaign_name_mapped
+            FROM `{PROJECT_ID}.{DATASET_ID}.meta_data_mapping`
+        )
+        SELECT 
+            f.date,
+            f.utm_campaign,
+            map.campaign_name_mapped,
+            m.campaign_name,
+            COALESCE(m.spend, 0) as meta_spend
+        FROM funnel_data f
+        LEFT JOIN mapping_data map ON f.utm_campaign = map.utm_campaign
+        LEFT JOIN meta_data m ON f.date = m.date 
+            AND map.campaign_name_mapped = m.campaign_name
+            AND map.campaign_name_mapped IS NOT NULL
+        ORDER BY f.date DESC, f.utm_campaign
+        """
+        
+        direct_meta_result = bigquery_client.query(direct_meta_query).to_dataframe()
+        join_result = bigquery_client.query(join_debug_query).to_dataframe()
+        
+        return {
+            "date_calculations": {
+                "target_date": str(target_date),
+                "yesterday": str(yesterday), 
+                "last_week_start": str(last_week_start),
+                "last_week_end": str(last_week_end),
+                "expanded_since": expanded_since_date
+            },
+            "comprehensive_data_summary": {
+                "total_records": len(df),
+                "date_range": f"{df['date'].min()} to {df['date'].max()}" if not df.empty else "No data",
+                "last_week_records": len(last_week_data),
+                "paid_social_last_week_records": len(paid_social_data),
+                "paid_social_meta_spend_sum": float(paid_social_data['meta_spend'].sum()) if not paid_social_data.empty else 0
+            },
+            "direct_meta_spend_by_date": direct_meta_result.to_dict('records'),
+            "direct_meta_total": float(direct_meta_result['daily_spend'].sum()) if not direct_meta_result.empty else 0,
+            "join_result_sample": join_result.head(20).to_dict('records'),
+            "join_result_summary": {
+                "total_join_records": len(join_result),
+                "records_with_spend": len(join_result[join_result['meta_spend'] > 0]),
+                "total_joined_spend": float(join_result['meta_spend'].sum()),
+                "unmapped_campaigns": len(join_result[join_result['campaign_name_mapped'].isna()]),
+                "null_spends": len(join_result[join_result['meta_spend'] == 0])
+            }
+        }
+        
+    except Exception as e:
+        return {"error": str(e), "traceback": str(e.__class__.__name__)}
     """Debug mapping table coverage for a specific date"""
     try:
         if not BIGQUERY_AVAILABLE or not bigquery_client:
@@ -246,7 +357,7 @@ async def debug_mapping_coverage(date: str):
 def get_comprehensive_marketing_data(since_date: str, until_date: str):
     """Get comprehensive marketing data from all tables with proper joins - FIXED VERSION"""
     
-    # Main query that joins all tables and gets comprehensive metrics
+    # Enhanced query that ensures we capture ALL Meta spend
     comprehensive_query = f"""
     WITH 
     -- Get funnel data
@@ -268,7 +379,7 @@ def get_comprehensive_marketing_data(since_date: str, until_date: str):
         GROUP BY date, utm_campaign, utm_medium, platform
     ),
     
-    -- Get Meta data (handle STRING conversions safely)
+    -- Get ALL Meta data with spend
     meta_data AS (
         SELECT 
             date,
@@ -285,10 +396,9 @@ def get_comprehensive_marketing_data(since_date: str, until_date: str):
             platform as meta_platform
         FROM `{PROJECT_ID}.{DATASET_ID}.meta_data`
         WHERE date BETWEEN '{since_date}' AND '{until_date}'
-            AND impressions IS NOT NULL 
-            AND impressions != ''
             AND spend IS NOT NULL 
             AND spend != ''
+            AND SAFE_CAST(spend AS FLOAT64) > 0
     ),
     
     -- Get Google data
@@ -316,60 +426,123 @@ def get_comprehensive_marketing_data(since_date: str, until_date: str):
             campaign_name_mapped,
             adset_name_mapped
         FROM `{PROJECT_ID}.{DATASET_ID}.meta_data_mapping`
+        WHERE campaign_name_mapped IS NOT NULL
+    ),
+    
+    -- Create a comprehensive base that includes ALL spend data
+    all_campaigns AS (
+        -- Get all funnel campaigns
+        SELECT DISTINCT 
+            date, utm_campaign as campaign_key, utm_medium, 'funnel' as source_type
+        FROM funnel_data
+        
+        UNION ALL
+        
+        -- Get all Meta campaigns (use campaign_name as key for paid-social)
+        SELECT DISTINCT 
+            date, campaign_name as campaign_key, 'paid-social' as utm_medium, 'meta' as source_type
+        FROM meta_data
+        
+        UNION ALL
+        
+        -- Get all Google campaigns (use campaign_name as key)
+        SELECT DISTINCT 
+            date, campaign_name as campaign_key, 
+            CASE 
+                WHEN campaign_name LIKE '%video%' OR campaign_name LIKE '%youtube%' THEN 'paid-video'
+                ELSE 'paid-search'
+            END as utm_medium, 
+            'google' as source_type
+        FROM google_data
     )
     
-    -- Main join query - FIXED VERSION
+    -- Main comprehensive join
     SELECT 
-        f.date,
-        f.utm_campaign,
-        f.utm_medium,
+        COALESCE(f.date, m.date, g.date) as date,
+        COALESCE(f.utm_campaign, map.utm_campaign, g.campaign_name) as utm_campaign,
+        COALESCE(f.utm_medium, 
+                CASE WHEN m.campaign_name IS NOT NULL THEN 'paid-social'
+                     WHEN g.campaign_name LIKE '%video%' OR g.campaign_name LIKE '%youtube%' THEN 'paid-video'
+                     WHEN g.campaign_name IS NOT NULL THEN 'paid-search'
+                END) as utm_medium,
         
-        -- Funnel metrics
-        f.total_leads,
-        f.total_start_flows,
-        f.total_estimates,
-        f.total_closings,
-        f.total_funded,
-        f.total_rpts,
+        -- Funnel metrics (prioritize funnel data, but allow zeros if missing)
+        COALESCE(f.total_leads, 0) as total_leads,
+        COALESCE(f.total_start_flows, 0) as total_start_flows,
+        COALESCE(f.total_estimates, 0) as total_estimates,
+        COALESCE(f.total_closings, 0) as total_closings,
+        COALESCE(f.total_funded, 0) as total_funded,
+        COALESCE(f.total_rpts, 0) as total_rpts,
         
-        -- Meta metrics (for paid-social only, using mapping table)
-        CASE WHEN f.utm_medium = 'paid-social' THEN COALESCE(m.impressions, 0) ELSE 0 END as meta_impressions,
-        CASE WHEN f.utm_medium = 'paid-social' THEN COALESCE(m.clicks, 0) ELSE 0 END as meta_clicks,
-        CASE WHEN f.utm_medium = 'paid-social' THEN COALESCE(m.spend, 0) ELSE 0 END as meta_spend,
-        CASE WHEN f.utm_medium = 'paid-social' THEN COALESCE(m.reach, 0) ELSE 0 END as meta_reach,
-        CASE WHEN f.utm_medium = 'paid-social' THEN COALESCE(m.landing_page_views, 0) ELSE 0 END as meta_landing_page_views,
-        CASE WHEN f.utm_medium = 'paid-social' THEN COALESCE(m.ctr, 0) ELSE 0 END as meta_ctr,
-        CASE WHEN f.utm_medium = 'paid-social' THEN COALESCE(m.cpc, 0) ELSE 0 END as meta_cpc,
-        CASE WHEN f.utm_medium = 'paid-social' THEN COALESCE(m.cpm, 0) ELSE 0 END as meta_cpm,
+        -- Meta metrics
+        COALESCE(m.impressions, 0) as meta_impressions,
+        COALESCE(m.clicks, 0) as meta_clicks,
+        COALESCE(m.spend, 0) as meta_spend,
+        COALESCE(m.reach, 0) as meta_reach,
+        COALESCE(m.landing_page_views, 0) as meta_landing_page_views,
+        COALESCE(m.ctr, 0) as meta_ctr,
+        COALESCE(m.cpc, 0) as meta_cpc,
+        COALESCE(m.cpm, 0) as meta_cpm,
         
-        -- Google metrics (for paid-search/paid-video, direct join on utm_campaign = campaign_name)
-        CASE WHEN f.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(g.spend_usd, 0) ELSE 0 END as google_spend,
-        CASE WHEN f.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(g.clicks, 0) ELSE 0 END as google_clicks,
-        CASE WHEN f.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(g.impressions, 0) ELSE 0 END as google_impressions,
-        CASE WHEN f.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(g.conversions, 0) ELSE 0 END as google_conversions,
-        CASE WHEN f.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(g.cpa_usd, 0) ELSE 0 END as google_cpa,
-        CASE WHEN f.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(g.ctr_percent, 0) ELSE 0 END as google_ctr,
-        CASE WHEN f.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(g.cpc_usd, 0) ELSE 0 END as google_cpc,
-        CASE WHEN f.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(g.roas_percent, 0) ELSE 0 END as google_roas,
+        -- Google metrics
+        COALESCE(g.spend_usd, 0) as google_spend,
+        COALESCE(g.clicks, 0) as google_clicks,
+        COALESCE(g.impressions, 0) as google_impressions,
+        COALESCE(g.conversions, 0) as google_conversions,
+        COALESCE(g.cpa_usd, 0) as google_cpa,
+        COALESCE(g.ctr_percent, 0) as google_ctr,
+        COALESCE(g.cpc_usd, 0) as google_cpc,
+        COALESCE(g.roas_percent, 0) as google_roas,
         
-        -- Mapping info (only for Meta)
-        CASE WHEN f.utm_medium = 'paid-social' THEN map.campaign_name_mapped ELSE NULL END as campaign_name_mapped,
-        CASE WHEN f.utm_medium = 'paid-social' THEN map.adset_name_mapped ELSE NULL END as adset_name_mapped
+        -- Mapping info
+        map.campaign_name_mapped,
+        map.adset_name_mapped
         
-    FROM funnel_data f
-    -- Left join mapping for all campaigns (not just paid-social)
+    FROM (
+        -- Start with funnel data as primary
+        SELECT * FROM funnel_data
+        
+        UNION ALL
+        
+        -- Add Meta campaigns that might not be in funnel_data
+        SELECT 
+            m.date,
+            COALESCE(map.utm_campaign, m.campaign_name) as utm_campaign,
+            'paid-social' as utm_medium,
+            0 as total_leads, 0 as total_start_flows, 0 as total_estimates,
+            0 as total_closings, 0 as total_funded, 0 as total_rpts,
+            m.meta_platform as funnel_platform
+        FROM meta_data m
+        LEFT JOIN mapping_data map ON m.campaign_name = map.campaign_name_mapped
+        WHERE NOT EXISTS (
+            SELECT 1 FROM funnel_data f 
+            WHERE f.date = m.date 
+            AND (f.utm_campaign = COALESCE(map.utm_campaign, m.campaign_name))
+            AND f.utm_medium = 'paid-social'
+        )
+    ) f
+    
+    -- Join mapping data
     LEFT JOIN mapping_data map ON f.utm_campaign = map.utm_campaign
-    -- Meta data join using mapping table, only when mapping exists and medium is paid-social
+    
+    -- Join Meta data
     LEFT JOIN meta_data m ON f.date = m.date 
-        AND map.campaign_name_mapped = m.campaign_name
+        AND (map.campaign_name_mapped = m.campaign_name OR f.utm_campaign = m.campaign_name)
         AND f.utm_medium = 'paid-social'
-        AND map.campaign_name_mapped IS NOT NULL
-    -- Google data direct join on utm_campaign for paid-search/paid-video
+    
+    -- Join Google data  
     LEFT JOIN google_data g ON f.date = g.date 
         AND f.utm_campaign = g.campaign_name
         AND f.utm_medium IN ('paid-search', 'paid-video')
     
-    ORDER BY f.date DESC, f.utm_campaign
+    WHERE COALESCE(f.date, m.date, g.date) BETWEEN '{since_date}' AND '{until_date}'
+        AND COALESCE(f.utm_medium, 
+                    CASE WHEN m.campaign_name IS NOT NULL THEN 'paid-social'
+                         WHEN g.campaign_name LIKE '%video%' OR g.campaign_name LIKE '%youtube%' THEN 'paid-video'
+                         WHEN g.campaign_name IS NOT NULL THEN 'paid-search'
+                    END) IN ('paid-social', 'paid-search', 'paid-video')
+    
+    ORDER BY date DESC, utm_campaign
     """
     
     return bigquery_client.query(comprehensive_query).to_dataframe()
@@ -377,16 +550,26 @@ def get_comprehensive_marketing_data(since_date: str, until_date: str):
 def calculate_week_comparisons(df, target_date):
     """Calculate yesterday vs same day last week and last week vs week before comparisons by channel"""
     
-    target_date = pd.to_datetime(target_date).date()
-    yesterday = target_date - timedelta(days=1)
-    same_day_last_week = yesterday - timedelta(days=7)
+    # Use current date for calculations, not the target_date from request
+    from datetime import date
+    current_date = date.today()  # 2025-07-26 (actual current date)
+    yesterday = current_date - timedelta(days=1)  # 2025-07-25
+    same_day_last_week = yesterday - timedelta(days=7)  # 2025-07-18
     
-    # Week ranges
-    last_week_start = yesterday - timedelta(days=6)  # 7 days including yesterday
-    last_week_end = yesterday
+    # Last 7 days: 7 days ending yesterday
+    last_week_end = yesterday  # 2025-07-25
+    last_week_start = yesterday - timedelta(days=6)  # 2025-07-19
     
-    week_before_start = last_week_start - timedelta(days=7)
-    week_before_end = last_week_end - timedelta(days=7)
+    # Previous 7 days: 7 days before that
+    week_before_end = last_week_start - timedelta(days=1)  # 2025-07-18
+    week_before_start = week_before_end - timedelta(days=6)  # 2025-07-12
+    
+    print(f"DEBUG: Current date: {current_date}")
+    print(f"DEBUG: Yesterday: {yesterday}")
+    print(f"DEBUG: Same day last week: {same_day_last_week}")
+    print(f"DEBUG: Last 7 days: {last_week_start} to {last_week_end}")
+    print(f"DEBUG: Previous 7 days: {week_before_start} to {week_before_end}")
+    print(f"DEBUG: Data available: {df['date'].min()} to {df['date'].max()}")
     
     def aggregate_metrics_by_channel(data, channel_filter):
         """Aggregate metrics for a specific channel"""
@@ -428,6 +611,8 @@ def calculate_week_comparisons(df, target_date):
         # Calculate conversion rates
         estimate_cvr = (total_estimates / total_leads * 100) if total_leads > 0 else 0.0
         closings_cvr = (total_closings / total_estimates * 100) if total_estimates > 0 else 0.0
+        
+        print(f"DEBUG: {channel_filter} - Spend: ${total_spend:,.2f}, Records: {len(filtered_data)}")
         
         return {
             'total_spend': total_spend,
@@ -567,24 +752,40 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
                 error="BigQuery client not initialized"
             )
         
-        # Get comprehensive data
-        df = get_comprehensive_marketing_data(since_date, until_date)
+        # Always get at least 21 days of data to ensure we have enough for all comparisons
+        from datetime import date
+        current_date = date.today()
+        expanded_since_date = (current_date - timedelta(days=21)).strftime('%Y-%m-%d')
+        expanded_until_date = current_date.strftime('%Y-%m-%d')
+        
+        print(f"DEBUG: Original request: {since_date} to {until_date}")
+        print(f"DEBUG: Expanded for comparisons: {expanded_since_date} to {expanded_until_date}")
+        
+        # Get comprehensive data with expanded range
+        df = get_comprehensive_marketing_data(expanded_since_date, expanded_until_date)
         
         if df.empty:
             return TrendAnalysisResponse(
                 status="no_data",
-                message=f"No data found for {since_date} to {until_date}",
-                data={"date_range": f"{since_date} to {until_date}"}
+                message=f"No data found for expanded range {expanded_since_date} to {expanded_until_date}",
+                data={"date_range": f"{since_date} to {until_date}", "expanded_range": f"{expanded_since_date} to {expanded_until_date}"}
             )
         
-        # Calculate week-over-week comparisons
+        print(f"DEBUG: Retrieved {len(df)} records from {df['date'].min()} to {df['date'].max()}")
+        
+        # Calculate week-over-week comparisons using actual current date
         comparisons = calculate_week_comparisons(df, until_date)
+        
+        # Filter df to original date range for medium analysis (but keep expanded for comparisons)
+        analysis_df = df[(df['date'] >= since_date) & (df['date'] <= until_date)]
+        
+        print(f"DEBUG: Analysis DF has {len(analysis_df)} records from {analysis_df['date'].min() if not analysis_df.empty else 'N/A'} to {analysis_df['date'].max() if not analysis_df.empty else 'N/A'}")
         
         # Group by medium and calculate comprehensive metrics (Meta and Google only)
         medium_analysis = {}
         
         for medium in ['paid-social', 'paid-search', 'paid-video']:
-            medium_data = df[df['utm_medium'] == medium]
+            medium_data = analysis_df[analysis_df['utm_medium'] == medium]
             
             if not medium_data.empty:
                 group_key = 'paid-social' if medium == 'paid-social' else 'paid-search-video'
@@ -600,6 +801,8 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
                 spend = float(medium_data['meta_spend'].sum()) if medium == 'paid-social' else float(medium_data['google_spend'].sum())
                 clicks = int(medium_data['meta_clicks'].sum()) if medium == 'paid-social' else int(medium_data['google_clicks'].sum())
                 impressions = int(medium_data['meta_impressions'].sum()) if medium == 'paid-social' else int(medium_data['google_impressions'].sum())
+                
+                print(f"DEBUG: {medium} - Spend: ${spend:,.2f}, Records: {len(medium_data)}")
                 
                 # Add FUNNEL METRICS from hex_data
                 medium_analysis[group_key]['total_spend'] += spend
@@ -716,8 +919,10 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
                 "medium_analysis": medium_analysis,
                 "week_over_week_comparisons": comparisons,
                 "summary": {
-                    "total_records_analyzed": int(len(df)),
-                    "date_range": f"{since_date} to {until_date}",
+                    "total_records_analyzed": int(len(analysis_df)),
+                    "total_records_for_comparisons": int(len(df)),
+                    "original_date_range": f"{since_date} to {until_date}",
+                    "expanded_date_range": f"{expanded_since_date} to {expanded_until_date}",
                     "data_sources": ["hex_data", "meta_data", "google_data", "meta_mapping_table"],
                     "mediums_analyzed": list(medium_analysis.keys())
                 },
