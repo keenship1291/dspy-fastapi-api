@@ -398,10 +398,26 @@ def calculate_week_comparisons(df, target_date):
                 return 100.0  # If previous was 0 but current has value, it's 100% increase
         return float((current_val - previous_val) / previous_val * 100)
     
-    def format_comparison_by_channel(current_metrics, previous_metrics, period_name, channel_name):
+    def format_comparison_by_channel(current_metrics, previous_metrics, period_name, channel_name, comparison_possible=True):
         """Format comparison in the requested bullet point format for specific channel"""
         if not current_metrics:
             return f"\n{channel_name} - {period_name}\n• No data available for this period"
+        
+        if not comparison_possible or not previous_metrics:
+            # Show current metrics without comparison
+            return f"""
+{channel_name} - {period_name} (Baseline - No Comparison Data Available)
+• Total Spend: ${current_metrics.get('total_spend', 0):,.0f}
+• Total Impressions: {current_metrics.get('total_impressions', 0):,}
+• Total Clicks: {current_metrics.get('total_clicks', 0):,}
+• CPM: ${current_metrics.get('avg_cpm', 0):.2f}
+• CPC: ${current_metrics.get('avg_cpc', 0):.2f}
+• CTR: {current_metrics.get('avg_ctr', 0):.2f}%
+• Estimate CVR: {current_metrics.get('estimate_cvr', 0):.1f}%
+• Total Estimates: {current_metrics.get('total_estimates', 0):,}
+• Closings CVR: {current_metrics.get('closings_cvr', 0):.1f}%
+• Total Closings: {current_metrics.get('total_closings', 0):,}
+"""
         
         # Debug output
         print(f"DEBUG: {channel_name} - {period_name}")
@@ -461,9 +477,11 @@ def calculate_week_comparisons(df, target_date):
         if period_type == 'yesterday_vs_same_day_last_week':
             current_data = yesterday_data
             previous_data = same_day_last_week_data
+            comparison_possible = can_do_daily_comparison
         else:
             current_data = last_week_data
             previous_data = week_before_data
+            comparison_possible = can_do_weekly_comparison
         
         period_comparisons = []
         for channel, channel_name in zip(channels, channel_names):
@@ -472,7 +490,7 @@ def calculate_week_comparisons(df, target_date):
             
             if current_metrics:  # Only include channels that have data
                 comparison = format_comparison_by_channel(
-                    current_metrics, previous_metrics, period_name, channel_name
+                    current_metrics, previous_metrics, period_name, channel_name, comparison_possible
                 )
                 period_comparisons.append(comparison)
         
@@ -480,6 +498,18 @@ def calculate_week_comparisons(df, target_date):
     
     return {
         'formatted_comparisons': formatted_comparisons,
+        'comparison_info': {
+            'can_do_daily_comparison': can_do_daily_comparison,
+            'can_do_weekly_comparison': can_do_weekly_comparison,
+            'days_of_data_available': days_of_data,
+            'data_start_date': str(data_start_date),
+            'dates_needed': {
+                'yesterday': str(yesterday),
+                'same_day_last_week': str(same_day_last_week),
+                'last_week_range': f"{last_week_start} to {last_week_end}",
+                'week_before_range': f"{week_before_start} to {week_before_end}"
+            }
+        },
         'raw_metrics': {
             'yesterday_by_channel': {
                 channel: aggregate_metrics_by_channel(yesterday_data, channel) 
@@ -545,48 +575,101 @@ async def debug_data_sources():
     except Exception as e:
         return {"error": str(e)}
 
-@marketing_router.get("/debug-dates/{since_date}/{until_date}")
-async def debug_specific_dates(since_date: str, until_date: str):
-    """Debug endpoint to check data availability for specific date ranges"""
+@marketing_router.get("/debug-comprehensive/{since_date}/{until_date}")
+async def debug_comprehensive_data(since_date: str, until_date: str):
+    """Debug the comprehensive data query to see what we're actually getting"""
     try:
         if not BIGQUERY_AVAILABLE or not bigquery_client:
             return {"error": "BigQuery not available"}
         
-        # Check what dates have data
-        date_query = f"""
-        SELECT 
-            h.date,
-            h.utm_medium,
-            COUNT(h.utm_campaign) as hex_campaigns,
-            COALESCE(SUM(h.leads), 0) as total_leads,
-            COALESCE(COUNT(DISTINCT m.campaign_name), 0) as meta_campaigns,
-            COALESCE(SUM(SAFE_CAST(m.spend AS FLOAT64)), 0) as meta_spend,
-            COALESCE(COUNT(DISTINCT g.campaign_name), 0) as google_campaigns,
-            COALESCE(SUM(g.spend_usd), 0) as google_spend
-        FROM `{PROJECT_ID}.{DATASET_ID}.hex_data` h
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.meta_data_mapping` map ON h.utm_campaign = map.utm_campaign
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.meta_data` m ON h.date = m.date 
-            AND map.campaign_name_mapped = m.campaign_name
-            AND h.utm_medium = 'paid-social'
-        LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.google_data` g ON h.date = g.date 
-            AND h.utm_campaign = g.campaign_name
-            AND h.utm_medium IN ('paid-search', 'paid-video')
-        WHERE h.date BETWEEN '{since_date}' AND '{until_date}'
-            AND h.utm_medium IN ('paid-social', 'paid-search', 'paid-video')
-        GROUP BY h.date, h.utm_medium
-        ORDER BY h.date DESC, h.utm_medium
-        """
+        # Test the exact same query that analyze-trends uses
+        df = get_comprehensive_marketing_data(since_date, until_date)
         
-        result = bigquery_client.query(date_query).to_dataframe()
+        if df.empty:
+            return {
+                "error": "No data returned from comprehensive query",
+                "date_range": f"{since_date} to {until_date}"
+            }
+        
+        # Show what we got
+        result = {
+            "date_range_requested": f"{since_date} to {until_date}",
+            "total_records": len(df),
+            "date_range_actual": f"{df['date'].min()} to {df['date'].max()}",
+            "unique_dates": sorted(df['date'].unique().tolist()),
+            "utm_mediums": df['utm_medium'].unique().tolist(),
+            "sample_records": df.head(10).to_dict('records'),
+            "records_by_date_medium": df.groupby(['date', 'utm_medium']).size().reset_index(name='count').to_dict('records'),
+            "meta_spend_summary": {
+                "total": float(df['meta_spend'].sum()),
+                "records_with_spend": len(df[df['meta_spend'] > 0]),
+                "max_spend": float(df['meta_spend'].max()),
+                "by_date": df.groupby('date')['meta_spend'].sum().to_dict()
+            },
+            "google_spend_summary": {
+                "total": float(df['google_spend'].sum()),
+                "records_with_spend": len(df[df['google_spend'] > 0]),
+                "max_spend": float(df['google_spend'].max()),
+                "by_date": df.groupby('date')['google_spend'].sum().to_dict()
+            }
+        }
+        
+        return result
+        
+    except Exception as e:
+        return {"error": str(e), "traceback": str(e.__traceback__)}
+
+@marketing_router.get("/debug-raw-tables/{since_date}/{until_date}")
+async def debug_raw_tables(since_date: str, until_date: str):
+    """Check each table individually to see where data might be missing"""
+    try:
+        if not BIGQUERY_AVAILABLE or not bigquery_client:
+            return {"error": "BigQuery not available"}
+        
+        results = {}
+        
+        # Check hex_data
+        hex_query = f"""
+        SELECT date, utm_medium, COUNT(*) as records, SUM(leads) as leads, SUM(estimates) as estimates
+        FROM `{PROJECT_ID}.{DATASET_ID}.hex_data`
+        WHERE date BETWEEN '{since_date}' AND '{until_date}'
+        GROUP BY date, utm_medium
+        ORDER BY date DESC, utm_medium
+        """
+        results['hex_data'] = bigquery_client.query(hex_query).to_dataframe().to_dict('records')
+        
+        # Check meta_data  
+        meta_query = f"""
+        SELECT date, COUNT(*) as records, 
+               SUM(SAFE_CAST(spend AS FLOAT64)) as total_spend,
+               COUNT(CASE WHEN spend IS NOT NULL AND spend != '' THEN 1 END) as valid_spend_records
+        FROM `{PROJECT_ID}.{DATASET_ID}.meta_data`
+        WHERE date BETWEEN '{since_date}' AND '{until_date}'
+        GROUP BY date
+        ORDER BY date DESC
+        """
+        results['meta_data'] = bigquery_client.query(meta_query).to_dataframe().to_dict('records')
+        
+        # Check google_data
+        google_query = f"""
+        SELECT date, COUNT(*) as records, SUM(spend_usd) as total_spend
+        FROM `{PROJECT_ID}.{DATASET_ID}.google_data`
+        WHERE date BETWEEN '{since_date}' AND '{until_date}'
+        GROUP BY date
+        ORDER BY date DESC
+        """
+        results['google_data'] = bigquery_client.query(google_query).to_dataframe().to_dict('records')
+        
+        # Check mapping table
+        mapping_query = f"""
+        SELECT COUNT(*) as total_mappings, COUNT(DISTINCT utm_campaign) as unique_utm_campaigns
+        FROM `{PROJECT_ID}.{DATASET_ID}.meta_data_mapping`
+        """
+        results['mapping_data'] = bigquery_client.query(mapping_query).to_dataframe().to_dict('records')
         
         return {
             "date_range": f"{since_date} to {until_date}",
-            "data_by_date": result.to_dict('records'),
-            "summary": {
-                "total_records": len(result),
-                "date_range_covered": f"{result['date'].min()} to {result['date'].max()}" if not result.empty else "No data",
-                "mediums_with_data": result['utm_medium'].unique().tolist() if not result.empty else []
-            }
+            "individual_tables": results
         }
         
     except Exception as e:
@@ -606,24 +689,40 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
                 error="BigQuery client not initialized"
             )
         
-        # Get comprehensive data
-        df = get_comprehensive_marketing_data(since_date, until_date)
+        # Expand date range to include historical data for comparisons
+        target_date = pd.to_datetime(until_date).date()
+        # Go back 14 more days to ensure we have comparison data
+        expanded_since_date = (pd.to_datetime(since_date).date() - timedelta(days=14)).strftime('%Y-%m-%d')
+        
+        print(f"DEBUG: Original date range: {since_date} to {until_date}")
+        print(f"DEBUG: Expanded date range for historical data: {expanded_since_date} to {until_date}")
+        
+        # Get comprehensive data with expanded range
+        df = get_comprehensive_marketing_data(expanded_since_date, until_date)
         
         if df.empty:
             return TrendAnalysisResponse(
                 status="no_data",
-                message=f"No data found for {since_date} to {until_date}",
-                data={"date_range": f"{since_date} to {until_date}"}
+                message=f"No data found for expanded range {expanded_since_date} to {until_date}",
+                data={"date_range": f"{since_date} to {until_date}", "expanded_range": f"{expanded_since_date} to {until_date}"}
             )
         
-        # Calculate week-over-week comparisons
+        print(f"DEBUG: Retrieved {len(df)} records from {df['date'].min()} to {df['date'].max()}")
+        print(f"DEBUG: Unique dates in data: {sorted(df['date'].unique())}")
+        
+        # Calculate week-over-week comparisons using the target date
         comparisons = calculate_week_comparisons(df, until_date)
+        
+        # Filter df back to original date range for medium analysis (but keep expanded for comparisons)
+        analysis_df = df[(df['date'] >= since_date) & (df['date'] <= until_date)]
+        
+        print(f"DEBUG: Analysis DF has {len(analysis_df)} records from {analysis_df['date'].min() if not analysis_df.empty else 'N/A'} to {analysis_df['date'].max() if not analysis_df.empty else 'N/A'}")
         
         # Group by medium and calculate comprehensive metrics (Meta and Google only)
         medium_analysis = {}
         
         for medium in ['paid-social', 'paid-search', 'paid-video']:
-            medium_data = df[df['utm_medium'] == medium]
+            medium_data = analysis_df[analysis_df['utm_medium'] == medium]
             
             if not medium_data.empty:
                 group_key = 'paid-social' if medium == 'paid-social' else 'paid-search-video'
@@ -755,8 +854,10 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
                 "medium_analysis": medium_analysis,
                 "week_over_week_comparisons": comparisons,
                 "summary": {
-                    "total_records_analyzed": int(len(df)),
-                    "date_range": f"{since_date} to {until_date}",
+                    "total_records_analyzed": int(len(analysis_df)),
+                    "total_records_for_comparisons": int(len(df)),
+                    "original_date_range": f"{since_date} to {until_date}",
+                    "expanded_date_range": f"{expanded_since_date} to {until_date}",
                     "data_sources": ["hex_data", "meta_data", "google_data", "meta_mapping_table"],
                     "mediums_analyzed": list(medium_analysis.keys())
                 },
