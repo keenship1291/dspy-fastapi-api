@@ -6,6 +6,7 @@ import dspy
 import os
 from datetime import datetime, timedelta
 import logging
+from google.oauth2 import service_account
 
 # Separate database setup instead of importing from main
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, JSON
@@ -60,8 +61,20 @@ DATASET_ID = "last_14_days_analysis"
 
 if BIGQUERY_AVAILABLE:
     try:
-        bigquery_client = bigquery.Client(project=PROJECT_ID)
-    except:
+        import json
+        from google.oauth2 import service_account
+        
+        # Try to get credentials from environment
+        credentials_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+        if credentials_json:
+            credentials_info = json.loads(credentials_json)
+            credentials = service_account.Credentials.from_service_account_info(credentials_info)
+            bigquery_client = bigquery.Client(credentials=credentials, project=PROJECT_ID)
+        else:
+            # Fallback to default credentials
+            bigquery_client = bigquery.Client(project=PROJECT_ID)
+    except Exception as e:
+        print(f"BigQuery client initialization failed: {e}")
         bigquery_client = None
 else:
     bigquery_client = None
