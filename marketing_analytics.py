@@ -680,11 +680,15 @@ def calculate_week_comparisons(df, target_date):
 • Total Closings: {current_metrics.get('total_closings', 0):,} {format_change(closings_change)}
 """
     
-    # Get data for time periods
-    yesterday_data = df[df['date'] == yesterday]
-    same_day_last_week_data = df[df['date'] == same_day_last_week]
-    last_week_data = df[(df['date'] >= last_week_start) & (df['date'] <= last_week_end)]
-    week_before_data = df[(df['date'] >= week_before_start) & (df['date'] <= week_before_end)]
+    # Get data for time periods - ensure proper date comparisons
+    # Convert DataFrame date column to datetime if it's not already
+    if not pd.api.types.is_datetime64_any_dtype(df['date']):
+        df['date'] = pd.to_datetime(df['date'])
+    
+    yesterday_data = df[df['date'].dt.date == yesterday]
+    same_day_last_week_data = df[df['date'].dt.date == same_day_last_week]
+    last_week_data = df[(df['date'].dt.date >= last_week_start) & (df['date'].dt.date <= last_week_end)]
+    week_before_data = df[(df['date'].dt.date >= week_before_start) & (df['date'].dt.date <= week_before_end)]
     
     # Calculate for each channel (Meta and Google only)
     channels = ['paid-social', 'paid-search-video']
@@ -777,7 +781,16 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
         comparisons = calculate_week_comparisons(df, until_date)
         
         # Filter df to original date range for medium analysis (but keep expanded for comparisons)
-        analysis_df = df[(df['date'] >= since_date) & (df['date'] <= until_date)]
+        # Convert string dates to datetime for proper comparison
+        since_date_dt = pd.to_datetime(since_date).date()
+        until_date_dt = pd.to_datetime(until_date).date()
+        
+        # Convert DataFrame date column to datetime if it's not already
+        if not pd.api.types.is_datetime64_any_dtype(df['date']):
+            df['date'] = pd.to_datetime(df['date'])
+        
+        # Filter using datetime comparison
+        analysis_df = df[(df['date'].dt.date >= since_date_dt) & (df['date'].dt.date <= until_date_dt)]
         
         print(f"DEBUG: Analysis DF has {len(analysis_df)} records from {analysis_df['date'].min() if not analysis_df.empty else 'N/A'} to {analysis_df['date'].max() if not analysis_df.empty else 'N/A'}")
         
