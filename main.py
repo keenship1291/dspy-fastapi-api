@@ -65,13 +65,13 @@ async def marketing_root():
     }
 
 def get_comprehensive_query(date_filter, period_name, analysis_depth):
-    """Generate comprehensive query with proper CTEs"""
+    """Generate comprehensive query with proper CTEs using utm_campaign_mapped table"""
     base_query = f"""
     WITH meta_aggregated_by_campaign AS (
-      -- Pre-aggregate Meta data by utm_campaign and date 
+      -- Pre-aggregate Meta data by utm_campaign and date using utm_campaign_mapped table
       -- This gives us the TRUE platform metrics regardless of hex mapping
       SELECT 
-        mm.utm_campaign,
+        ucm.utm_campaign_mapped as utm_campaign,
         m.date,
         SUM(SAFE_CAST(m.spend AS FLOAT64)) as meta_spend,
         SUM(SAFE_CAST(m.impressions AS INT64)) as meta_impressions,
@@ -79,10 +79,11 @@ def get_comprehensive_query(date_filter, period_name, analysis_depth):
         SUM(SAFE_CAST(m.leads AS INT64)) as meta_leads,
         SUM(SAFE_CAST(m.purchases AS INT64)) as meta_purchases,
         SUM(SAFE_CAST(m.landing_page_views AS INT64)) as meta_landing_page_views
-      FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm
+      FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.utm_campaign_mapped` ucm
       JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data` m 
-        ON mm.adset_name_mapped = m.adset_name
-      GROUP BY mm.utm_campaign, m.date
+        ON ucm.campaign_name = m.campaign_name
+        AND ucm.adset_name = m.adset_name
+      GROUP BY ucm.utm_campaign_mapped, m.date
     ),
     google_aggregated_by_campaign AS (
       -- Pre-aggregate Google data by campaign and date
@@ -238,23 +239,24 @@ def get_comprehensive_query(date_filter, period_name, analysis_depth):
     return base_query
 
 def get_campaign_performance_query(last_7_days_start, last_7_days_end):
-    """Generate campaign performance query"""
+    """Generate campaign performance query using utm_campaign_mapped table"""
     return f"""
     WITH meta_by_campaign AS (
       SELECT 
-        mm.utm_campaign,
+        ucm.utm_campaign_mapped as utm_campaign,
         m.date,
         SUM(SAFE_CAST(m.spend AS FLOAT64)) as spend
-      FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm
+      FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.utm_campaign_mapped` ucm
       JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data` m 
-        ON mm.adset_name_mapped = m.adset_name
-      GROUP BY mm.utm_campaign, m.date
+        ON ucm.campaign_name = m.campaign_name
+        AND ucm.adset_name = m.adset_name
+      GROUP BY ucm.utm_campaign_mapped, m.date
     )
     
     SELECT 
       h.utm_campaign,
-      mm.campaign_name_mapped AS campaign_name,
-      mm.adset_name_mapped,
+      ucm.campaign_name AS campaign_name,
+      ucm.adset_name,
       
       -- Total Metrics
       SUM(h.leads) as total_leads,
@@ -273,11 +275,11 @@ def get_campaign_performance_query(last_7_days_start, last_7_days_end):
       SAFE_DIVIDE(SUM(COALESCE(g.spend_usd, 0)), SUM(COALESCE(mc.spend, 0)) + SUM(COALESCE(g.spend_usd, 0))) * 100 as google_spend_percentage
 
     FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data` h
-    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm ON h.utm_campaign = mm.utm_campaign
+    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.utm_campaign_mapped` ucm ON h.utm_campaign = ucm.utm_campaign_mapped
     LEFT JOIN meta_by_campaign mc ON h.utm_campaign = mc.utm_campaign AND h.date = mc.date
     LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data` g ON h.utm_campaign = g.campaign_name AND h.date = g.date
     WHERE h.date BETWEEN "{last_7_days_start}" AND "{last_7_days_end}"
-    GROUP BY h.utm_campaign, mm.campaign_name_mapped, mm.adset_name_mapped
+    GROUP BY h.utm_campaign, ucm.campaign_name, ucm.adset_name
     HAVING SUM(h.leads) > 0
     ORDER BY total_combined_spend DESC
     """
@@ -1045,3 +1047,4 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
             message="Comprehensive analysis failed",
             error=str(e)
         )
+                "
