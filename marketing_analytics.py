@@ -65,13 +65,13 @@ async def marketing_root():
     }
 
 def get_comprehensive_query(date_filter, period_name, analysis_depth):
-    """Generate comprehensive query with proper CTEs using utm_campaign_mapped table"""
+    """Generate comprehensive query with proper CTEs"""
     base_query = f"""
     WITH meta_aggregated_by_campaign AS (
-      -- Pre-aggregate Meta data by utm_campaign and date using utm_campaign_mapped table
+      -- Pre-aggregate Meta data by utm_campaign and date 
       -- This gives us the TRUE platform metrics regardless of hex mapping
       SELECT 
-        ucm.utm_campaign_mapped as utm_campaign,
+        mm.utm_campaign,
         m.date,
         SUM(SAFE_CAST(m.spend AS FLOAT64)) as meta_spend,
         SUM(SAFE_CAST(m.impressions AS INT64)) as meta_impressions,
@@ -79,11 +79,10 @@ def get_comprehensive_query(date_filter, period_name, analysis_depth):
         SUM(SAFE_CAST(m.leads AS INT64)) as meta_leads,
         SUM(SAFE_CAST(m.purchases AS INT64)) as meta_purchases,
         SUM(SAFE_CAST(m.landing_page_views AS INT64)) as meta_landing_page_views
-      FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.utm_campaign_mapped` ucm
+      FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm
       JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data` m 
-        ON ucm.campaign_name = m.campaign_name
-        AND ucm.adset_name = m.adset_name
-      GROUP BY ucm.utm_campaign_mapped, m.date
+        ON mm.adset_name_mapped = m.adset_name
+      GROUP BY mm.utm_campaign, m.date
     ),
     google_aggregated_by_campaign AS (
       -- Pre-aggregate Google data by campaign and date
@@ -239,24 +238,23 @@ def get_comprehensive_query(date_filter, period_name, analysis_depth):
     return base_query
 
 def get_campaign_performance_query(last_7_days_start, last_7_days_end):
-    """Generate campaign performance query using utm_campaign_mapped table"""
+    """Generate campaign performance query"""
     return f"""
     WITH meta_by_campaign AS (
       SELECT 
-        ucm.utm_campaign_mapped as utm_campaign,
+        mm.utm_campaign,
         m.date,
         SUM(SAFE_CAST(m.spend AS FLOAT64)) as spend
-      FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.utm_campaign_mapped` ucm
+      FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm
       JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data` m 
-        ON ucm.campaign_name = m.campaign_name
-        AND ucm.adset_name = m.adset_name
-      GROUP BY ucm.utm_campaign_mapped, m.date
+        ON mm.adset_name_mapped = m.adset_name
+      GROUP BY mm.utm_campaign, m.date
     )
     
     SELECT 
       h.utm_campaign,
-      ucm.campaign_name AS campaign_name,
-      ucm.adset_name,
+      mm.campaign_name_mapped AS campaign_name,
+      mm.adset_name_mapped,
       
       -- Total Metrics
       SUM(h.leads) as total_leads,
@@ -275,11 +273,11 @@ def get_campaign_performance_query(last_7_days_start, last_7_days_end):
       SAFE_DIVIDE(SUM(COALESCE(g.spend_usd, 0)), SUM(COALESCE(mc.spend, 0)) + SUM(COALESCE(g.spend_usd, 0))) * 100 as google_spend_percentage
 
     FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data` h
-    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.utm_campaign_mapped` ucm ON h.utm_campaign = ucm.utm_campaign_mapped
+    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm ON h.utm_campaign = mm.utm_campaign
     LEFT JOIN meta_by_campaign mc ON h.utm_campaign = mc.utm_campaign AND h.date = mc.date
     LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data` g ON h.utm_campaign = g.campaign_name AND h.date = g.date
     WHERE h.date BETWEEN "{last_7_days_start}" AND "{last_7_days_end}"
-    GROUP BY h.utm_campaign, ucm.campaign_name, ucm.adset_name
+    GROUP BY h.utm_campaign, mm.campaign_name_mapped, mm.adset_name_mapped
     HAVING SUM(h.leads) > 0
     ORDER BY total_combined_spend DESC
     """
@@ -1023,4 +1021,27 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
             status="success",
             message="Comprehensive analysis with enhanced cross-platform insights completed",
             data={
-                "
+                "claude_analysis": claude_analysis,
+                "raw_data": {
+                    "yesterday": data.get('yesterday', {}),
+                    "same_day_last_week": data.get('same_day_last_week', {}),
+                    "last_7_days": data.get('last_7_days', {}),
+                    "previous_7_days": data.get('previous_7_days', {})
+                },
+                "campaign_performance": data.get('campaign_performance', []),
+                "debug_info": {
+                    "yesterday_paid_social_spend": data.get('yesterday', {}).get('paid_social_spend', 0),
+                    "yesterday_paid_search_video_spend": data.get('yesterday', {}).get('paid_search_video_spend', 0),
+                    "last_7_days_paid_social_spend": data.get('last_7_days', {}).get('paid_social_spend', 0),
+                    "last_7_days_paid_search_video_spend": data.get('last_7_days', {}).get('paid_search_video_spend', 0),
+                    "total_campaigns": len(data.get('campaign_performance', []))
+                }
+            }
+        )
+        
+    except Exception as e:
+        return TrendAnalysisResponse(
+            status="error",
+            message="Comprehensive analysis failed",
+            error=str(e)
+        )
