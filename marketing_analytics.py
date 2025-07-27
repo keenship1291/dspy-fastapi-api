@@ -59,7 +59,7 @@ marketing_router = APIRouter(prefix="/marketing", tags=["marketing"])
 async def marketing_root():
     return {
         "message": "Marketing Analytics API - Claude Analysis with Channel Separation",
-        "version": "5.1.0",
+        "version": "6.1.0",
         "status": "running",
         "bigquery_available": BIGQUERY_AVAILABLE
     }
@@ -340,8 +340,8 @@ def execute_comprehensive_sql(request: TrendAnalysisRequest):
     
     return results
 
-def generate_claude_analysis(data):
-    """Generate comprehensive cross-platform analysis with specific numbers and outlier detection"""
+def generate_enhanced_claude_analysis(data):
+    """Generate enhanced cross-platform analysis with specific numbers and outlier detection"""
     
     def safe_get(data_dict, key, default=0):
         val = data_dict.get(key, default)
@@ -370,12 +370,153 @@ def generate_claude_analysis(data):
     def format_percentage(value):
         return f"{value:.1f}%" if value else "0.0%"
     
-    # Extract data for both channels and periods
+    # Extract data
     yesterday = data.get('yesterday', {})
     same_day_last_week = data.get('same_day_last_week', {})
     last_7_days = data.get('last_7_days', {})
     previous_7_days = data.get('previous_7_days', {})
     campaign_performance = data.get('campaign_performance', [])
+    
+    insights = []
+    
+    # Cross-platform correlation analysis
+    ps_spend_curr = safe_get(yesterday, 'paid_social_spend')
+    ps_spend_prev = safe_get(same_day_last_week, 'paid_social_spend')
+    psv_spend_curr = safe_get(yesterday, 'paid_search_video_spend')
+    psv_spend_prev = safe_get(same_day_last_week, 'paid_search_video_spend')
+    
+    ps_ctr_curr = safe_get(yesterday, 'paid_social_ctr')
+    ps_ctr_prev = safe_get(same_day_last_week, 'paid_social_ctr')
+    psv_leads_curr = safe_get(yesterday, 'paid_search_video_leads')
+    psv_leads_prev = safe_get(same_day_last_week, 'paid_search_video_leads')
+    
+    ps_leads_curr = safe_get(yesterday, 'paid_social_leads')
+    ps_leads_prev = safe_get(same_day_last_week, 'paid_social_leads')
+    
+    # Calculate changes
+    ps_spend_change = calc_change(ps_spend_curr, ps_spend_prev)
+    psv_spend_change = calc_change(psv_spend_curr, psv_spend_prev)
+    ps_ctr_change = calc_change(ps_ctr_curr, ps_ctr_prev)
+    psv_leads_change = calc_change(psv_leads_curr, psv_leads_prev)
+    ps_leads_change = calc_change(ps_leads_curr, ps_leads_prev)
+    
+    # Brand awareness effect detection
+    if ps_ctr_change > 15 and psv_leads_change > 10:
+        insights.append(f"Social CTR surge (+{ps_ctr_change:.1f}% to {format_percentage(ps_ctr_curr)}) driving Search+Video lead growth (+{psv_leads_change:.1f}% to {format_number(psv_leads_curr)} leads) - strong brand awareness effect")
+    
+    # Spend reallocation insights
+    if abs(ps_spend_change) > 20 or abs(psv_spend_change) > 20:
+        total_spend = ps_spend_curr + psv_spend_curr
+        if total_spend > 0:
+            ps_share = ps_spend_curr / total_spend * 100
+            psv_share = psv_spend_curr / total_spend * 100
+            
+            if ps_spend_change > 20 and psv_spend_change < -10:
+                insights.append(f"Major spend shift: Social increased to {format_currency(ps_spend_curr)} (+{ps_spend_change:.1f}%) while Search+Video dropped to {format_currency(psv_spend_curr)} ({psv_spend_change:.1f}%) - now {format_percentage(ps_share)} social vs {format_percentage(psv_share)} search allocation")
+            elif psv_spend_change > 20 and ps_spend_change < -10:
+                insights.append(f"Search+Video investment surge: {format_currency(psv_spend_curr)} (+{psv_spend_change:.1f}%) vs Social {format_currency(ps_spend_curr)} ({ps_spend_change:.1f}%) - {format_percentage(psv_share)} search vs {format_percentage(ps_share)} social allocation")
+    
+    # Efficiency comparison
+    ps_cost_per_lead = safe_get(yesterday, 'paid_social_cost_per_lead')
+    psv_cost_per_lead = safe_get(yesterday, 'paid_search_video_cost_per_lead')
+    
+    if ps_cost_per_lead > 0 and psv_cost_per_lead > 0:
+        if ps_cost_per_lead < psv_cost_per_lead * 0.7:
+            efficiency_diff = ((psv_cost_per_lead - ps_cost_per_lead) / psv_cost_per_lead) * 100
+            insights.append(f"Social significantly outperforming: {format_currency(ps_cost_per_lead)} cost/lead vs Search+Video {format_currency(psv_cost_per_lead)} ({efficiency_diff:.0f}% more efficient)")
+        elif psv_cost_per_lead < ps_cost_per_lead * 0.7:
+            efficiency_diff = ((ps_cost_per_lead - psv_cost_per_lead) / ps_cost_per_lead) * 100
+            insights.append(f"Search+Video dominating efficiency: {format_currency(psv_cost_per_lead)} cost/lead vs Social {format_currency(ps_cost_per_lead)} ({efficiency_diff:.0f}% more efficient)")
+    
+    # Campaign outlier detection
+    if campaign_performance:
+        total_spends = [safe_get(camp, 'total_combined_spend') for camp in campaign_performance if safe_get(camp, 'total_combined_spend') > 0]
+        cost_per_leads = [safe_get(camp, 'cost_per_lead') for camp in campaign_performance if safe_get(camp, 'cost_per_lead') > 0]
+        funded_rates = [safe_get(camp, 'lead_to_funded_rate') for camp in campaign_performance if safe_get(camp, 'lead_to_funded_rate') > 0]
+        
+        # High spend outlier
+        if total_spends and len(total_spends) > 1:
+            avg_spend = sum(total_spends) / len(total_spends)
+            max_spend_campaign = max(campaign_performance, key=lambda x: safe_get(x, 'total_combined_spend'))
+            max_spend = safe_get(max_spend_campaign, 'total_combined_spend')
+            
+            if max_spend > avg_spend * 2:
+                campaign_name = max_spend_campaign.get('campaign_name', max_spend_campaign.get('utm_campaign', 'Unknown'))[:30]
+                insights.append(f"High spend outlier: '{campaign_name}' at {format_currency(max_spend)} ({(max_spend/avg_spend):.1f}x average)")
+        
+        # Cost efficiency outliers
+        if cost_per_leads and len(cost_per_leads) > 1:
+            avg_cpl = sum(cost_per_leads) / len(cost_per_leads)
+            low_cpl_campaigns = [c for c in campaign_performance if safe_get(c, 'cost_per_lead') > 0 and safe_get(c, 'cost_per_lead') < avg_cpl * 0.5]
+            
+            if low_cpl_campaigns:
+                best_campaign = min(low_cpl_campaigns, key=lambda x: safe_get(x, 'cost_per_lead'))
+                campaign_name = best_campaign.get('campaign_name', best_campaign.get('utm_campaign', 'Unknown'))[:30]
+                best_cpl = safe_get(best_campaign, 'cost_per_lead')
+                insights.append(f"Efficient performer: '{campaign_name}' at {format_currency(best_cpl)} ({avg_cpl/best_cpl:.1f}x better than average)")
+        
+        # Conversion champion
+        if funded_rates and len(funded_rates) > 1:
+            avg_funded_rate = sum(funded_rates) / len(funded_rates)
+            high_funded_campaigns = [c for c in campaign_performance if safe_get(c, 'lead_to_funded_rate') > avg_funded_rate * 1.5]
+            
+            if high_funded_campaigns:
+                best_funded_campaign = max(high_funded_campaigns, key=lambda x: safe_get(x, 'lead_to_funded_rate'))
+                campaign_name = best_funded_campaign.get('campaign_name', best_funded_campaign.get('utm_campaign', 'Unknown'))[:30]
+                best_funded_rate = safe_get(best_funded_campaign, 'lead_to_funded_rate')
+                insights.append(f"Conversion champion: '{campaign_name}' with {format_percentage(best_funded_rate)} funded rate ({(best_funded_rate/avg_funded_rate):.1f}x average)")
+    
+    # Generate final message
+    if not insights:
+        message = "Performance relatively stable across channels with no significant cross-platform trends or outliers detected"
+    else:
+        message = " | ".join(insights[:3])  # Take top 3 insights
+    
+    # Determine color code
+    high_impact_keywords = ['surge', 'dominating', 'significantly outperforming', 'champion', 'efficient performer']
+    warning_keywords = ['outlier', 'shift', 'dropped']
+    
+    if any(keyword in message.lower() for keyword in high_impact_keywords):
+        color_code = "green"
+    elif any(keyword in message.lower() for keyword in warning_keywords):
+        color_code = "yellow"
+    else:
+        color_code = "green"
+    
+    return message, color_code
+
+def generate_claude_analysis(data):
+    """Generate analysis with enhanced cross-platform insights"""
+    
+    def safe_get(data_dict, key, default=0):
+        val = data_dict.get(key, default)
+        return float(val) if val is not None else default
+    
+    def calc_change(current, previous):
+        if previous == 0:
+            return 100.0 if current > 0 else 0.0
+        return ((current - previous) / previous) * 100
+    
+    def format_value_with_change(current, previous, is_percentage=False, is_currency=False):
+        change = calc_change(current, previous)
+        if is_percentage:
+            return f"{current:.1f}% ({change:+.1f}%)"
+        elif is_currency:
+            return f"${current:.2f} ({change:+.1f}%)"
+        else:
+            return f"{current:,.0f} ({change:+.1f}%)"
+    
+    # Extract data for both channels and periods
+    yesterday = data.get('yesterday', {})
+    same_day_last_week = data.get('same_day_last_week', {})
+    last_7_days = data.get('last_7_days', {})
+    previous_7_days = data.get('previous_7_days', {})
+    
+    # Generate enhanced message and color code
+    message, color_code = generate_enhanced_claude_analysis(data)
+    
+    # PAID SOCIAL DAY-OVER-DAY
+    ps_dod = {
         "totalSpend": format_value_with_change(
             safe_get(yesterday, 'paid_social_spend'),
             safe_get(same_day_last_week, 'paid_social_spend'),
@@ -722,47 +863,6 @@ def generate_claude_analysis(data):
         )
     }
     
-    # Generate insights message based on key metrics
-    ps_spend_change = calc_change(safe_get(yesterday, 'paid_social_spend'), safe_get(same_day_last_week, 'paid_social_spend'))
-    ps_ctr_change = calc_change(safe_get(yesterday, 'paid_social_ctr'), safe_get(same_day_last_week, 'paid_social_ctr'))
-    ps_funded_cvr_change = calc_change(safe_get(yesterday, 'paid_social_funded_cvr'), safe_get(same_day_last_week, 'paid_social_funded_cvr'))
-    
-    psv_spend_change = calc_change(safe_get(yesterday, 'paid_search_video_spend'), safe_get(same_day_last_week, 'paid_search_video_spend'))
-    psv_ctr_change = calc_change(safe_get(yesterday, 'paid_search_video_ctr'), safe_get(same_day_last_week, 'paid_search_video_ctr'))
-    
-    # Generate insights message
-    insights = []
-    if abs(ps_ctr_change) > 10:
-        if ps_ctr_change > 0:
-            insights.append("Social campaigns showing strong CTR gains")
-        else:
-            insights.append("Social CTR declining - test new creative angles")
-    
-    if abs(ps_funded_cvr_change) > 15:
-        if ps_funded_cvr_change > 0:
-            insights.append("significant funded conversion rate improvement")
-        else:
-            insights.append("funded CVR dropping - review closing process")
-    
-    if abs(psv_ctr_change) > 10:
-        if psv_ctr_change > 0:
-            insights.append("Search+Video CTR performing well")
-        else:
-            insights.append("Search+Video needs keyword optimization")
-    
-    if not insights:
-        insights.append("Performance relatively stable across channels")
-    
-    message = " - ".join(insights[:2])  # Take first 2 insights
-    
-    # Determine color code
-    if ps_spend_change > 20 or psv_spend_change > 20 or ps_ctr_change < -15 or psv_ctr_change < -15:
-        color_code = "red"
-    elif ps_ctr_change < -5 or psv_ctr_change < -5 or abs(ps_spend_change) > 10:
-        color_code = "yellow"
-    else:
-        color_code = "green"
-    
     return {
         "message": message,
         "colorCode": color_code,
@@ -795,7 +895,7 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
         
         return TrendAnalysisResponse(
             status="success",
-            message="Comprehensive analysis with proper SQL integration completed",
+            message="Comprehensive analysis with enhanced cross-platform insights completed",
             data={
                 "claude_analysis": claude_analysis,
                 "raw_data": {
