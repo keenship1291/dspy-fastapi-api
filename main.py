@@ -1,1048 +1,839 @@
-# marketing_analytics.py - CLAUDE ANALYSIS WITH CHANNEL SEPARATION
-from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
-from typing import List, Dict, Optional, Any
-import dspy
+from google.cloud import bigquery
+import pandas as pd
+from fastapi import FastAPI, Request, HTTPException
 import os
-from datetime import datetime, timedelta, date
-import logging
-from google.oauth2 import service_account
+from datetime import datetime, timezone, timedelta
+from anthropic import Anthropic
+import dspy
+from pydantic import BaseModel
 import json
+from typing import List, Dict, Optional
+import re
 
-# Only import these if available (so app doesn't crash if missing)
+# Database imports
+from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text, text
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.exc import IntegrityError
+
+# Load API key from environment variable (set in Railway dashboard)
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+if not ANTHROPIC_API_KEY:
+    raise ValueError("ANTHROPIC_API_KEY environment variable not set")
+
+# Database Configuration
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable not set")
+
+# Create database engine
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+# Database Models
+class FBPost(Base):
+    __tablename__ = "fb_posts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    ad_account_name = Column(String, index=True)
+    campaign_name = Column(String, index=True)
+    ad_set_name = Column(String)
+    ad_name = Column(String)
+    page_id = Column(String, index=True)
+    post_id = Column(String, unique=True, index=True)
+    object_story_id = Column(String, unique=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class ResponseEntry(Base):
+    __tablename__ = "responses"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    comment = Column(Text)
+    action = Column(String, index=True)
+    reply = Column(Text)
+    reasoning = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+# Create tables
+Base.metadata.create_all(bind=engine)
+
+# NOW import marketing router after database is set up
 try:
-    from google.cloud import bigquery
-    import pandas as pd
-    BIGQUERY_AVAILABLE = True
-except ImportError:
-    BIGQUERY_AVAILABLE = False
-    bigquery = None
-    pd = None
+    from marketing_analytics import marketing_router
+    MARKETING_AVAILABLE = True
+    print("✅ Marketing analytics loaded successfully")
+except Exception as e:
+    MARKETING_AVAILABLE = False
+    marketing_router = None
+    print(f"⚠️ Marketing analytics failed to load: {e}")
 
-# BigQuery setup
-PROJECT_ID = "gtm-p3gj3zzk-nthlo"
-DATASET_ID = "last_14_days_analysis"
+# Centralized Business Rules - Single Source of Truth
+BUSINESS_RULES = """
+COMPANY POSITION:
+- LeaseEnd helps drivers get loans in their name with competitive options, completely online
+- We connect customers with lenders (NOT third-party financing)
+- Challenge false information politely
 
-if BIGQUERY_AVAILABLE:
+ACTIONS:
+- REPLY: Genuine questions, prospects, positive feedback, correctable misinformation
+- REACT: Positive comments needing no response
+- DELETE: Accusations, spam, hostility, excessive arguing, brief negatives, negative Leaseend experiences, chidlish comments
+- LEAVE_ALONE: Harmless off-topic or neutral tagged comments, so anything with a name in front or referencing another name
+
+BRAND VOICE:
+- Professional but conversational
+- Confident in lease analysis expertise
+- Concise responses focused on THEIR specific situation
+- Loan facilitators, not lenders
+
+RESPONSE GUIDELINES (if REPLY):
+- Address their specific concern or statement directly
+- Focus on providing genuine insight that positions us as an authority
+- Don't need to mention what Lease End does unless specifically asked
+- NEVER include dollar amounts, percentages, or rates
+- If alternative options besides Lease End are mentioned delete the comment
+- If asked about costs or fees of our service respond with this default answer, "We charge a doc fee, which pays for the service we provide. The only additional amount you will pay beyond the price of your vehicle, would be for tax, title and registration fees, which you would pay regardless of whatever route you choose."
+- 3 sentences maximum
+
+COMPETITIVE ADVANTAGES:
+- vs Dealerships: No pressure, transparent, 100% online
+- vs Credit Unions: No membership required, flexible, fast
+- vs Banks: Competitive rates, simple, customer-focused
+
+WEBSITE CTA "fill out form on our site" - ONLY for:
+- High-intent prospects showing clear purchase intent
+- NOT for casual browsers or general questions
+
+PHONE NUMBER (844) 679-1188 - ONLY for:
+- Explicit contact requests ("call me", "speak to someone")
+- Hesitation ("not sure", "worried", "what's the catch")
+- Confusion ("don't understand", "complicated")
+- Urgency ("urgent", "asap")
+- NOT for general interest ("interested", "how much", "can I qualify")
+"""
+
+# Custom Anthropic LM for DSPy (unchanged)
+class CustomAnthropic(dspy.LM):
+    def __init__(self, api_key):
+        self.client = Anthropic(api_key=api_key)
+        self.model = "claude-sonnet-4-20250514"
+        self.kwargs = {"max_tokens": 1000}
+        self.history = []
+        
+    def basic_request(self, prompt, **kwargs):
+        """Core method that handles the actual API call"""
+        try:
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=kwargs.get('max_tokens', 1000),
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            return response.content[0].text
+        except Exception as e:
+            print(f"Error calling Anthropic API: {e}")
+            return "Error generating response"
+    
+    def __call__(self, prompt=None, messages=None, **kwargs):
+        """Handle different calling patterns DSPy might use"""
+        if prompt is None and messages is not None:
+            if isinstance(messages, list) and len(messages) > 0:
+                prompt = messages[-1].get('content', '') if isinstance(messages[-1], dict) else str(messages[-1])
+            else:
+                prompt = str(messages)
+        elif prompt is None:
+            prompt = ""
+            
+        result = self.basic_request(prompt, **kwargs)
+        return [result]
+    
+    def generate(self, prompt, **kwargs):
+        return self.__call__(prompt, **kwargs)
+    
+    def request(self, prompt, **kwargs):
+        return self.basic_request(prompt, **kwargs)
+
+# Configure DSPy
+try:
+    claude = CustomAnthropic(api_key=ANTHROPIC_API_KEY)
+    dspy.settings.configure(lm=claude)
+except Exception as e:
+    raise ValueError(f"Failed to configure DSPy: {str(e)}")
+
+# Load training data from database
+def load_training_data():
+    """Load training examples from database"""
+    print("🔄 Loading training data from database...")
+    
     try:
-        # Try to get credentials from environment
-        credentials_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-        if credentials_json:
-            credentials_info = json.loads(credentials_json)
-            credentials = service_account.Credentials.from_service_account_info(credentials_info)
-            bigquery_client = bigquery.Client(credentials=credentials, project=PROJECT_ID)
-        else:
-            # Fallback to default credentials
-            bigquery_client = bigquery.Client(project=PROJECT_ID)
+        db = SessionLocal()
+        responses = db.query(ResponseEntry).all()
+        db.close()
+        
+        training_data = []
+        for response in responses:
+            training_data.append({
+                'comment': response.comment,
+                'action': response.action,
+                'reply': response.reply,
+                'reasoning': response.reasoning
+            })
+        
+        print(f"✅ Loaded {len(training_data)} training examples from database")
+        return training_data
     except Exception as e:
-        print(f"BigQuery client initialization failed: {e}")
-        bigquery_client = None
-else:
-    bigquery_client = None
+        print(f"❌ Error loading training data: {e}")
+        return []
+
+# Global training data
+TRAINING_DATA = load_training_data()
+
+def reload_training_data():
+    """Reload training data from database"""
+    global TRAINING_DATA
+    TRAINING_DATA = load_training_data()
+    return len(TRAINING_DATA)
+
+def filter_numerical_values(text):
+    """Remove any numerical values (dollars, percentages, rates) from response text"""
+    
+    # Remove dollar amounts ($X, $X.XX, $X,XXX, etc.)
+    text = re.sub(r'\$[\d,]+(?:\.\d{2})?', '', text)
+    
+    # Remove percentages (X%, X.X%, XX.XX%, etc.)
+    text = re.sub(r'\b\d+(?:\.\d+)?%', '', text)
+    
+    # Remove APR/interest rate patterns (X.X% APR, X% interest, etc.)
+    text = re.sub(r'\b\d+(?:\.\d+)?\s*%?\s*(?:APR|apr|interest|rate)', '', text)
+    
+    # Remove standalone numbers that might be rates (like "4.5" or "6.2")
+    text = re.sub(r'\b\d+\.\d+\b(?=\s*(?:rate|APR|interest|%|percent))', '', text)
+    
+    # Clean up any double spaces or awkward spacing created by removals
+    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r'\s+([,.!?])', r'\1', text)  # Remove space before punctuation
+    
+    return text.strip()
+
+# Database dependency
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def process_comment_with_ai(comment, commentId=""):
+    """Unified comment analysis and response generation using centralized rules"""
+    
+    prompt = f"""You are analyzing and responding to comments for LeaseEnd.com, which helps drivers get loans for lease buyouts.
+
+{BUSINESS_RULES}
+
+COMMENT: "{comment}"
+
+Respond in this JSON format: 
+{{
+    "sentiment": "...", 
+    "action": "REPLY/REACT/DELETE/LEAVE_ALONE", 
+    "reasoning": "...", 
+    "high_intent": true/false, 
+    "needs_phone": true/false,
+    "reply": "..." (only include if action is REPLY, otherwise empty string)
+}}"""
+
+    try:
+        response = claude.basic_request(prompt)
+        response_clean = response.strip()
+        
+        if response_clean.startswith('```'):
+            lines = response_clean.split('\n')
+            response_clean = '\n'.join([line for line in lines if not line.startswith('```')])
+        
+        try:
+            result = json.loads(response_clean)
+            
+            # Clean the reply if it exists
+            reply = result.get('reply', '')
+            if reply:
+                reply = filter_numerical_values(reply.strip())
+                # Ensure phone number format is correct if present
+                if '844' in reply and '679-1188' in reply:
+                    reply = re.sub(r'\(?844\)?[-.\s]*679[-.\s]*1188', '(844) 679-1188', reply)
+            
+            return {
+                'sentiment': result.get('sentiment', 'Neutral'),
+                'action': result.get('action', 'LEAVE_ALONE'),
+                'reasoning': result.get('reasoning', 'No reasoning provided'),
+                'high_intent': result.get('high_intent', False),
+                'needs_phone': result.get('needs_phone', False),
+                'reply': reply
+            }
+            
+        except json.JSONDecodeError:
+            # Enhanced fallback parsing
+            if any(word in response.upper() for word in ['DELETE', 'SCAM', 'FALSE INFO', 'LIES', 'FRAUD']):
+                action = 'DELETE'
+                reasoning = "Detected negative/accusatory content"
+            elif 'REPLY' in response.upper():
+                action = 'REPLY'
+                reasoning = "Detected genuine prospect or question"
+            else:
+                action = 'LEAVE_ALONE'
+                reasoning = "Fallback classification"
+                
+            return {
+                'sentiment': 'Neutral',
+                'action': action,
+                'reasoning': reasoning,
+                'high_intent': False,
+                'needs_phone': False,
+                'reply': "Thank you for your comment! We'd be happy to help analyze your specific lease situation." if action == 'REPLY' else ""
+            }
+            
+    except Exception as e:
+        return {
+            'sentiment': 'Neutral',
+            'action': 'LEAVE_ALONE',
+            'reasoning': f'Processing error: {str(e)}',
+            'high_intent': False,
+            'needs_phone': False,
+            'reply': ""
+        }
 
 # Pydantic Models
-class TrendAnalysisRequest(BaseModel):
-    date_range: Dict[str, str]
-    include_historical: bool = True
-    analysis_depth: str = "standard"
+class CommentRequest(BaseModel):
+    comment: Optional[str] = None
+    message: Optional[str] = None
+    commentId: Optional[str] = None
+    postId: Optional[str] = None
+    created_time: Optional[str] = ""
+    memory_context: Optional[str] = ""
+    
+    def get_comment_text(self) -> str:
+        return (self.comment or self.message or "No message content").strip()
+    
+    def get_comment_id(self) -> str:
+        return (self.commentId or self.postId or "unknown").strip()
 
-class TrendAnalysisResponse(BaseModel):
-    status: str
-    message: str
-    data: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
+class ProcessedComment(BaseModel):
+    commentId: str
+    original_comment: str
+    category: str
+    action: str
+    reply: str
+    confidence_score: float
+    approved: str
+    reasoning: str
 
-# Create router
-marketing_router = APIRouter(prefix="/marketing", tags=["marketing"])
+class FeedbackRequest(BaseModel):
+    original_comment: str
+    original_response: str = ""
+    original_action: str
+    feedback_text: str
+    commentId: str
+    current_version: str = "v1"
+    
+    class Config:
+        extra = "ignore"
 
-@marketing_router.get("/")
-async def marketing_root():
+class ApproveRequest(BaseModel):
+    original_comment: str
+    action: str
+    reply: str
+    reasoning: str = ""
+    created_time: Optional[str] = ""
+    
+    class Config:
+        extra = "ignore"
+
+class FBPostCreate(BaseModel):
+    ad_account_name: str
+    campaign_name: str
+    ad_set_name: str
+    ad_name: str
+    page_id: str
+    post_id: str
+    object_story_id: str
+
+class ResponseCreate(BaseModel):
+    comment: str
+    action: str
+    reply: str
+    reasoning: Optional[str] = ""
+
+app = FastAPI()
+
+# Include marketing router only if it loaded successfully
+if MARKETING_AVAILABLE and marketing_router:
+    app.include_router(marketing_router)
+
+@app.get("/")
+def read_root():
     return {
-        "message": "Marketing Analytics API - Claude Analysis with Channel Separation",
-        "version": "6.1.0",
-        "status": "running",
-        "bigquery_available": BIGQUERY_AVAILABLE
+        "message": "Lease End AI Assistant - CENTRALIZED RULES + Marketing Analytics",
+        "version": "32.0-WITH-MARKETING-ANALYTICS", 
+        "training_examples": len(TRAINING_DATA),
+        "status": "RUNNING",
+        "features": [
+            "Centralized Business Rules", 
+            "Consistent Endpoints", 
+            "Simplified Architecture",
+            "Marketing Trends Analysis",  # NEW
+            "BigQuery Integration"        # NEW
+        ],
+        "endpoints": {
+            "ai_assistant": [
+                "/process-comment",
+                "/process-feedback", 
+                "/approve-response"
+            ],
+            "marketing_analytics": [    # NEW SECTION
+                "/marketing/analyze-trends",
+                "/marketing/trend-history",
+                "/marketing/test-bigquery"
+            ],
+            "data_management": [
+                "/fb-posts",
+                "/responses",
+                "/stats"
+            ]
+        }
     }
 
-def get_comprehensive_query(date_filter, period_name, analysis_depth):
-    """Generate comprehensive query with proper CTEs"""
-    base_query = f"""
-    WITH meta_aggregated_by_campaign AS (
-      -- Pre-aggregate Meta data by utm_campaign and date 
-      SELECT 
-        ucm.utm_campaign_mapped as utm_campaign,
-        m.date,
-        SUM(SAFE_CAST(m.spend AS FLOAT64)) as meta_spend,
-        SUM(SAFE_CAST(m.impressions AS INT64)) as meta_impressions,
-        SUM(SAFE_CAST(m.clicks AS INT64)) as meta_clicks,
-        SUM(SAFE_CAST(m.leads AS INT64)) as meta_leads,
-        SUM(SAFE_CAST(m.purchases AS INT64)) as meta_purchases,
-        SUM(SAFE_CAST(m.landing_page_views AS INT64)) as meta_landing_page_views
-      FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.utm_campaign_mapped` ucm
-      JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data` m 
-        ON ucm.campaign_name = m.campaign_name
-        AND ucm.adset_name = m.adset_name
-      GROUP BY ucm.utm_campaign_mapped, m.date
-    ),
-    google_aggregated_by_campaign AS (
-      -- Pre-aggregate Google data by campaign and date
-      SELECT 
-        campaign_name as utm_campaign,
-        date,
-        SUM(spend_usd) as google_spend,
-        SUM(impressions) as google_impressions,
-        SUM(clicks) as google_clicks,
-        SUM(conversions) as google_conversions
-      FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data`
-      GROUP BY campaign_name, date
-    )
-    
-    SELECT 
-      '{period_name}' as period,
-      
-      -- Hex Funnel Metrics (prioritize hex_data for conversions)
-      SUM(h.leads) as hex_leads,
-      SUM(h.start_flows) as hex_start_flows,
-      SUM(h.estimates) as hex_estimates,
-      SUM(h.closings) as hex_closings,
-      SUM(h.funded) as hex_funded,
-      SUM(h.rpts) as hex_rpts,
-      
-      -- Meta Advertising Metrics (prioritize meta platform data)
-      SUM(COALESCE(ma.meta_spend, 0)) as meta_spend,
-      SUM(COALESCE(ma.meta_impressions, 0)) as meta_impressions,
-      SUM(COALESCE(ma.meta_clicks, 0)) as meta_clicks,
-      SUM(COALESCE(ma.meta_leads, 0)) as meta_leads,
-      SUM(COALESCE(ma.meta_purchases, 0)) as meta_purchases,
-      SUM(COALESCE(ma.meta_landing_page_views, 0)) as meta_landing_page_views,
-      
-      -- Google Advertising Metrics (prioritize google platform data)
-      SUM(COALESCE(ga.google_spend, 0)) as google_spend,
-      SUM(COALESCE(ga.google_impressions, 0)) as google_impressions,
-      SUM(COALESCE(ga.google_clicks, 0)) as google_clicks,
-      SUM(COALESCE(ga.google_conversions, 0)) as google_conversions,
-      
-      -- Combined Spend
-      SUM(COALESCE(ma.meta_spend, 0)) + SUM(COALESCE(ga.google_spend, 0)) as total_ad_spend,
-      
-      -- Conversion Rates (using hex_data as source of truth for conversions)
-      SAFE_DIVIDE(SUM(h.start_flows), SUM(h.leads)) * 100 as lead_to_start_flow_rate,
-      SAFE_DIVIDE(SUM(h.estimates), SUM(h.start_flows)) * 100 as start_flow_to_estimate_rate,
-      SAFE_DIVIDE(SUM(h.closings), SUM(h.estimates)) * 100 as estimate_to_closing_rate,
-      SAFE_DIVIDE(SUM(h.funded), SUM(h.closings)) * 100 as closing_to_funded_rate,
-      SAFE_DIVIDE(SUM(h.funded), SUM(h.leads)) * 100 as overall_lead_to_funded_rate,
-      
-      -- Cost Metrics (platform spend / hex conversions)
-      SAFE_DIVIDE(SUM(COALESCE(ma.meta_spend, 0)) + SUM(COALESCE(ga.google_spend, 0)), SUM(h.leads)) as cost_per_lead,
-      SAFE_DIVIDE(SUM(COALESCE(ma.meta_spend, 0)) + SUM(COALESCE(ga.google_spend, 0)), SUM(h.funded)) as cost_per_funded,
-      
-      -- CTR (platform metrics)
-      SAFE_DIVIDE(SUM(COALESCE(ma.meta_clicks, 0)) + SUM(COALESCE(ga.google_clicks, 0)), 
-                  SUM(COALESCE(ma.meta_impressions, 0)) + SUM(COALESCE(ga.google_impressions, 0))) * 100 as overall_ctr"""
-    
-    # Add channel-specific metrics only if analysis_depth is not "basic"
-    if analysis_depth != "basic":
-        base_query += f"""
-      
-      -- Channel-specific metrics (based on utm_medium from hex_data)
-      -- Meta platform spend for paid-social campaigns
-      ,SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_spend, 0) ELSE 0 END) as paid_social_spend,
-      -- Google platform spend for paid-search/paid-video campaigns  
-      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_spend, 0) ELSE 0 END) as paid_search_video_spend,
-      
-      -- Meta platform impressions for paid-social campaigns
-      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_impressions, 0) ELSE 0 END) as paid_social_impressions,
-      -- Google platform impressions for paid-search/paid-video campaigns
-      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_impressions, 0) ELSE 0 END) as paid_search_video_impressions,
-      
-      -- Meta platform clicks for paid-social campaigns
-      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_clicks, 0) ELSE 0 END) as paid_social_clicks,
-      -- Google platform clicks for paid-search/paid-video campaigns
-      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_clicks, 0) ELSE 0 END) as paid_search_video_clicks,
-      
-      -- Hex conversion data by channel (source of truth for conversions)
-      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.leads ELSE 0 END) as paid_social_leads,
-      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.leads ELSE 0 END) as paid_search_video_leads,
-      
-      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.estimates ELSE 0 END) as paid_social_estimates,
-      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.estimates ELSE 0 END) as paid_search_video_estimates,
-      
-      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.closings ELSE 0 END) as paid_social_closings,
-      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.closings ELSE 0 END) as paid_search_video_closings,
-      
-      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.funded ELSE 0 END) as paid_social_funded,
-      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.funded ELSE 0 END) as paid_search_video_funded,
-      
-      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.rpts ELSE 0 END) as paid_social_rpts,
-      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.rpts ELSE 0 END) as paid_search_video_rpts,
-      
-      -- Channel-specific conversion rates (platform clicks / hex conversions)
-      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_clicks, 0) ELSE 0 END), 
-                  SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_impressions, 0) ELSE 0 END)) * 100 as paid_social_ctr,
-      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_clicks, 0) ELSE 0 END), 
-                  SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_impressions, 0) ELSE 0 END)) * 100 as paid_search_video_ctr,
-      
-      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.estimates ELSE 0 END), 
-                  SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.leads ELSE 0 END)) * 100 as paid_social_estimate_cvr,
-      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.estimates ELSE 0 END), 
-                  SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.leads ELSE 0 END)) * 100 as paid_search_video_estimate_cvr,
-      
-      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.closings ELSE 0 END), 
-                  SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.estimates ELSE 0 END)) * 100 as paid_social_closing_cvr,
-      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.closings ELSE 0 END), 
-                  SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.estimates ELSE 0 END)) * 100 as paid_search_video_closing_cvr,
-      
-      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.funded ELSE 0 END), 
-                  SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.closings ELSE 0 END)) * 100 as paid_social_funded_cvr,
-      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.funded ELSE 0 END), 
-                  SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.closings ELSE 0 END)) * 100 as paid_search_video_funded_cvr,
-      
-      -- Channel-specific cost metrics (platform spend / platform impressions|clicks or hex conversions)
-      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_spend, 0) ELSE 0 END), 
-                  SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_impressions, 0) ELSE 0 END) / 1000) as paid_social_cpm,
-      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_spend, 0) ELSE 0 END), 
-                  SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_impressions, 0) ELSE 0 END) / 1000) as paid_search_video_cpm,
-      
-      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_spend, 0) ELSE 0 END), 
-                  SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_clicks, 0) ELSE 0 END)) as paid_social_cpc,
-      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_spend, 0) ELSE 0 END), 
-                  SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_clicks, 0) ELSE 0 END)) as paid_search_video_cpc,
-      
-      -- Platform spend / hex conversions (best of both worlds)
-      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_spend, 0) ELSE 0 END), 
-                  SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.leads ELSE 0 END)) as paid_social_cost_per_lead,
-      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_spend, 0) ELSE 0 END), 
-                  SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.estimates ELSE 0 END)) as paid_social_cost_per_estimate,
-      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_spend, 0) ELSE 0 END), 
-                  SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.closings ELSE 0 END)) as paid_social_cost_per_closing,
-      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_spend, 0) ELSE 0 END), 
-                  SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.funded ELSE 0 END)) as paid_social_cost_per_funded,
-      
-      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_spend, 0) ELSE 0 END), 
-                  SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.leads ELSE 0 END)) as paid_search_video_cost_per_lead,
-      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_spend, 0) ELSE 0 END), 
-                  SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.estimates ELSE 0 END)) as paid_search_video_cost_per_estimate,
-      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_spend, 0) ELSE 0 END), 
-                  SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.closings ELSE 0 END)) as paid_search_video_cost_per_closing,
-      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_spend, 0) ELSE 0 END), 
-                  SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.funded ELSE 0 END)) as paid_search_video_cost_per_funded"""
+@app.get("/ping")
+@app.post("/ping") 
+@app.head("/ping")
+def ping():
+    return {
+        "status": "alive",
+        "timestamp": datetime.now().isoformat(),
+        "message": "App is running"
+    }
 
-    base_query += f"""
-
-    FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data` h
-    LEFT JOIN meta_aggregated_by_campaign ma ON h.utm_campaign = ma.utm_campaign AND h.date = ma.date
-    LEFT JOIN google_aggregated_by_campaign ga ON h.utm_campaign = ga.utm_campaign AND h.date = ga.date
-    WHERE {date_filter}
-    """
-    
-    return base_query
-
-def get_campaign_performance_query(last_7_days_start, last_7_days_end):
-    """Generate campaign performance query"""
-    return f"""
-    WITH meta_by_campaign AS (
-      SELECT 
-        ucm.utm_campaign_mapped as utm_campaign,
-        m.date,
-        SUM(SAFE_CAST(m.spend AS FLOAT64)) as spend
-      FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.utm_campaign_mapped` ucm
-      JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data` m 
-        ON ucm.campaign_name = m.campaign_name
-        AND ucm.adset_name = m.adset_name
-      GROUP BY ucm.utm_campaign_mapped, m.date
-    )
-    
-    SELECT 
-      h.utm_campaign,
-      ucm.campaign_name AS campaign_name,
-      ucm.adset_name,
-      
-      -- Total Metrics
-      SUM(h.leads) as total_leads,
-      SUM(h.funded) as total_funded,
-      SUM(COALESCE(mc.spend, 0)) as total_meta_spend,
-      SUM(COALESCE(g.spend_usd, 0)) as total_google_spend,
-      SUM(COALESCE(mc.spend, 0)) + SUM(COALESCE(g.spend_usd, 0)) as total_combined_spend,
-      
-      -- Performance Metrics
-      SAFE_DIVIDE(SUM(h.funded), SUM(h.leads)) * 100 as lead_to_funded_rate,
-      SAFE_DIVIDE(SUM(COALESCE(mc.spend, 0)) + SUM(COALESCE(g.spend_usd, 0)), SUM(h.leads)) as cost_per_lead,
-      SAFE_DIVIDE(SUM(COALESCE(mc.spend, 0)) + SUM(COALESCE(g.spend_usd, 0)), SUM(h.funded)) as cost_per_funded,
-      
-      -- Channel Performance
-      SAFE_DIVIDE(SUM(COALESCE(mc.spend, 0)), SUM(COALESCE(mc.spend, 0)) + SUM(COALESCE(g.spend_usd, 0))) * 100 as meta_spend_percentage,
-      SAFE_DIVIDE(SUM(COALESCE(g.spend_usd, 0)), SUM(COALESCE(mc.spend, 0)) + SUM(COALESCE(g.spend_usd, 0))) * 100 as google_spend_percentage
-
-    FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data` h
-    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.utm_campaign_mapped` ucm ON h.utm_campaign = ucm.utm_campaign_mapped
-    LEFT JOIN meta_by_campaign mc ON h.utm_campaign = mc.utm_campaign AND h.date = mc.date
-    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data` g ON h.utm_campaign = g.campaign_name AND h.date = g.date
-    WHERE h.date BETWEEN "{last_7_days_start}" AND "{last_7_days_end}"
-    GROUP BY h.utm_campaign, ucm.campaign_name, ucm.adset_name
-    HAVING SUM(h.leads) > 0
-    ORDER BY total_combined_spend DESC
-    """
-
-def execute_comprehensive_sql(request: TrendAnalysisRequest):
-    """Execute comprehensive SQL queries with better error handling"""
-    
+@app.get("/health")
+def health_check():
     try:
-        # Parse date ranges from request
-        since_date = datetime.strptime(request.date_range["since"], "%Y-%m-%d").date()
-        until_date = datetime.strptime(request.date_range["until"], "%Y-%m-%d").date()
-    except (KeyError, ValueError) as e:
-        raise ValueError(f"Invalid date format in request: {e}")
-    
-    # Calculate date ranges
-    yesterday = until_date - timedelta(days=1)
-    same_day_last_week = yesterday - timedelta(days=7)
-    last_7_days_end = yesterday
-    last_7_days_start = yesterday - timedelta(days=6)
-    previous_7_days_end = same_day_last_week
-    previous_7_days_start = previous_7_days_end - timedelta(days=6)
-    
-    print(f"Date calculations:")
-    print(f"  Yesterday: {yesterday}")
-    print(f"  Same day last week: {same_day_last_week}")
-    print(f"  Last 7 days: {last_7_days_start} to {last_7_days_end}")
-    print(f"  Previous 7 days: {previous_7_days_start} to {previous_7_days_end}")
-    
-    # Define queries for each period
-    queries = {}
-    
-    try:
-        queries['yesterday'] = get_comprehensive_query(f'h.date = "{yesterday}"', 'Yesterday', request.analysis_depth)
-        queries['same_day_last_week'] = get_comprehensive_query(f'h.date = "{same_day_last_week}"', 'Same Day Last Week', request.analysis_depth)
-        queries['last_7_days'] = get_comprehensive_query(f'h.date BETWEEN "{last_7_days_start}" AND "{last_7_days_end}"', 'Last 7 Days', request.analysis_depth)
-        
-        if request.include_historical:
-            queries['previous_7_days'] = get_comprehensive_query(f'h.date BETWEEN "{previous_7_days_start}" AND "{previous_7_days_end}"', 'Previous 7 Days', request.analysis_depth)
-        
-        if request.analysis_depth != "basic":
-            queries['campaign_performance'] = get_campaign_performance_query(last_7_days_start, last_7_days_end)
-            
-    except Exception as e:
-        print(f"Error building queries: {e}")
-        raise e
-    
-    results = {}
-    
-    for period, sql in queries.items():
-        print(f"\n=== EXECUTING {period.upper()} ===")
-        
-        try:
-            if not bigquery_client:
-                raise Exception("BigQuery client not available")
-                
-            df = bigquery_client.query(sql).to_dataframe()
-            print(f"Query returned {len(df)} rows")
-            
-            if not df.empty:
-                if period == 'campaign_performance':
-                    # For campaign performance, return all rows
-                    campaigns = []
-                    for _, row in df.iterrows():
-                        campaign_data = {}
-                        for col in df.columns:
-                            value = row[col]
-                            if pd.isna(value):
-                                campaign_data[col] = 0
-                            elif hasattr(value, 'item'):
-                                campaign_data[col] = value.item()
-                            else:
-                                campaign_data[col] = value
-                        campaigns.append(campaign_data)
-                    results[period] = campaigns
-                else:
-                    # For aggregate queries, return single row
-                    if len(df) > 0:
-                        result = {}
-                        for col in df.columns:
-                            value = df.iloc[0][col]
-                            if pd.isna(value):
-                                result[col] = 0
-                            elif hasattr(value, 'item'):
-                                result[col] = value.item()
-                            else:
-                                result[col] = value
-                        results[period] = result
-                        
-                        # Debug key metrics
-                        print(f"RESULTS {period}:")
-                        print(f"  Total leads: {result.get('hex_leads', 0)}")
-                        print(f"  Meta clicks: {result.get('meta_clicks', 0)}")
-                        print(f"  Paid social clicks: {result.get('paid_social_clicks', 0)}")
-                    else:
-                        print(f"Empty dataframe for {period}")
-                        results[period] = {}
-            else:
-                print(f"No data returned for {period}")
-                results[period] = {} if period != 'campaign_performance' else []
-                
-        except Exception as e:
-            print(f"ERROR executing {period}: {e}")
-            print(f"SQL that failed: {sql[:500]}...")
-            # Return empty structure instead of failing completely
-            results[period] = {} if period != 'campaign_performance' else []
-    
-    print(f"\n=== FINAL RESULTS STRUCTURE ===")
-    print(f"Results keys: {list(results.keys())}")
-    for key, value in results.items():
-        if isinstance(value, dict):
-            print(f"  {key}: dict with {len(value)} keys")
-        elif isinstance(value, list):
-            print(f"  {key}: list with {len(value)} items")
-        else:
-            print(f"  {key}: {type(value)}")
-    
-    return results
-
-def generate_enhanced_claude_analysis(data):
-    """Generate enhanced cross-platform analysis with specific numbers and outlier detection"""
-    
-    def safe_get(data_dict, key, default=0):
-        if not isinstance(data_dict, dict):
-            return default
-        val = data_dict.get(key, default)
-        return float(val) if val is not None else default
-    
-    def calc_change(current, previous):
-        if previous == 0:
-            return 100.0 if current > 0 else 0.0
-        return ((current - previous) / previous) * 100
-    
-    def format_currency(value):
-        return f"${value:,.0f}" if value >= 1000 else f"${value:.0f}"
-    
-    def format_number(value):
-        return f"{value:,.0f}" if value >= 1000 else f"{value:.0f}"
-    
-    def format_percentage(value):
-        return f"{value:.1f}%" if value else "0.0%"
-    
-    # Validate input data
-    if not isinstance(data, dict):
-        return "Analysis temporarily unavailable due to data processing issue", "yellow"
-    
-    # Extract data with safety checks
-    yesterday = data.get('yesterday', {}) or {}
-    same_day_last_week = data.get('same_day_last_week', {}) or {}
-    last_7_days = data.get('last_7_days', {}) or {}
-    previous_7_days = data.get('previous_7_days', {}) or {}
-    campaign_performance = data.get('campaign_performance', []) or []
-    
-    # Ensure campaign_performance is a list
-    if not isinstance(campaign_performance, list):
-        campaign_performance = []
-    
-    insights = []
-    
-    try:
-        # Cross-platform correlation analysis
-        ps_spend_curr = safe_get(yesterday, 'paid_social_spend')
-        ps_spend_prev = safe_get(same_day_last_week, 'paid_social_spend')
-        psv_spend_curr = safe_get(yesterday, 'paid_search_video_spend')
-        psv_spend_prev = safe_get(same_day_last_week, 'paid_search_video_spend')
-        
-        ps_ctr_curr = safe_get(yesterday, 'paid_social_ctr')
-        ps_ctr_prev = safe_get(same_day_last_week, 'paid_social_ctr')
-        psv_leads_curr = safe_get(yesterday, 'paid_search_video_leads')
-        psv_leads_prev = safe_get(same_day_last_week, 'paid_search_video_leads')
-        
-        ps_leads_curr = safe_get(yesterday, 'paid_social_leads')
-        ps_leads_prev = safe_get(same_day_last_week, 'paid_social_leads')
-        
-        # Calculate changes
-        ps_spend_change = calc_change(ps_spend_curr, ps_spend_prev)
-        psv_spend_change = calc_change(psv_spend_curr, psv_spend_prev)
-        ps_ctr_change = calc_change(ps_ctr_curr, ps_ctr_prev)
-        psv_leads_change = calc_change(psv_leads_curr, psv_leads_prev)
-        ps_leads_change = calc_change(ps_leads_curr, ps_leads_prev)
-        
-        # Brand awareness effect detection
-        if ps_ctr_change > 15 and psv_leads_change > 10:
-            insights.append(f"Social CTR surge (+{ps_ctr_change:.1f}% to {format_percentage(ps_ctr_curr)}) driving Search+Video lead growth (+{psv_leads_change:.1f}% to {format_number(psv_leads_curr)} leads) - strong brand awareness effect")
-        
-        # Spend reallocation insights
-        if abs(ps_spend_change) > 20 or abs(psv_spend_change) > 20:
-            total_spend = ps_spend_curr + psv_spend_curr
-            if total_spend > 0:
-                ps_share = ps_spend_curr / total_spend * 100
-                psv_share = psv_spend_curr / total_spend * 100
-                
-                if ps_spend_change > 20 and psv_spend_change < -10:
-                    insights.append(f"Major spend shift: Social increased to {format_currency(ps_spend_curr)} (+{ps_spend_change:.1f}%) while Search+Video dropped to {format_currency(psv_spend_curr)} ({psv_spend_change:.1f}%) - now {format_percentage(ps_share)} social vs {format_percentage(psv_share)} search allocation")
-                elif psv_spend_change > 20 and ps_spend_change < -10:
-                    insights.append(f"Search+Video investment surge: {format_currency(psv_spend_curr)} (+{psv_spend_change:.1f}%) vs Social {format_currency(ps_spend_curr)} ({ps_spend_change:.1f}%) - {format_percentage(psv_share)} search vs {format_percentage(ps_share)} social allocation")
-        
-        # Efficiency comparison
-        ps_cost_per_lead = safe_get(yesterday, 'paid_social_cost_per_lead')
-        psv_cost_per_lead = safe_get(yesterday, 'paid_search_video_cost_per_lead')
-        
-        if ps_cost_per_lead > 0 and psv_cost_per_lead > 0:
-            if ps_cost_per_lead < psv_cost_per_lead * 0.7:
-                efficiency_diff = ((psv_cost_per_lead - ps_cost_per_lead) / psv_cost_per_lead) * 100
-                insights.append(f"Social significantly outperforming: {format_currency(ps_cost_per_lead)} cost/lead vs Search+Video {format_currency(psv_cost_per_lead)} ({efficiency_diff:.0f}% more efficient)")
-            elif psv_cost_per_lead < ps_cost_per_lead * 0.7:
-                efficiency_diff = ((ps_cost_per_lead - psv_cost_per_lead) / ps_cost_per_lead) * 100
-                insights.append(f"Search+Video dominating efficiency: {format_currency(psv_cost_per_lead)} cost/lead vs Social {format_currency(ps_cost_per_lead)} ({efficiency_diff:.0f}% more efficient)")
-        
-        # Campaign outlier detection
-        if campaign_performance and len(campaign_performance) > 0:
-            total_spends = []
-            cost_per_leads = []
-            funded_rates = []
-            
-            for camp in campaign_performance:
-                if isinstance(camp, dict):
-                    spend = safe_get(camp, 'total_combined_spend')
-                    cpl = safe_get(camp, 'cost_per_lead')
-                    funded = safe_get(camp, 'lead_to_funded_rate')
-                    
-                    if spend > 0:
-                        total_spends.append(spend)
-                    if cpl > 0:
-                        cost_per_leads.append(cpl)
-                    if funded > 0:
-                        funded_rates.append(funded)
-            
-            # High spend outlier
-            if total_spends and len(total_spends) > 1:
-                avg_spend = sum(total_spends) / len(total_spends)
-                max_spend_campaign = None
-                max_spend = 0
-                
-                for camp in campaign_performance:
-                    if isinstance(camp, dict):
-                        spend = safe_get(camp, 'total_combined_spend')
-                        if spend > max_spend:
-                            max_spend = spend
-                            max_spend_campaign = camp
-                
-                if max_spend_campaign and max_spend > avg_spend * 2:
-                    campaign_name = max_spend_campaign.get('campaign_name', max_spend_campaign.get('utm_campaign', 'Unknown'))
-                    if isinstance(campaign_name, str):
-                        campaign_name = campaign_name[:30]
-                    else:
-                        campaign_name = 'Unknown'
-                    insights.append(f"High spend outlier: '{campaign_name}' at {format_currency(max_spend)} ({(max_spend/avg_spend):.1f}x average)")
-    
-    except Exception as e:
-        print(f"Error in enhanced analysis: {e}")
-        insights = ["Analysis temporarily simplified due to data processing issue"]
-    
-    # Generate final message
-    if not insights:
-        message = "Performance relatively stable across channels with no significant cross-platform trends or outliers detected"
-    else:
-        message = " | ".join(insights[:3])  # Take top 3 insights
-    
-    # Determine color code
-    high_impact_keywords = ['surge', 'dominating', 'significantly outperforming', 'champion', 'efficient performer']
-    warning_keywords = ['outlier', 'shift', 'dropped']
-    
-    if any(keyword in message.lower() for keyword in high_impact_keywords):
-        color_code = "green"
-    elif any(keyword in message.lower() for keyword in warning_keywords):
-        color_code = "yellow"
-    else:
-        color_code = "green"
-    
-    return message, color_code
-
-def generate_claude_analysis(data):
-    """Generate analysis with enhanced cross-platform insights"""
-    
-    # Validate input data
-    if data is None:
-        print("ERROR: Data is None in generate_claude_analysis")
-        return {
-            "message": "Analysis temporarily unavailable due to data processing issue",
-            "colorCode": "yellow",
-            "paidSocial": {
-                "dayOverDayPulse": {},
-                "weekOverWeekPulse": {}
-            },
-            "paidSearchVideo": {
-                "dayOverDayPulse": {},
-                "weekOverWeekPulse": {}
-            }
-        }
-    
-    if not isinstance(data, dict):
-        print(f"ERROR: Data is not a dict in generate_claude_analysis, it's {type(data)}")
-        return {
-            "message": "Analysis temporarily unavailable due to data format issue",
-            "colorCode": "yellow",
-            "paidSocial": {
-                "dayOverDayPulse": {},
-                "weekOverWeekPulse": {}
-            },
-            "paidSearchVideo": {
-                "dayOverDayPulse": {},
-                "weekOverWeekPulse": {}
-            }
-        }
-    
-    def safe_get(data_dict, key, default=0):
-        """Safely get value from dict with multiple fallbacks"""
-        if not isinstance(data_dict, dict):
-            return default
-        val = data_dict.get(key, default)
-        if val is None:
-            return default
-        try:
-            return float(val) if val != default else default
-        except (TypeError, ValueError):
-            return default
-    
-    def calc_change(current, previous):
-        if previous == 0:
-            return 100.0 if current > 0 else 0.0
-        return ((current - previous) / previous) * 100
-    
-    def format_value_with_change(current, previous, is_percentage=False, is_currency=False):
-        change = calc_change(current, previous)
-        if is_percentage:
-            return f"{current:.1f}% ({change:+.1f}%)"
-        elif is_currency:
-            return f"${current:.2f} ({change:+.1f}%)"
-        else:
-            return f"{current:,.0f} ({change:+.1f}%)"
-    
-    # Extract data with multiple safety checks
-    yesterday = data.get('yesterday', {}) or {}
-    same_day_last_week = data.get('same_day_last_week', {}) or {}
-    last_7_days = data.get('last_7_days', {}) or {}
-    previous_7_days = data.get('previous_7_days', {}) or {}
-    
-    print(f"Data extraction check:")
-    print(f"  Yesterday type: {type(yesterday)}, keys: {list(yesterday.keys()) if isinstance(yesterday, dict) else 'Not dict'}")
-    print(f"  Same day last week type: {type(same_day_last_week)}")
-    print(f"  Last 7 days type: {type(last_7_days)}")
-    print(f"  Previous 7 days type: {type(previous_7_days)}")
-    
-    try:
-        # Generate enhanced message and color code
-        message, color_code = generate_enhanced_claude_analysis(data)
-    except Exception as e:
-        print(f"Error in enhanced analysis: {e}")
-        message = "Performance analysis temporarily simplified"
-        color_code = "green"
-    
-    try:
-        # PAID SOCIAL DAY-OVER-DAY
-        ps_dod = {
-            "totalSpend": format_value_with_change(
-                safe_get(yesterday, 'paid_social_spend'),
-                safe_get(same_day_last_week, 'paid_social_spend'),
-                is_currency=True
-            ),
-            "totalImpressions": format_value_with_change(
-                safe_get(yesterday, 'paid_social_impressions'),
-                safe_get(same_day_last_week, 'paid_social_impressions')
-            ),
-            "cpm": format_value_with_change(
-                safe_get(yesterday, 'paid_social_cpm'),
-                safe_get(same_day_last_week, 'paid_social_cpm'),
-                is_currency=True
-            ),
-            "ctr": format_value_with_change(
-                safe_get(yesterday, 'paid_social_ctr'),
-                safe_get(same_day_last_week, 'paid_social_ctr'),
-                is_percentage=True
-            ),
-            "totalClicks": format_value_with_change(
-                safe_get(yesterday, 'paid_social_clicks'),
-                safe_get(same_day_last_week, 'paid_social_clicks')
-            ),
-            "cpc": format_value_with_change(
-                safe_get(yesterday, 'paid_social_cpc'),
-                safe_get(same_day_last_week, 'paid_social_cpc'),
-                is_currency=True
-            ),
-            "totalLeads": format_value_with_change(
-                safe_get(yesterday, 'paid_social_leads'),
-                safe_get(same_day_last_week, 'paid_social_leads')
-            ),
-            "costPerLead": format_value_with_change(
-                safe_get(yesterday, 'paid_social_cost_per_lead'),
-                safe_get(same_day_last_week, 'paid_social_cost_per_lead'),
-                is_currency=True
-            ),
-            "estimateCVR": format_value_with_change(
-                safe_get(yesterday, 'paid_social_estimate_cvr'),
-                safe_get(same_day_last_week, 'paid_social_estimate_cvr'),
-                is_percentage=True
-            ),
-            "totalEstimates": format_value_with_change(
-                safe_get(yesterday, 'paid_social_estimates'),
-                safe_get(same_day_last_week, 'paid_social_estimates')
-            ),
-            "costPerEstimate": format_value_with_change(
-                safe_get(yesterday, 'paid_social_cost_per_estimate'),
-                safe_get(same_day_last_week, 'paid_social_cost_per_estimate'),
-                is_currency=True
-            ),
-            "closingsCVR": format_value_with_change(
-                safe_get(yesterday, 'paid_social_closing_cvr'),
-                safe_get(same_day_last_week, 'paid_social_closing_cvr'),
-                is_percentage=True
-            ),
-            "totalClosings": format_value_with_change(
-                safe_get(yesterday, 'paid_social_closings'),
-                safe_get(same_day_last_week, 'paid_social_closings')
-            ),
-            "costPerClosing": format_value_with_change(
-                safe_get(yesterday, 'paid_social_cost_per_closing'),
-                safe_get(same_day_last_week, 'paid_social_cost_per_closing'),
-                is_currency=True
-            ),
-            "fundedCVR": format_value_with_change(
-                safe_get(yesterday, 'paid_social_funded_cvr'),
-                safe_get(same_day_last_week, 'paid_social_funded_cvr'),
-                is_percentage=True
-            ),
-            "totalFunded": format_value_with_change(
-                safe_get(yesterday, 'paid_social_funded'),
-                safe_get(same_day_last_week, 'paid_social_funded')
-            ),
-            "costPerFunded": format_value_with_change(
-                safe_get(yesterday, 'paid_social_cost_per_funded'),
-                safe_get(same_day_last_week, 'paid_social_cost_per_funded'),
-                is_currency=True
-            ),
-            "totalRPTs": format_value_with_change(
-                safe_get(yesterday, 'paid_social_rpts'),
-                safe_get(same_day_last_week, 'paid_social_rpts')
-            )
-        }
-        
-        # PAID SOCIAL WEEK-OVER-WEEK
-        ps_wow = {
-            "totalSpend": format_value_with_change(
-                safe_get(last_7_days, 'paid_social_spend'),
-                safe_get(previous_7_days, 'paid_social_spend'),
-                is_currency=True
-            ),
-            "totalImpressions": format_value_with_change(
-                safe_get(last_7_days, 'paid_social_impressions'),
-                safe_get(previous_7_days, 'paid_social_impressions')
-            ),
-            "cpm": format_value_with_change(
-                safe_get(last_7_days, 'paid_social_cpm'),
-                safe_get(previous_7_days, 'paid_social_cpm'),
-                is_currency=True
-            ),
-            "ctr": format_value_with_change(
-                safe_get(last_7_days, 'paid_social_ctr'),
-                safe_get(previous_7_days, 'paid_social_ctr'),
-                is_percentage=True
-            ),
-            "totalClicks": format_value_with_change(
-                safe_get(last_7_days, 'paid_social_clicks'),
-                safe_get(previous_7_days, 'paid_social_clicks')
-            ),
-            "cpc": format_value_with_change(
-                safe_get(last_7_days, 'paid_social_cpc'),
-                safe_get(previous_7_days, 'paid_social_cpc'),
-                is_currency=True
-            ),
-            "totalLeads": format_value_with_change(
-                safe_get(last_7_days, 'paid_social_leads'),
-                safe_get(previous_7_days, 'paid_social_leads')
-            ),
-            "costPerLead": format_value_with_change(
-                safe_get(last_7_days, 'paid_social_cost_per_lead'),
-                safe_get(previous_7_days, 'paid_social_cost_per_lead'),
-                is_currency=True
-            ),
-            "estimateCVR": format_value_with_change(
-                safe_get(last_7_days, 'paid_social_estimate_cvr'),
-                safe_get(previous_7_days, 'paid_social_estimate_cvr'),
-                is_percentage=True
-            ),
-            "totalEstimates": format_value_with_change(
-                safe_get(last_7_days, 'paid_social_estimates'),
-                safe_get(previous_7_days, 'paid_social_estimates')
-            ),
-            "costPerEstimate": format_value_with_change(
-                safe_get(last_7_days, 'paid_social_cost_per_estimate'),
-                safe_get(previous_7_days, 'paid_social_cost_per_estimate'),
-                is_currency=True
-            ),
-            "closingsCVR": format_value_with_change(
-                safe_get(last_7_days, 'paid_social_closing_cvr'),
-                safe_get(previous_7_days, 'paid_social_closing_cvr'),
-                is_percentage=True
-            ),
-            "totalClosings": format_value_with_change(
-                safe_get(last_7_days, 'paid_social_closings'),
-                safe_get(previous_7_days, 'paid_social_closings')
-            ),
-            "costPerClosing": format_value_with_change(
-                safe_get(last_7_days, 'paid_social_cost_per_closing'),
-                safe_get(previous_7_days, 'paid_social_cost_per_closing'),
-                is_currency=True
-            ),
-            "fundedCVR": format_value_with_change(
-                safe_get(last_7_days, 'paid_social_funded_cvr'),
-                safe_get(previous_7_days, 'paid_social_funded_cvr'),
-                is_percentage=True
-            ),
-            "totalFunded": format_value_with_change(
-                safe_get(last_7_days, 'paid_social_funded'),
-                safe_get(previous_7_days, 'paid_social_funded')
-            ),
-            "costPerFunded": format_value_with_change(
-                safe_get(last_7_days, 'paid_social_cost_per_funded'),
-                safe_get(previous_7_days, 'paid_social_cost_per_funded'),
-                is_currency=True
-            ),
-            "totalRPTs": format_value_with_change(
-                safe_get(last_7_days, 'paid_social_rpts'),
-                safe_get(previous_7_days, 'paid_social_rpts')
-            )
-        }
-        
-        # PAID SEARCH+VIDEO DAY-OVER-DAY
-        psv_dod = {
-            "totalSpend": format_value_with_change(
-                safe_get(yesterday, 'paid_search_video_spend'),
-                safe_get(same_day_last_week, 'paid_search_video_spend'),
-                is_currency=True
-            ),
-            "totalImpressions": format_value_with_change(
-                safe_get(yesterday, 'paid_search_video_impressions'),
-                safe_get(same_day_last_week, 'paid_search_video_impressions')
-            ),
-            "cpm": format_value_with_change(
-                safe_get(yesterday, 'paid_search_video_cpm'),
-                safe_get(same_day_last_week, 'paid_search_video_cpm'),
-                is_currency=True
-            ),
-            "ctr": format_value_with_change(
-                safe_get(yesterday, 'paid_search_video_ctr'),
-                safe_get(same_day_last_week, 'paid_search_video_ctr'),
-                is_percentage=True
-            ),
-            "totalClicks": format_value_with_change(
-                safe_get(yesterday, 'paid_search_video_clicks'),
-                safe_get(same_day_last_week, 'paid_search_video_clicks')
-            ),
-            "cpc": format_value_with_change(
-                safe_get(yesterday, 'paid_search_video_cpc'),
-                safe_get(same_day_last_week, 'paid_search_video_cpc'),
-                is_currency=True
-            ),
-            "totalLeads": format_value_with_change(
-                safe_get(yesterday, 'paid_search_video_leads'),
-                safe_get(same_day_last_week, 'paid_search_video_leads')
-            ),
-            "costPerLead": format_value_with_change(
-                safe_get(yesterday, 'paid_search_video_cost_per_lead'),
-                safe_get(same_day_last_week, 'paid_search_video_cost_per_lead'),
-                is_currency=True
-            ),
-            "estimateCVR": format_value_with_change(
-                safe_get(yesterday, 'paid_search_video_estimate_cvr'),
-                safe_get(same_day_last_week, 'paid_search_video_estimate_cvr'),
-                is_percentage=True
-            ),
-            "totalEstimates": format_value_with_change(
-                safe_get(yesterday, 'paid_search_video_estimates'),
-                safe_get(same_day_last_week, 'paid_search_video_estimates')
-            ),
-            "costPerEstimate": format_value_with_change(
-                safe_get(yesterday, 'paid_search_video_cost_per_estimate'),
-                safe_get(same_day_last_week, 'paid_search_video_cost_per_estimate'),
-                is_currency=True
-            ),
-            "closingsCVR": format_value_with_change(
-                safe_get(yesterday, 'paid_search_video_closing_cvr'),
-                safe_get(same_day_last_week, 'paid_search_video_closing_cvr'),
-                is_percentage=True
-            ),
-            "totalClosings": format_value_with_change(
-                safe_get(yesterday, 'paid_search_video_closings'),
-                safe_get(same_day_last_week, 'paid_search_video_closings')
-            ),
-            "costPerClosing": format_value_with_change(
-                safe_get(yesterday, 'paid_search_video_cost_per_closing'),
-                safe_get(same_day_last_week, 'paid_search_video_cost_per_closing'),
-                is_currency=True
-            ),
-            "fundedCVR": format_value_with_change(
-                safe_get(yesterday, 'paid_search_video_funded_cvr'),
-                safe_get(same_day_last_week, 'paid_search_video_funded_cvr'),
-                is_percentage=True
-            ),
-            "totalFunded": format_value_with_change(
-                safe_get(yesterday, 'paid_search_video_funded'),
-                safe_get(same_day_last_week, 'paid_search_video_funded')
-            ),
-            "costPerFunded": format_value_with_change(
-                safe_get(yesterday, 'paid_search_video_cost_per_funded'),
-                safe_get(same_day_last_week, 'paid_search_video_cost_per_funded'),
-                is_currency=True
-            ),
-            "totalRPTs": format_value_with_change(
-                safe_get(yesterday, 'paid_search_video_rpts'),
-                safe_get(same_day_last_week, 'paid_search_video_rpts')
-            )
-        }
-        
-        # PAID SEARCH+VIDEO WEEK-OVER-WEEK
-        psv_wow = {
-            "totalSpend": format_value_with_change(
-                safe_get(last_7_days, 'paid_search_video_spend'),
-                safe_get(previous_7_days, 'paid_search_video_spend'),
-                is_currency=True
-            ),
-            "totalImpressions": format_value_with_change(
-                safe_get(last_7_days, 'paid_search_video_impressions'),
-                safe_get(previous_7_days, 'paid_search_video_impressions')
-            ),
-            "cpm": format_value_with_change(
-                safe_get(last_7_days, 'paid_search_video_cpm'),
-                safe_get(previous_7_days, 'paid_search_video_cpm'),
-                is_currency=True
-            ),
-            "ctr": format_value_with_change(
-                safe_get(last_7_days, 'paid_search_video_ctr'),
-                safe_get(previous_7_days, 'paid_search_video_ctr'),
-                is_percentage=True
-            ),
-            "totalClicks": format_value_with_change(
-                safe_get(last_7_days, 'paid_search_video_clicks'),
-                safe_get(previous_7_days, 'paid_search_video_clicks')
-            ),
-            "cpc": format_value_with_change(
-                safe_get(last_7_days, 'paid_search_video_cpc'),
-                safe_get(previous_7_days, 'paid_search_video_cpc'),
-                is_currency=True
-            ),
-            "totalLeads": format_value_with_change(
-                safe_get(last_7_days, 'paid_search_video_leads'),
-                safe_get(previous_7_days, 'paid_search_video_leads')
-            ),
-            "costPerLead": format_value_with_change(
-                safe_get(last_7_days, 'paid_search_video_cost_per_lead'),
-                safe_get(previous_7_days, 'paid_search_video_cost_per_lead'),
-                is_currency=True
-            ),
-            "estimateCVR": format_value_with_change(
-                safe_get(last_7_days, 'paid_search_video_estimate_cvr'),
-                safe_get(previous_7_days, 'paid_search_video_estimate_cvr'),
-                is_percentage=True
-            ),
-            "totalEstimates": format_value_with_change(
-                safe_get(last_7_days, 'paid_search_video_estimates'),
-                safe_get(previous_7_days, 'paid_search_video_estimates')
-            ),
-            "costPerEstimate": format_value_with_change(
-                safe_get(last_7_days, 'paid_search_video_cost_per_estimate'),
-                safe_get(previous_7_days, 'paid_search_video_cost_per_estimate'),
-                is_currency=True
-            ),
-            "closingsCVR": format_value_with_change(
-                safe_get(last_7_days, 'paid_search_video_closing_cvr'),
-                safe_get(previous_7_days, 'paid_search_video_closing_cvr'),
-                is_percentage=True
-            ),
-            "totalClosings": format_value_with_change(
-                safe_get(last_7_days, 'paid_search_video_closings'),
-                safe_get(previous_7_days, 'paid_search_video_closings')
-            ),
-            "costPerClosing": format_value_with_change(
-                safe_get(last_7_days, 'paid_search_video_cost_per_closing'),
-                safe_get(previous_7_days, 'paid_search_video_cost_per_closing'),
-                is_currency=True
-            ),
-            "fundedCVR": format_value_with_change(
-                safe_get(last_7_days, 'paid_search_video_funded_cvr'),
-                safe_get(previous_7_days, 'paid_search_video_funded_cvr'),
-                is_percentage=True
-            ),
-            "totalFunded": format_value_with_change(
-                safe_get(last_7_days, 'paid_search_video_funded'),
-                safe_get(previous_7_days, 'paid_search_video_funded')
-            ),
-            "costPerFunded": format_value_with_change(
-                safe_get(last_7_days, 'paid_search_video_cost_per_funded'),
-                safe_get(previous_7_days, 'paid_search_video_cost_per_funded'),
-                is_currency=True
-            ),
-            "totalRPTs": format_value_with_change(
-                safe_get(last_7_days, 'paid_search_video_rpts'),
-                safe_get(previous_7_days, 'paid_search_video_rpts')
-            )
-        }
+        db = SessionLocal()
+        db.execute(text("SELECT 1"))
+        db.close()
         
         return {
-            "message": message,
-            "colorCode": color_code,
-            "paidSocial": {
-                "dayOverDayPulse": ps_dod,
-                "weekOverWeekPulse": ps_wow
-            },
-            "paidSearchVideo": {
-                "dayOverDayPulse": psv_dod,
-                "weekOverWeekPulse": psv_wow
-            }
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "database": "connected",
+            "training_examples": len(TRAINING_DATA)
         }
-        
     except Exception as e:
-        print(f"Error building claude analysis response: {e}")
         return {
-            "message": "Analysis completed with limited data",
-            "colorCode": "yellow",
-            "paidSocial": {"dayOverDayPulse": {}, "weekOverWeekPulse": {}},
-            "paidSearchVideo": {"dayOverDayPulse": {}, "weekOverWeekPulse": {}}
+            "status": "unhealthy",
+            "timestamp": datetime.now().isoformat(),
+            "database": "error",
+            "error": str(e)
         }
 
-@marketing_router.post("/analyze-trends", response_model=TrendAnalysisResponse)
-async def analyze_marketing_trends(request: TrendAnalysisRequest):
-    """Execute comprehensive SQL with channel separation and generate Claude analysis"""
+@app.get("/fb-posts")
+async def get_fb_posts():
+    """Get all FB posts from database"""
+    db = SessionLocal()
     try:
-        if not BIGQUERY_AVAILABLE or not bigquery_client:
-            return TrendAnalysisResponse(
-                status="error",
-                message="BigQuery not available",
-                error="BigQuery client not initialized"
-            )
+        posts = db.query(FBPost).all()
         
-        # Execute the comprehensive SQL
-        data = execute_comprehensive_sql(request)
-        
-        # Generate Claude analysis
-        claude_analysis = generate_claude_analysis(data)
-        
-        return TrendAnalysisResponse(
-            status="success",
-            message="Comprehensive analysis with enhanced cross-platform insights completed",
-            data={
-                "claude_analysis": claude_analysis,
-                "raw_data": {
-                    "yesterday": data.get('yesterday', {}),
-                    "same_day_last_week": data.get('same_day_last_week', {}),
-                    "last_7_days": data.get('last_7_days', {}),
-                    "previous_7_days": data.get('previous_7_days', {})
-                },
-                "campaign_performance": data.get('campaign_performance', []),
-                "debug_info": {
-                    "yesterday_paid_social_spend": data.get('yesterday', {}).get('paid_social_spend', 0),
-                    "yesterday_paid_search_video_spend": data.get('yesterday', {}).get('paid_search_video_spend', 0),
-                    "last_7_days_paid_social_spend": data.get('last_7_days', {}).get('paid_social_spend', 0),
-                    "last_7_days_paid_search_video_spend": data.get('last_7_days', {}).get('paid_search_video_spend', 0),
-                    "total_campaigns": len(data.get('campaign_performance', []))
+        return {
+            "success": True,
+            "count": len(posts),
+            "data": [
+                {
+                    "Ad account name": post.ad_account_name,
+                    "Campaign name": post.campaign_name,
+                    "Ad set name": post.ad_set_name,
+                    "Ad name": post.ad_name,
+                    "Page ID": post.page_id,
+                    "Post Id": post.post_id,
+                    "Object Story ID": post.object_story_id
                 }
-            }
+                for post in posts
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        db.close()
+
+@app.post("/fb-posts/add")
+async def add_fb_post(post: FBPostCreate):
+    """Add new FB post to database"""
+    try:
+        db = SessionLocal()
+        
+        db_post = FBPost(
+            ad_account_name=post.ad_account_name,
+            campaign_name=post.campaign_name,
+            ad_set_name=post.ad_set_name,
+            ad_name=post.ad_name,
+            page_id=post.page_id,
+            post_id=post.post_id,
+            object_story_id=post.object_story_id
+        )
+        
+        db.add(db_post)
+        db.commit()
+        db.close()
+        
+        return {
+            "success": True,
+            "message": "FB post added successfully",
+            "post_id": post.post_id,
+            "status": "new"
+        }
+        
+    except IntegrityError:
+        db.rollback()
+        db.close()
+        return {
+            "success": True,
+            "message": f"Post {post.post_id} already exists (duplicate skipped)",
+            "post_id": post.post_id,
+            "status": "duplicate_skipped"
+        }
+    except Exception as e:
+        db.rollback()
+        db.close()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.delete("/fb-posts/clear-recent")
+async def clear_recent_posts():
+    """Delete FB posts created in the past 24 hours"""
+    try:
+        db = SessionLocal()
+        
+        # Calculate 24 hours ago
+        twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=24)
+        
+        # Find posts created in the past 24 hours
+        recent_posts = db.query(FBPost).filter(FBPost.created_at >= twenty_four_hours_ago).all()
+        deleted_count = len(recent_posts)
+        
+        # Delete them
+        db.query(FBPost).filter(FBPost.created_at >= twenty_four_hours_ago).delete()
+        db.commit()
+        db.close()
+        
+        return {
+            "success": True,
+            "message": f"Deleted {deleted_count} posts created in the past 24 hours",
+            "deleted_count": deleted_count,
+            "cutoff_time": twenty_four_hours_ago.isoformat()
+        }
+        
+    except Exception as e:
+        db.rollback()
+        db.close()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.get("/responses")
+async def get_responses():
+    """Get all response training data"""
+    db = SessionLocal()
+    try:
+        responses = db.query(ResponseEntry).all()
+        
+        return {
+            "success": True,
+            "count": len(responses),
+            "data": [
+                {
+                    "comment": resp.comment,
+                    "action": resp.action,
+                    "reply": resp.reply
+                }
+                for resp in responses
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        db.close()
+
+@app.post("/responses/add")
+async def add_response(response: ResponseCreate):
+    """Add new response training data"""
+    db = SessionLocal()
+    try:
+        db_response = ResponseEntry(
+            comment=response.comment,
+            action=response.action,
+            reply=response.reply,
+            reasoning=response.reasoning
+        )
+        
+        db.add(db_response)
+        db.commit()
+        
+        new_count = reload_training_data()
+        
+        return {
+            "success": True,
+            "message": "Response added successfully",
+            "new_training_count": new_count
+        }
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        db.close()
+
+@app.post("/reload-training-data")
+async def reload_training_data_endpoint():
+    """Manually reload training data from database"""
+    try:
+        new_count = reload_training_data()
+        return {
+            "success": True,
+            "message": "Training data reloaded from database",
+            "total_examples": new_count,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reloading training data: {str(e)}")
+
+@app.post("/process-comment", response_model=ProcessedComment)
+async def process_comment(request: CommentRequest):
+    """Enhanced comment processing using centralized business rules"""
+    try:
+        comment_text = request.get_comment_text()
+        comment_id = request.get_comment_id()
+        
+        # Use centralized function
+        ai_result = process_comment_with_ai(comment_text, comment_id)
+        
+        sentiment = ai_result['sentiment']
+        action = ai_result['action'].lower()
+        reasoning = ai_result['reasoning']
+        reply_text = ai_result['reply']  # Already generated and cleaned
+        
+        # Map actions to our system
+        action_mapping = {
+            'reply': 'respond',
+            'react': 'react', 
+            'delete': 'delete',
+            'leave_alone': 'leave_alone'
+        }
+        
+        mapped_action = action_mapping.get(action, 'leave_alone')
+        confidence_score = 0.9 if mapped_action == 'respond' else 0.85
+        
+        return ProcessedComment(
+            commentId=comment_id,
+            original_comment=comment_text,
+            category=sentiment.lower(),
+            action=mapped_action,
+            reply=reply_text,
+            confidence_score=confidence_score,
+            approved="pending",
+            reasoning=reasoning
         )
         
     except Exception as e:
-        return TrendAnalysisResponse(
-            status="error",
-            message="Comprehensive analysis failed",
-            error=str(e)
+        return ProcessedComment(
+            commentId=request.get_comment_id(),
+            original_comment=request.get_comment_text(),
+            category="error",
+            action="leave_alone",
+            reply="We can help analyze your specific lease situation.",
+            confidence_score=0.0,
+            approved="pending",
+            reasoning=f"Error: {str(e)}"
         )
+
+@app.post("/process-feedback")
+async def process_feedback(request: FeedbackRequest):
+    """Enhanced feedback processing using centralized business rules"""
+    try:
+        original_comment = request.original_comment.strip()
+        original_response = request.original_response.strip() if request.original_response else ""
+        original_action = request.original_action.strip().lower()
+        feedback_text = request.feedback_text.strip()
+        
+        feedback_prompt = f"""You are improving a response based on human feedback for LeaseEnd.com.
+
+ORIGINAL COMMENT: "{original_comment}"
+YOUR ORIGINAL RESPONSE: "{original_response}"
+YOUR ORIGINAL ACTION: "{original_action}"
+HUMAN FEEDBACK: "{feedback_text}"
+
+{BUSINESS_RULES}
+
+Generate an IMPROVED response incorporating the feedback while following the guidelines above. Answer the original comment NOT the feedback.
+
+Respond in JSON: {{"sentiment": "...", "action": "REPLY/REACT/DELETE/LEAVE_ALONE", "reply": "...", "reasoning": "...", "confidence": 0.85, "needs_phone": true/false}}"""
+
+        improved_response = claude.basic_request(feedback_prompt)
+        
+        try:
+            response_clean = improved_response.strip()
+            if response_clean.startswith('```'):
+                lines = response_clean.split('\n')
+                response_clean = '\n'.join([line for line in lines if not line.startswith('```')])
+            
+            if not response_clean.startswith('{'):
+                json_start = response_clean.find('{')
+                json_end = response_clean.rfind('}') + 1
+                if json_start != -1 and json_end != 0:
+                    response_clean = response_clean[json_start:json_end]
+            
+            result = json.loads(response_clean)
+            
+            action_mapping = {
+                'reply': 'respond',
+                'react': 'react', 
+                'delete': 'delete',
+                'leave_alone': 'leave_alone'
+            }
+            
+            improved_action = action_mapping.get(result.get('action', 'leave_alone').lower(), 'leave_alone')
+            improved_reply = filter_numerical_values(result.get('reply', ''))
+            
+            # Fix phone number format if present
+            if '844' in improved_reply and '679-1188' in improved_reply:
+                improved_reply = re.sub(r'\(?844\)?[-.\s]*679[-.\s]*1188', '(844) 679-1188', improved_reply)
+            
+            current_version_num = int(request.current_version.replace('v', '')) if request.current_version.startswith('v') else 1
+            new_version = f"v{current_version_num + 1}"
+            
+            return {
+                "commentId": request.commentId,
+                "original_comment": original_comment,
+                "category": result.get('sentiment', 'neutral').lower(),
+                "action": improved_action,
+                "reply": improved_reply,
+                "confidence_score": float(result.get('confidence', 0.85)),
+                "approved": "pending",
+                "feedback_text": feedback_text,
+                "version": new_version,
+                "reasoning": result.get('reasoning', 'Applied feedback with centralized business rules'),
+                "feedback_processed": True,
+                "success": True
+            }
+            
+        except json.JSONDecodeError as e:
+            new_version_num = int(request.current_version.replace('v', '')) + 1 if request.current_version.startswith('v') else 2
+            return {
+                "commentId": request.commentId,
+                "original_comment": original_comment,
+                "category": "neutral",
+                "action": "leave_alone",
+                "reply": "We can help analyze your specific lease situation. Call (844) 679-1188 if you have questions.",
+                "confidence_score": 0.5,
+                "approved": "pending",
+                "feedback_text": feedback_text,
+                "version": f"v{new_version_num}",
+                "reasoning": "Fallback response with proper phone format",
+                "success": False
+            }
+            
+    except Exception as e:
+        new_version_num = int(request.current_version.replace('v', '')) + 1 if request.current_version.startswith('v') else 2
+        return {
+            "commentId": request.commentId,
+            "original_comment": request.original_comment,
+            "category": "error", 
+            "action": "leave_alone",
+            "reply": "We can help analyze your specific lease situation.",
+            "confidence_score": 0.0,
+            "approved": "pending",
+            "feedback_text": request.feedback_text,
+            "version": f"v{new_version_num}",
+            "reasoning": "Error in feedback processing",
+            "error": str(e),
+            "success": False
+        }
+
+@app.post("/approve-response")
+async def approve_response(request: ApproveRequest):
+    """Approve and store a response for training"""
+    global TRAINING_DATA
+    
+    db = SessionLocal()
+    try:
+        # Check if comment already exists
+        existing_comment = db.query(ResponseEntry).filter(
+            ResponseEntry.comment == request.original_comment
+        ).first()
+        
+        if existing_comment:
+            return {
+                "status": "duplicate_skipped",
+                "message": f"Comment already exists in training data (ID: {existing_comment.id})",
+                "training_examples": len(TRAINING_DATA),
+                "existing_action": existing_comment.action,
+                "duplicate": True
+            }
+        
+        comment_created_at = datetime.utcnow()
+        if request.created_time:
+            try:
+                comment_created_at = datetime.fromisoformat(request.created_time.replace('Z', '+00:00'))
+            except:
+                pass
+        
+        response_entry = ResponseEntry(
+            comment=request.original_comment,
+            action=request.action,
+            reply=request.reply,
+            reasoning=request.reasoning,
+            created_at=comment_created_at
+        )
+        db.add(response_entry)
+        db.commit()
+        
+        TRAINING_DATA = load_training_data()
+        
+        return {
+            "status": "approved",
+            "message": f"Response approved and added to training data",
+            "training_examples": len(TRAINING_DATA),
+            "action_stored": request.action,
+            "duplicate": False
+        }
+        
+    except Exception as e:
+        db.rollback()
+        return {"status": "error", "error": str(e), "duplicate": False}
+    finally:
+        db.close()
+
+@app.get("/stats")
+async def get_stats():
+    """Get training data statistics with updated info"""
+    action_counts = {}
+    
+    for example in TRAINING_DATA:
+        action = example.get('action', 'unknown')
+        action_counts[action] = action_counts.get(action, 0) + 1
+    
+    return {
+        "total_training_examples": len(TRAINING_DATA),
+        "action_distribution": action_counts,
+        "key_features": {
+            "centralized_rules": "Single source of truth for all business logic",
+            "phone_number": "(844) 679-1188 ONLY for hesitation/contact requests/confusion",
+            "website_ctas": "High-intent prospects only",
+            "positioning": "Completely online loan facilitators",
+            "analysis": "Case-by-case lease analysis, not generic claims"
+        },
+        "supported_actions": {
+            "respond": "Generate helpful response using centralized rules",
+            "react": "Add thumbs up or heart reaction", 
+            "delete": "Remove spam/accusations/hostility",
+            "leave_alone": "Ignore harmless off-topic comments"
+        }
+    }
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
