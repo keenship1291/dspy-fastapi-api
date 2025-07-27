@@ -69,7 +69,6 @@ def get_comprehensive_query(date_filter, period_name, analysis_depth):
     base_query = f"""
     WITH meta_aggregated_by_campaign AS (
       -- Pre-aggregate Meta data by utm_campaign and date 
-      -- This gives us the TRUE platform metrics regardless of hex mapping
       SELECT 
         ucm.utm_campaign_mapped as utm_campaign,
         m.date,
@@ -1047,4 +1046,3 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
             message="Comprehensive analysis failed",
             error=str(e)
         )
-                "
