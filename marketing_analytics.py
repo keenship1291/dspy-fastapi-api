@@ -344,6 +344,8 @@ def generate_enhanced_claude_analysis(data):
     """Generate enhanced cross-platform analysis with specific numbers and outlier detection"""
     
     def safe_get(data_dict, key, default=0):
+        if not isinstance(data_dict, dict):
+            return default
         val = data_dict.get(key, default)
         return float(val) if val is not None else default
     
@@ -370,101 +372,155 @@ def generate_enhanced_claude_analysis(data):
     def format_percentage(value):
         return f"{value:.1f}%" if value else "0.0%"
     
-    # Extract data
-    yesterday = data.get('yesterday', {})
-    same_day_last_week = data.get('same_day_last_week', {})
-    last_7_days = data.get('last_7_days', {})
-    previous_7_days = data.get('previous_7_days', {})
-    campaign_performance = data.get('campaign_performance', [])
+    # Extract data with safety checks
+    yesterday = data.get('yesterday', {}) if isinstance(data, dict) else {}
+    same_day_last_week = data.get('same_day_last_week', {}) if isinstance(data, dict) else {}
+    last_7_days = data.get('last_7_days', {}) if isinstance(data, dict) else {}
+    previous_7_days = data.get('previous_7_days', {}) if isinstance(data, dict) else {}
+    campaign_performance = data.get('campaign_performance', []) if isinstance(data, dict) else []
+    
+    # Ensure campaign_performance is a list
+    if not isinstance(campaign_performance, list):
+        campaign_performance = []
     
     insights = []
     
-    # Cross-platform correlation analysis
-    ps_spend_curr = safe_get(yesterday, 'paid_social_spend')
-    ps_spend_prev = safe_get(same_day_last_week, 'paid_social_spend')
-    psv_spend_curr = safe_get(yesterday, 'paid_search_video_spend')
-    psv_spend_prev = safe_get(same_day_last_week, 'paid_search_video_spend')
+    try:
     
-    ps_ctr_curr = safe_get(yesterday, 'paid_social_ctr')
-    ps_ctr_prev = safe_get(same_day_last_week, 'paid_social_ctr')
-    psv_leads_curr = safe_get(yesterday, 'paid_search_video_leads')
-    psv_leads_prev = safe_get(same_day_last_week, 'paid_search_video_leads')
-    
-    ps_leads_curr = safe_get(yesterday, 'paid_social_leads')
-    ps_leads_prev = safe_get(same_day_last_week, 'paid_social_leads')
-    
-    # Calculate changes
-    ps_spend_change = calc_change(ps_spend_curr, ps_spend_prev)
-    psv_spend_change = calc_change(psv_spend_curr, psv_spend_prev)
-    ps_ctr_change = calc_change(ps_ctr_curr, ps_ctr_prev)
-    psv_leads_change = calc_change(psv_leads_curr, psv_leads_prev)
-    ps_leads_change = calc_change(ps_leads_curr, ps_leads_prev)
-    
-    # Brand awareness effect detection
-    if ps_ctr_change > 15 and psv_leads_change > 10:
-        insights.append(f"Social CTR surge (+{ps_ctr_change:.1f}% to {format_percentage(ps_ctr_curr)}) driving Search+Video lead growth (+{psv_leads_change:.1f}% to {format_number(psv_leads_curr)} leads) - strong brand awareness effect")
-    
-    # Spend reallocation insights
-    if abs(ps_spend_change) > 20 or abs(psv_spend_change) > 20:
-        total_spend = ps_spend_curr + psv_spend_curr
-        if total_spend > 0:
-            ps_share = ps_spend_curr / total_spend * 100
-            psv_share = psv_spend_curr / total_spend * 100
-            
-            if ps_spend_change > 20 and psv_spend_change < -10:
-                insights.append(f"Major spend shift: Social increased to {format_currency(ps_spend_curr)} (+{ps_spend_change:.1f}%) while Search+Video dropped to {format_currency(psv_spend_curr)} ({psv_spend_change:.1f}%) - now {format_percentage(ps_share)} social vs {format_percentage(psv_share)} search allocation")
-            elif psv_spend_change > 20 and ps_spend_change < -10:
-                insights.append(f"Search+Video investment surge: {format_currency(psv_spend_curr)} (+{psv_spend_change:.1f}%) vs Social {format_currency(ps_spend_curr)} ({ps_spend_change:.1f}%) - {format_percentage(psv_share)} search vs {format_percentage(ps_share)} social allocation")
-    
-    # Efficiency comparison
-    ps_cost_per_lead = safe_get(yesterday, 'paid_social_cost_per_lead')
-    psv_cost_per_lead = safe_get(yesterday, 'paid_search_video_cost_per_lead')
-    
-    if ps_cost_per_lead > 0 and psv_cost_per_lead > 0:
-        if ps_cost_per_lead < psv_cost_per_lead * 0.7:
-            efficiency_diff = ((psv_cost_per_lead - ps_cost_per_lead) / psv_cost_per_lead) * 100
-            insights.append(f"Social significantly outperforming: {format_currency(ps_cost_per_lead)} cost/lead vs Search+Video {format_currency(psv_cost_per_lead)} ({efficiency_diff:.0f}% more efficient)")
-        elif psv_cost_per_lead < ps_cost_per_lead * 0.7:
-            efficiency_diff = ((ps_cost_per_lead - psv_cost_per_lead) / ps_cost_per_lead) * 100
-            insights.append(f"Search+Video dominating efficiency: {format_currency(psv_cost_per_lead)} cost/lead vs Social {format_currency(ps_cost_per_lead)} ({efficiency_diff:.0f}% more efficient)")
-    
-    # Campaign outlier detection
-    if campaign_performance:
-        total_spends = [safe_get(camp, 'total_combined_spend') for camp in campaign_performance if safe_get(camp, 'total_combined_spend') > 0]
-        cost_per_leads = [safe_get(camp, 'cost_per_lead') for camp in campaign_performance if safe_get(camp, 'cost_per_lead') > 0]
-        funded_rates = [safe_get(camp, 'lead_to_funded_rate') for camp in campaign_performance if safe_get(camp, 'lead_to_funded_rate') > 0]
+        # Cross-platform correlation analysis
+        ps_spend_curr = safe_get(yesterday, 'paid_social_spend')
+        ps_spend_prev = safe_get(same_day_last_week, 'paid_social_spend')
+        psv_spend_curr = safe_get(yesterday, 'paid_search_video_spend')
+        psv_spend_prev = safe_get(same_day_last_week, 'paid_search_video_spend')
         
-        # High spend outlier
-        if total_spends and len(total_spends) > 1:
-            avg_spend = sum(total_spends) / len(total_spends)
-            max_spend_campaign = max(campaign_performance, key=lambda x: safe_get(x, 'total_combined_spend'))
-            max_spend = safe_get(max_spend_campaign, 'total_combined_spend')
-            
-            if max_spend > avg_spend * 2:
-                campaign_name = max_spend_campaign.get('campaign_name', max_spend_campaign.get('utm_campaign', 'Unknown'))[:30]
-                insights.append(f"High spend outlier: '{campaign_name}' at {format_currency(max_spend)} ({(max_spend/avg_spend):.1f}x average)")
+        ps_ctr_curr = safe_get(yesterday, 'paid_social_ctr')
+        ps_ctr_prev = safe_get(same_day_last_week, 'paid_social_ctr')
+        psv_leads_curr = safe_get(yesterday, 'paid_search_video_leads')
+        psv_leads_prev = safe_get(same_day_last_week, 'paid_search_video_leads')
         
-        # Cost efficiency outliers
-        if cost_per_leads and len(cost_per_leads) > 1:
-            avg_cpl = sum(cost_per_leads) / len(cost_per_leads)
-            low_cpl_campaigns = [c for c in campaign_performance if safe_get(c, 'cost_per_lead') > 0 and safe_get(c, 'cost_per_lead') < avg_cpl * 0.5]
-            
-            if low_cpl_campaigns:
-                best_campaign = min(low_cpl_campaigns, key=lambda x: safe_get(x, 'cost_per_lead'))
-                campaign_name = best_campaign.get('campaign_name', best_campaign.get('utm_campaign', 'Unknown'))[:30]
-                best_cpl = safe_get(best_campaign, 'cost_per_lead')
-                insights.append(f"Efficient performer: '{campaign_name}' at {format_currency(best_cpl)} ({avg_cpl/best_cpl:.1f}x better than average)")
+        ps_leads_curr = safe_get(yesterday, 'paid_social_leads')
+        ps_leads_prev = safe_get(same_day_last_week, 'paid_social_leads')
         
-        # Conversion champion
-        if funded_rates and len(funded_rates) > 1:
-            avg_funded_rate = sum(funded_rates) / len(funded_rates)
-            high_funded_campaigns = [c for c in campaign_performance if safe_get(c, 'lead_to_funded_rate') > avg_funded_rate * 1.5]
+        # Calculate changes
+        ps_spend_change = calc_change(ps_spend_curr, ps_spend_prev)
+        psv_spend_change = calc_change(psv_spend_curr, psv_spend_prev)
+        ps_ctr_change = calc_change(ps_ctr_curr, ps_ctr_prev)
+        psv_leads_change = calc_change(psv_leads_curr, psv_leads_prev)
+        ps_leads_change = calc_change(ps_leads_curr, ps_leads_prev)
+        
+        # Brand awareness effect detection
+        if ps_ctr_change > 15 and psv_leads_change > 10:
+            insights.append(f"Social CTR surge (+{ps_ctr_change:.1f}% to {format_percentage(ps_ctr_curr)}) driving Search+Video lead growth (+{psv_leads_change:.1f}% to {format_number(psv_leads_curr)} leads) - strong brand awareness effect")
+        
+        # Spend reallocation insights
+        if abs(ps_spend_change) > 20 or abs(psv_spend_change) > 20:
+            total_spend = ps_spend_curr + psv_spend_curr
+            if total_spend > 0:
+                ps_share = ps_spend_curr / total_spend * 100
+                psv_share = psv_spend_curr / total_spend * 100
+                
+                if ps_spend_change > 20 and psv_spend_change < -10:
+                    insights.append(f"Major spend shift: Social increased to {format_currency(ps_spend_curr)} (+{ps_spend_change:.1f}%) while Search+Video dropped to {format_currency(psv_spend_curr)} ({psv_spend_change:.1f}%) - now {format_percentage(ps_share)} social vs {format_percentage(psv_share)} search allocation")
+                elif psv_spend_change > 20 and ps_spend_change < -10:
+                    insights.append(f"Search+Video investment surge: {format_currency(psv_spend_curr)} (+{psv_spend_change:.1f}%) vs Social {format_currency(ps_spend_curr)} ({ps_spend_change:.1f}%) - {format_percentage(psv_share)} search vs {format_percentage(ps_share)} social allocation")
+        
+        # Efficiency comparison
+        ps_cost_per_lead = safe_get(yesterday, 'paid_social_cost_per_lead')
+        psv_cost_per_lead = safe_get(yesterday, 'paid_search_video_cost_per_lead')
+        
+        if ps_cost_per_lead > 0 and psv_cost_per_lead > 0:
+            if ps_cost_per_lead < psv_cost_per_lead * 0.7:
+                efficiency_diff = ((psv_cost_per_lead - ps_cost_per_lead) / psv_cost_per_lead) * 100
+                insights.append(f"Social significantly outperforming: {format_currency(ps_cost_per_lead)} cost/lead vs Search+Video {format_currency(psv_cost_per_lead)} ({efficiency_diff:.0f}% more efficient)")
+            elif psv_cost_per_lead < ps_cost_per_lead * 0.7:
+                efficiency_diff = ((ps_cost_per_lead - psv_cost_per_lead) / ps_cost_per_lead) * 100
+                insights.append(f"Search+Video dominating efficiency: {format_currency(psv_cost_per_lead)} cost/lead vs Social {format_currency(ps_cost_per_lead)} ({efficiency_diff:.0f}% more efficient)")
+        
+        # Campaign outlier detection
+        if campaign_performance and len(campaign_performance) > 0:
+            total_spends = []
+            cost_per_leads = []
+            funded_rates = []
             
-            if high_funded_campaigns:
-                best_funded_campaign = max(high_funded_campaigns, key=lambda x: safe_get(x, 'lead_to_funded_rate'))
-                campaign_name = best_funded_campaign.get('campaign_name', best_funded_campaign.get('utm_campaign', 'Unknown'))[:30]
-                best_funded_rate = safe_get(best_funded_campaign, 'lead_to_funded_rate')
-                insights.append(f"Conversion champion: '{campaign_name}' with {format_percentage(best_funded_rate)} funded rate ({(best_funded_rate/avg_funded_rate):.1f}x average)")
+            for camp in campaign_performance:
+                if isinstance(camp, dict):
+                    spend = safe_get(camp, 'total_combined_spend')
+                    cpl = safe_get(camp, 'cost_per_lead')
+                    funded = safe_get(camp, 'lead_to_funded_rate')
+                    
+                    if spend > 0:
+                        total_spends.append(spend)
+                    if cpl > 0:
+                        cost_per_leads.append(cpl)
+                    if funded > 0:
+                        funded_rates.append(funded)
+            
+            # High spend outlier
+            if total_spends and len(total_spends) > 1:
+                avg_spend = sum(total_spends) / len(total_spends)
+                max_spend_campaign = None
+                max_spend = 0
+                
+                for camp in campaign_performance:
+                    if isinstance(camp, dict):
+                        spend = safe_get(camp, 'total_combined_spend')
+                        if spend > max_spend:
+                            max_spend = spend
+                            max_spend_campaign = camp
+                
+                if max_spend_campaign and max_spend > avg_spend * 2:
+                    campaign_name = max_spend_campaign.get('campaign_name', max_spend_campaign.get('utm_campaign', 'Unknown'))
+                    if isinstance(campaign_name, str):
+                        campaign_name = campaign_name[:30]
+                    else:
+                        campaign_name = 'Unknown'
+                    insights.append(f"High spend outlier: '{campaign_name}' at {format_currency(max_spend)} ({(max_spend/avg_spend):.1f}x average)")
+            
+            # Cost efficiency outliers
+            if cost_per_leads and len(cost_per_leads) > 1:
+                avg_cpl = sum(cost_per_leads) / len(cost_per_leads)
+                best_campaign = None
+                best_cpl = float('inf')
+                
+                for camp in campaign_performance:
+                    if isinstance(camp, dict):
+                        cpl = safe_get(camp, 'cost_per_lead')
+                        if 0 < cpl < avg_cpl * 0.5 and cpl < best_cpl:
+                            best_cpl = cpl
+                            best_campaign = camp
+                
+                if best_campaign:
+                    campaign_name = best_campaign.get('campaign_name', best_campaign.get('utm_campaign', 'Unknown'))
+                    if isinstance(campaign_name, str):
+                        campaign_name = campaign_name[:30]
+                    else:
+                        campaign_name = 'Unknown'
+                    insights.append(f"Efficient performer: '{campaign_name}' at {format_currency(best_cpl)} ({avg_cpl/best_cpl:.1f}x better than average)")
+            
+            # Conversion champion
+            if funded_rates and len(funded_rates) > 1:
+                avg_funded_rate = sum(funded_rates) / len(funded_rates)
+                best_funded_campaign = None
+                best_funded_rate = 0
+                
+                for camp in campaign_performance:
+                    if isinstance(camp, dict):
+                        funded = safe_get(camp, 'lead_to_funded_rate')
+                        if funded > avg_funded_rate * 1.5 and funded > best_funded_rate:
+                            best_funded_rate = funded
+                            best_funded_campaign = camp
+                
+                if best_funded_campaign:
+                    campaign_name = best_funded_campaign.get('campaign_name', best_funded_campaign.get('utm_campaign', 'Unknown'))
+                    if isinstance(campaign_name, str):
+                        campaign_name = campaign_name[:30]
+                    else:
+                        campaign_name = 'Unknown'
+                    insights.append(f"Conversion champion: '{campaign_name}' with {format_percentage(best_funded_rate)} funded rate ({(best_funded_rate/avg_funded_rate):.1f}x average)")
+    
+    except Exception as e:
+        print(f"Error in enhanced analysis: {e}")
+        insights = [f"Analysis temporarily simplified due to data processing issue"]
     
     # Generate final message
     if not insights:
