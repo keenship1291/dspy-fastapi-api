@@ -59,34 +59,51 @@ marketing_router = APIRouter(prefix="/marketing", tags=["marketing"])
 async def marketing_root():
     return {
         "message": "Marketing Analytics API - Claude Analysis with Channel Separation",
-        "version": "5.0.0",
+        "version": "5.1.0",
         "status": "running",
         "bigquery_available": BIGQUERY_AVAILABLE
     }
 
-def execute_channel_separated_sql():
-    """Execute SQL queries with channel separation: Paid Social vs Paid Search+Video"""
+def execute_comprehensive_sql(request: TrendAnalysisRequest):
+    """Execute comprehensive SQL queries matching the structure from paste.txt"""
     
-    # Calculate date ranges
-    current_date = date.today()  # 2025-07-26
-    yesterday = current_date - timedelta(days=1)  # 2025-07-25
+    # Parse date ranges from request
+    try:
+        since_date = datetime.strptime(request.date_range["since"], "%Y-%m-%d").date()
+        until_date = datetime.strptime(request.date_range["until"], "%Y-%m-%d").date()
+    except (KeyError, ValueError) as e:
+        raise ValueError(f"Invalid date format in request: {e}")
+    
+    # Calculate date ranges based on request
+    yesterday = until_date - timedelta(days=1)  # 2025-07-25 (one day before until)
     same_day_last_week = yesterday - timedelta(days=7)  # 2025-07-18
     last_7_days_end = yesterday
-    last_7_days_start = yesterday - timedelta(days=6)
+    last_7_days_start = yesterday - timedelta(days=6)  # 2025-07-19
     previous_7_days_end = same_day_last_week
-    previous_7_days_start = previous_7_days_end - timedelta(days=6)
+    previous_7_days_start = previous_7_days_end - timedelta(days=6)  # 2025-07-12
     
-    print(f"Using dates: Yesterday={yesterday}, LastWeek={same_day_last_week}")
-    print(f"Last 7 days: {last_7_days_start} to {last_7_days_end}")
-    print(f"Previous 7 days: {previous_7_days_start} to {previous_7_days_end}")
+    # Validate that the request date range covers our analysis period
+    if since_date > previous_7_days_start:
+        print(f"Warning: Request since date {since_date} is after calculated start {previous_7_days_start}")
+    if until_date < last_7_days_end:
+        print(f"Warning: Request until date {until_date} is before calculated end {last_7_days_end}")
     
-    # Base query template with channel separation
-    def get_channel_query(date_filter, period_name, channel_condition):
-        return f"""
+    print(f"Date ranges from request:")
+    print(f"  Request: {since_date} to {until_date}")
+    print(f"  Yesterday: {yesterday}")
+    print(f"  Same day last week: {same_day_last_week}")
+    print(f"  Last 7 days: {last_7_days_start} to {last_7_days_end}")
+    print(f"  Previous 7 days: {previous_7_days_start} to {previous_7_days_end}")
+    print(f"  Include historical: {request.include_historical}")
+    print(f"  Analysis depth: {request.analysis_depth}")
+    
+    # Base comprehensive query template matching the structure from your SQL
+    def get_comprehensive_query(date_filter, period_name):
+        base_query = f"""
         SELECT 
           '{period_name}' as period,
           
-          -- Hex Funnel Metrics (filtered by channel)
+          -- Hex Funnel Metrics
           SUM(h.leads) as hex_leads,
           SUM(h.start_flows) as hex_start_flows,
           SUM(h.estimates) as hex_estimates,
@@ -94,20 +111,43 @@ def execute_channel_separated_sql():
           SUM(h.funded) as hex_funded,
           SUM(h.rpts) as hex_rpts,
           
-          -- Meta Advertising Metrics (only for paid-social)
-          SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.spend AS FLOAT64) ELSE 0 END) as meta_spend,
-          SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.impressions AS INT64) ELSE 0 END) as meta_impressions,
-          SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.clicks AS INT64) ELSE 0 END) as meta_clicks,
-          SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.leads AS INT64) ELSE 0 END) as meta_leads,
+          -- Meta Advertising Metrics
+          SUM(SAFE_CAST(m.spend AS FLOAT64)) as meta_spend,
+          SUM(SAFE_CAST(m.impressions AS INT64)) as meta_impressions,
+          SUM(SAFE_CAST(m.clicks AS INT64)) as meta_clicks,
+          SUM(SAFE_CAST(m.leads AS INT64)) as meta_leads,
+          SUM(SAFE_CAST(m.purchases AS INT64)) as meta_purchases,
+          SUM(SAFE_CAST(m.landing_page_views AS INT64)) as meta_landing_page_views,
           
-          -- Google Advertising Metrics (only for paid-search and paid-video)
-          SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.spend_usd ELSE 0 END) as google_spend,
-          SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.impressions ELSE 0 END) as google_impressions,
-          SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.clicks ELSE 0 END) as google_clicks,
-          SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.conversions ELSE 0 END) as google_conversions,
+          -- Google Advertising Metrics
+          SUM(g.spend_usd) as google_spend,
+          SUM(g.impressions) as google_impressions,
+          SUM(g.clicks) as google_clicks,
+          SUM(g.conversions) as google_conversions,
           
-          -- Channel-specific totals
-          SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.spend AS FLOAT64) ELSE 0 END) as paid_social_spend,
+          -- Combined Spend
+          SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd) as total_ad_spend,
+          
+          -- Conversion Rates
+          SAFE_DIVIDE(SUM(h.start_flows), SUM(h.leads)) * 100 as lead_to_start_flow_rate,
+          SAFE_DIVIDE(SUM(h.estimates), SUM(h.start_flows)) * 100 as start_flow_to_estimate_rate,
+          SAFE_DIVIDE(SUM(h.closings), SUM(h.estimates)) * 100 as estimate_to_closing_rate,
+          SAFE_DIVIDE(SUM(h.funded), SUM(h.closings)) * 100 as closing_to_funded_rate,
+          SAFE_DIVIDE(SUM(h.funded), SUM(h.leads)) * 100 as overall_lead_to_funded_rate,
+          
+          -- Cost Metrics
+          SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd), SUM(h.leads)) as cost_per_lead,
+          SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd), SUM(h.funded)) as cost_per_funded,
+          
+          -- CTR
+          SAFE_DIVIDE(SUM(SAFE_CAST(m.clicks AS INT64)) + SUM(g.clicks), SUM(SAFE_CAST(m.impressions AS INT64)) + SUM(g.impressions)) * 100 as overall_ctr"""
+        
+        # Add channel-specific metrics only if analysis_depth is not "basic"
+        if request.analysis_depth != "basic":
+            base_query += f"""
+          
+          -- Channel-specific metrics (based on utm_medium)
+          ,SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.spend AS FLOAT64) ELSE 0 END) as paid_social_spend,
           SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.spend_usd ELSE 0 END) as paid_search_video_spend,
           
           SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.impressions AS INT64) ELSE 0 END) as paid_social_impressions,
@@ -131,19 +171,6 @@ def execute_channel_separated_sql():
           SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.rpts ELSE 0 END) as paid_social_rpts,
           SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.rpts ELSE 0 END) as paid_search_video_rpts,
           
-          -- Combined totals
-          SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd) as total_ad_spend,
-          SUM(h.leads) as total_leads,
-          SUM(h.estimates) as total_estimates,
-          SUM(h.closings) as total_closings,
-          SUM(h.funded) as total_funded,
-          SUM(h.rpts) as total_rpts,
-          
-          -- Conversion Rates
-          SAFE_DIVIDE(SUM(h.estimates), SUM(h.leads)) * 100 as overall_estimate_cvr,
-          SAFE_DIVIDE(SUM(h.closings), SUM(h.estimates)) * 100 as overall_closing_cvr,
-          SAFE_DIVIDE(SUM(h.funded), SUM(h.leads)) * 100 as overall_lead_to_funded_rate,
-          
           -- Channel-specific conversion rates
           SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.clicks AS INT64) ELSE 0 END), 
                       SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.impressions AS INT64) ELSE 0 END)) * 100 as paid_social_ctr,
@@ -164,12 +191,6 @@ def execute_channel_separated_sql():
                       SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.closings ELSE 0 END)) * 100 as paid_social_funded_cvr,
           SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.funded ELSE 0 END), 
                       SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.closings ELSE 0 END)) * 100 as paid_search_video_funded_cvr,
-          
-          -- Cost Metrics
-          SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd), SUM(h.leads)) as cost_per_lead,
-          SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd), SUM(h.estimates)) as cost_per_estimate,
-          SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd), SUM(h.closings)) as cost_per_closing,
-          SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd), SUM(h.funded)) as cost_per_funded,
           
           -- Channel-specific cost metrics
           SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.spend AS FLOAT64) ELSE 0 END), 
@@ -198,7 +219,9 @@ def execute_channel_separated_sql():
           SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.spend_usd ELSE 0 END), 
                       SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.closings ELSE 0 END)) as paid_search_video_cost_per_closing,
           SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.spend_usd ELSE 0 END), 
-                      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.funded ELSE 0 END)) as paid_search_video_cost_per_funded
+                      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.funded ELSE 0 END)) as paid_search_video_cost_per_funded"""
+
+        base_query += f"""
 
         FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data` h
         LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm ON h.utm_campaign = mm.utm_campaign
@@ -206,16 +229,58 @@ def execute_channel_separated_sql():
         LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data` g ON h.utm_campaign = g.campaign_name AND h.date = g.date
         LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_history_data` gh ON g.campaign_name = gh.campaign_name
         WHERE {date_filter}
-        AND h.utm_medium IN ('paid-social', 'paid-search', 'paid-video')
+        """
+        
+        return base_query
+    
+    # Campaign performance query using the proper column mapping
+    def get_campaign_performance_query():
+        return f"""
+        SELECT 
+          h.utm_campaign,
+          mm.campaign_name_mapped AS campaign_name,
+          mm.adset_name_mapped,
+          
+          -- Total Metrics
+          SUM(h.leads) as total_leads,
+          SUM(h.funded) as total_funded,
+          SUM(SAFE_CAST(m.spend AS FLOAT64)) as total_meta_spend,
+          SUM(g.spend_usd) as total_google_spend,
+          SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd) as total_combined_spend,
+          
+          -- Performance Metrics
+          SAFE_DIVIDE(SUM(h.funded), SUM(h.leads)) * 100 as lead_to_funded_rate,
+          SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd), SUM(h.leads)) as cost_per_lead,
+          SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd), SUM(h.funded)) as cost_per_funded,
+          
+          -- Channel Performance
+          SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)), SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd)) * 100 as meta_spend_percentage,
+          SAFE_DIVIDE(SUM(g.spend_usd), SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd)) * 100 as google_spend_percentage
+
+        FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data` h
+        LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm ON h.utm_campaign = mm.utm_campaign
+        LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data` m ON mm.adset_name_mapped = m.adset_name AND h.date = m.date
+        LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data` g ON h.utm_campaign = g.campaign_name AND h.date = g.date
+        WHERE h.date BETWEEN "{last_7_days_start}" AND "{last_7_days_end}"
+        GROUP BY h.utm_campaign, mm.campaign_name_mapped, mm.adset_name_mapped
+        HAVING SUM(h.leads) > 0
+        ORDER BY total_combined_spend DESC
         """
     
     # Define queries for each period
-    queries = {
-        'yesterday': get_channel_query(f'h.date = "{yesterday}"', 'Yesterday', ''),
-        'same_day_last_week': get_channel_query(f'h.date = "{same_day_last_week}"', 'Same Day Last Week', ''),
-        'last_7_days': get_channel_query(f'h.date BETWEEN "{last_7_days_start}" AND "{last_7_days_end}"', 'Last 7 Days', ''),
-        'previous_7_days': get_channel_query(f'h.date BETWEEN "{previous_7_days_start}" AND "{previous_7_days_end}"', 'Previous 7 Days', '')
-    }
+    queries = {}
+    
+    queries['yesterday'] = get_comprehensive_query(f'h.date = "{yesterday}"', 'Yesterday')
+    queries['same_day_last_week'] = get_comprehensive_query(f'h.date = "{same_day_last_week}"', 'Same Day Last Week')
+    queries['last_7_days'] = get_comprehensive_query(f'h.date BETWEEN "{last_7_days_start}" AND "{last_7_days_end}"', 'Last 7 Days')
+    
+    # Only include previous 7 days if include_historical is True
+    if request.include_historical:
+        queries['previous_7_days'] = get_comprehensive_query(f'h.date BETWEEN "{previous_7_days_start}" AND "{previous_7_days_end}"', 'Previous 7 Days')
+    
+    # Campaign performance query (always include if analysis_depth is not basic)
+    if request.analysis_depth != "basic":
+        queries['campaign_performance'] = get_campaign_performance_query()
     
     results = {}
     
@@ -227,36 +292,51 @@ def execute_channel_separated_sql():
             print(f"Query returned {len(df)} rows")
             
             if not df.empty:
-                result = df.iloc[0].to_dict()
-                # Clean the data
-                for key, value in result.items():
-                    if pd.isna(value):
-                        result[key] = 0
-                    elif hasattr(value, 'item'):
-                        result[key] = value.item()
-                    else:
-                        result[key] = value
-                
-                results[period] = result
-                
-                # Debug print the key metrics by channel
-                paid_social_spend = result.get('paid_social_spend', 0) or 0
-                paid_search_video_spend = result.get('paid_search_video_spend', 0) or 0
-                total_spend = result.get('total_ad_spend', 0) or 0
-                total_leads = result.get('total_leads', 0) or 0
-                
-                print(f"RESULTS {period}:")
-                print(f"  Paid Social: ${paid_social_spend:,.0f}")
-                print(f"  Paid Search+Video: ${paid_search_video_spend:,.0f}")
-                print(f"  Total: ${total_spend:,.0f}, Leads: {total_leads}")
+                if period == 'campaign_performance':
+                    # For campaign performance, return all rows
+                    campaigns = []
+                    for _, row in df.iterrows():
+                        campaign_data = row.to_dict()
+                        # Clean the data
+                        for key, value in campaign_data.items():
+                            if pd.isna(value):
+                                campaign_data[key] = 0
+                            elif hasattr(value, 'item'):
+                                campaign_data[key] = value.item()
+                        campaigns.append(campaign_data)
+                    results[period] = campaigns
+                else:
+                    # For aggregate queries, return single row
+                    result = df.iloc[0].to_dict()
+                    # Clean the data
+                    for key, value in result.items():
+                        if pd.isna(value):
+                            result[key] = 0
+                        elif hasattr(value, 'item'):
+                            result[key] = value.item()
+                        else:
+                            result[key] = value
+                    
+                    results[period] = result
+                    
+                    # Debug print key metrics
+                    paid_social_spend = result.get('paid_social_spend', 0) or 0
+                    paid_search_video_spend = result.get('paid_search_video_spend', 0) or 0
+                    total_spend = result.get('total_ad_spend', 0) or 0
+                    total_leads = result.get('hex_leads', 0) or 0
+                    
+                    print(f"RESULTS {period}:")
+                    print(f"  Paid Social: ${paid_social_spend:,.0f}")
+                    print(f"  Paid Search+Video: ${paid_search_video_spend:,.0f}")
+                    print(f"  Total: ${total_spend:,.0f}, Leads: {total_leads}")
                 
             else:
                 print(f"No data returned for {period}")
-                results[period] = {}
+                results[period] = {} if period != 'campaign_performance' else []
                 
         except Exception as e:
             print(f"ERROR executing {period}: {e}")
-            results[period] = {}
+            results[period] = {} if period != 'campaign_performance' else []
     
     return results
 
@@ -691,7 +771,7 @@ def generate_claude_analysis(data):
 
 @marketing_router.post("/analyze-trends", response_model=TrendAnalysisResponse)
 async def analyze_marketing_trends(request: TrendAnalysisRequest):
-    """Execute SQL with channel separation and generate Claude analysis"""
+    """Execute comprehensive SQL with channel separation and generate Claude analysis"""
     try:
         if not BIGQUERY_AVAILABLE or not bigquery_client:
             return TrendAnalysisResponse(
@@ -700,23 +780,30 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
                 error="BigQuery client not initialized"
             )
         
-        # Execute the channel-separated SQL
-        data = execute_channel_separated_sql()
+        # Execute the comprehensive SQL
+        data = execute_comprehensive_sql(request)
         
         # Generate Claude analysis
         claude_analysis = generate_claude_analysis(data)
         
         return TrendAnalysisResponse(
             status="success",
-            message="Channel-separated analysis with Claude insights completed",
+            message="Comprehensive analysis with proper SQL integration completed",
             data={
                 "claude_analysis": claude_analysis,
-                "raw_data": data,
+                "raw_data": {
+                    "yesterday": data.get('yesterday', {}),
+                    "same_day_last_week": data.get('same_day_last_week', {}),
+                    "last_7_days": data.get('last_7_days', {}),
+                    "previous_7_days": data.get('previous_7_days', {})
+                },
+                "campaign_performance": data.get('campaign_performance', []),
                 "debug_info": {
                     "yesterday_paid_social_spend": data.get('yesterday', {}).get('paid_social_spend', 0),
                     "yesterday_paid_search_video_spend": data.get('yesterday', {}).get('paid_search_video_spend', 0),
                     "last_7_days_paid_social_spend": data.get('last_7_days', {}).get('paid_social_spend', 0),
-                    "last_7_days_paid_search_video_spend": data.get('last_7_days', {}).get('paid_search_video_spend', 0)
+                    "last_7_days_paid_search_video_spend": data.get('last_7_days', {}).get('paid_search_video_spend', 0),
+                    "total_campaigns": len(data.get('campaign_performance', []))
                 }
             }
         )
@@ -724,6 +811,6 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
     except Exception as e:
         return TrendAnalysisResponse(
             status="error",
-            message="Channel-separated analysis failed",
+            message="Comprehensive analysis failed",
             error=str(e)
         )
