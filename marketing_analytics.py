@@ -261,174 +261,433 @@ def execute_channel_separated_sql():
     return results
 
 def generate_claude_analysis(data):
-    """Generate Claude analysis using DSPy"""
+    """Generate analysis using direct calculation instead of DSPy"""
     
-    # Format the data for Claude
-    analysis_prompt = f"""
-You are a marketing performance analyst. Analyze this marketing data and provide insights focused on CAMPAIGN-LEVEL performance within the account, not just overall account metrics.
-
-## DATA ANALYSIS
-
-### DAY-OVER-DAY COMPARISON (Yesterday vs Same Day Last Week):
-
-**PAID SOCIAL (Meta)**:
-- Yesterday: Spend=${data.get('yesterday', {}).get('paid_social_spend', 0):,.0f}, Impressions={data.get('yesterday', {}).get('paid_social_impressions', 0):,}, CTR={data.get('yesterday', {}).get('paid_social_ctr', 0):.1f}%, Clicks={data.get('yesterday', {}).get('paid_social_clicks', 0):,}, Leads={data.get('yesterday', {}).get('paid_social_leads', 0)}, Estimates={data.get('yesterday', {}).get('paid_social_estimates', 0)}, Closings={data.get('yesterday', {}).get('paid_social_closings', 0)}, Funded={data.get('yesterday', {}).get('paid_social_funded', 0)}, RPTs={data.get('yesterday', {}).get('paid_social_rpts', 0)}
-- Same Day Last Week: Spend=${data.get('same_day_last_week', {}).get('paid_social_spend', 0):,.0f}, Impressions={data.get('same_day_last_week', {}).get('paid_social_impressions', 0):,}, CTR={data.get('same_day_last_week', {}).get('paid_social_ctr', 0):.1f}%, Clicks={data.get('same_day_last_week', {}).get('paid_social_clicks', 0):,}, Leads={data.get('same_day_last_week', {}).get('paid_social_leads', 0)}, Estimates={data.get('same_day_last_week', {}).get('paid_social_estimates', 0)}, Closings={data.get('same_day_last_week', {}).get('paid_social_closings', 0)}, Funded={data.get('same_day_last_week', {}).get('paid_social_funded', 0)}, RPTs={data.get('same_day_last_week', {}).get('paid_social_rpts', 0)}
-- Costs: Yesterday CPM=${data.get('yesterday', {}).get('paid_social_cpm', 0):.2f}, CPC=${data.get('yesterday', {}).get('paid_social_cpc', 0):.2f}, CPL=${data.get('yesterday', {}).get('paid_social_cost_per_lead', 0):.2f}, CPE=${data.get('yesterday', {}).get('paid_social_cost_per_estimate', 0):.2f}, CPC=${data.get('yesterday', {}).get('paid_social_cost_per_closing', 0):.2f}, CPF=${data.get('yesterday', {}).get('paid_social_cost_per_funded', 0):.2f}
-- Costs: Last Week CPM=${data.get('same_day_last_week', {}).get('paid_social_cpm', 0):.2f}, CPC=${data.get('same_day_last_week', {}).get('paid_social_cpc', 0):.2f}, CPL=${data.get('same_day_last_week', {}).get('paid_social_cost_per_lead', 0):.2f}, CPE=${data.get('same_day_last_week', {}).get('paid_social_cost_per_estimate', 0):.2f}, CPC=${data.get('same_day_last_week', {}).get('paid_social_cost_per_closing', 0):.2f}, CPF=${data.get('same_day_last_week', {}).get('paid_social_cost_per_funded', 0):.2f}
-- CVRs: Yesterday Estimate={data.get('yesterday', {}).get('paid_social_estimate_cvr', 0):.1f}%, Closing={data.get('yesterday', {}).get('paid_social_closing_cvr', 0):.1f}%, Funded={data.get('yesterday', {}).get('paid_social_funded_cvr', 0):.1f}%
-- CVRs: Last Week Estimate={data.get('same_day_last_week', {}).get('paid_social_estimate_cvr', 0):.1f}%, Closing={data.get('same_day_last_week', {}).get('paid_social_closing_cvr', 0):.1f}%, Funded={data.get('same_day_last_week', {}).get('paid_social_funded_cvr', 0):.1f}%
-
-**PAID SEARCH + VIDEO (Google)**:
-- Yesterday: Spend=${data.get('yesterday', {}).get('paid_search_video_spend', 0):,.0f}, Impressions={data.get('yesterday', {}).get('paid_search_video_impressions', 0):,}, CTR={data.get('yesterday', {}).get('paid_search_video_ctr', 0):.1f}%, Clicks={data.get('yesterday', {}).get('paid_search_video_clicks', 0):,}, Leads={data.get('yesterday', {}).get('paid_search_video_leads', 0)}, Estimates={data.get('yesterday', {}).get('paid_search_video_estimates', 0)}, Closings={data.get('yesterday', {}).get('paid_search_video_closings', 0)}, Funded={data.get('yesterday', {}).get('paid_search_video_funded', 0)}, RPTs={data.get('yesterday', {}).get('paid_search_video_rpts', 0)}
-- Same Day Last Week: Spend=${data.get('same_day_last_week', {}).get('paid_search_video_spend', 0):,.0f}, Impressions={data.get('same_day_last_week', {}).get('paid_search_video_impressions', 0):,}, CTR={data.get('same_day_last_week', {}).get('paid_search_video_ctr', 0):.1f}%, Clicks={data.get('same_day_last_week', {}).get('paid_search_video_clicks', 0):,}, Leads={data.get('same_day_last_week', {}).get('paid_search_video_leads', 0)}, Estimates={data.get('same_day_last_week', {}).get('paid_search_video_estimates', 0)}, Closings={data.get('same_day_last_week', {}).get('paid_search_video_closings', 0)}, Funded={data.get('same_day_last_week', {}).get('paid_search_video_funded', 0)}, RPTs={data.get('same_day_last_week', {}).get('paid_search_video_rpts', 0)}
-- Costs: Yesterday CPM=${data.get('yesterday', {}).get('paid_search_video_cpm', 0):.2f}, CPC=${data.get('yesterday', {}).get('paid_search_video_cpc', 0):.2f}, CPL=${data.get('yesterday', {}).get('paid_search_video_cost_per_lead', 0):.2f}, CPE=${data.get('yesterday', {}).get('paid_search_video_cost_per_estimate', 0):.2f}, CPC=${data.get('yesterday', {}).get('paid_search_video_cost_per_closing', 0):.2f}, CPF=${data.get('yesterday', {}).get('paid_search_video_cost_per_funded', 0):.2f}
-- Costs: Last Week CPM=${data.get('same_day_last_week', {}).get('paid_search_video_cpm', 0):.2f}, CPC=${data.get('same_day_last_week', {}).get('paid_search_video_cpc', 0):.2f}, CPL=${data.get('same_day_last_week', {}).get('paid_search_video_cost_per_lead', 0):.2f}, CPE=${data.get('same_day_last_week', {}).get('paid_search_video_cost_per_estimate', 0):.2f}, CPC=${data.get('same_day_last_week', {}).get('paid_search_video_cost_per_closing', 0):.2f}, CPF=${data.get('same_day_last_week', {}).get('paid_search_video_cost_per_funded', 0):.2f}
-- CVRs: Yesterday Estimate={data.get('yesterday', {}).get('paid_search_video_estimate_cvr', 0):.1f}%, Closing={data.get('yesterday', {}).get('paid_search_video_closing_cvr', 0):.1f}%, Funded={data.get('yesterday', {}).get('paid_search_video_funded_cvr', 0):.1f}%
-- CVRs: Last Week Estimate={data.get('same_day_last_week', {}).get('paid_search_video_estimate_cvr', 0):.1f}%, Closing={data.get('same_day_last_week', {}).get('paid_search_video_closing_cvr', 0):.1f}%, Funded={data.get('same_day_last_week', {}).get('paid_search_video_funded_cvr', 0):.1f}%
-
-### WEEK-OVER-WEEK COMPARISON (Last 7 Days vs Previous 7 Days):
-
-**PAID SOCIAL (Meta)**:
-- Last 7 Days: Spend=${data.get('last_7_days', {}).get('paid_social_spend', 0):,.0f}, Impressions={data.get('last_7_days', {}).get('paid_social_impressions', 0):,}, CTR={data.get('last_7_days', {}).get('paid_social_ctr', 0):.1f}%, Clicks={data.get('last_7_days', {}).get('paid_social_clicks', 0):,}, Leads={data.get('last_7_days', {}).get('paid_social_leads', 0)}, Estimates={data.get('last_7_days', {}).get('paid_social_estimates', 0)}, Closings={data.get('last_7_days', {}).get('paid_social_closings', 0)}, Funded={data.get('last_7_days', {}).get('paid_social_funded', 0)}, RPTs={data.get('last_7_days', {}).get('paid_social_rpts', 0)}
-- Previous 7 Days: Spend=${data.get('previous_7_days', {}).get('paid_social_spend', 0):,.0f}, Impressions={data.get('previous_7_days', {}).get('paid_social_impressions', 0):,}, CTR={data.get('previous_7_days', {}).get('paid_social_ctr', 0):.1f}%, Clicks={data.get('previous_7_days', {}).get('paid_social_clicks', 0):,}, Leads={data.get('previous_7_days', {}).get('paid_social_leads', 0)}, Estimates={data.get('previous_7_days', {}).get('paid_social_estimates', 0)}, Closings={data.get('previous_7_days', {}).get('paid_social_closings', 0)}, Funded={data.get('previous_7_days', {}).get('paid_social_funded', 0)}, RPTs={data.get('previous_7_days', {}).get('paid_social_rpts', 0)}
-- Costs: Last 7 Days CPM=${data.get('last_7_days', {}).get('paid_social_cpm', 0):.2f}, CPC=${data.get('last_7_days', {}).get('paid_social_cpc', 0):.2f}, CPL=${data.get('last_7_days', {}).get('paid_social_cost_per_lead', 0):.2f}, CPE=${data.get('last_7_days', {}).get('paid_social_cost_per_estimate', 0):.2f}, CPC=${data.get('last_7_days', {}).get('paid_social_cost_per_closing', 0):.2f}, CPF=${data.get('last_7_days', {}).get('paid_social_cost_per_funded', 0):.2f}
-- Costs: Previous 7 Days CPM=${data.get('previous_7_days', {}).get('paid_social_cpm', 0):.2f}, CPC=${data.get('previous_7_days', {}).get('paid_social_cpc', 0):.2f}, CPL=${data.get('previous_7_days', {}).get('paid_social_cost_per_lead', 0):.2f}, CPE=${data.get('previous_7_days', {}).get('paid_social_cost_per_estimate', 0):.2f}, CPC=${data.get('previous_7_days', {}).get('paid_social_cost_per_closing', 0):.2f}, CPF=${data.get('previous_7_days', {}).get('paid_social_cost_per_funded', 0):.2f}
-- CVRs: Last 7 Days Estimate={data.get('last_7_days', {}).get('paid_social_estimate_cvr', 0):.1f}%, Closing={data.get('last_7_days', {}).get('paid_social_closing_cvr', 0):.1f}%, Funded={data.get('last_7_days', {}).get('paid_social_funded_cvr', 0):.1f}%
-- CVRs: Previous 7 Days Estimate={data.get('previous_7_days', {}).get('paid_social_estimate_cvr', 0):.1f}%, Closing={data.get('previous_7_days', {}).get('paid_social_closing_cvr', 0):.1f}%, Funded={data.get('previous_7_days', {}).get('paid_social_funded_cvr', 0):.1f}%
-
-**PAID SEARCH + VIDEO (Google)**:
-- Last 7 Days: Spend=${data.get('last_7_days', {}).get('paid_search_video_spend', 0):,.0f}, Impressions={data.get('last_7_days', {}).get('paid_search_video_impressions', 0):,}, CTR={data.get('last_7_days', {}).get('paid_search_video_ctr', 0):.1f}%, Clicks={data.get('last_7_days', {}).get('paid_search_video_clicks', 0):,}, Leads={data.get('last_7_days', {}).get('paid_search_video_leads', 0)}, Estimates={data.get('last_7_days', {}).get('paid_search_video_estimates', 0)}, Closings={data.get('last_7_days', {}).get('paid_search_video_closings', 0)}, Funded={data.get('last_7_days', {}).get('paid_search_video_funded', 0)}, RPTs={data.get('last_7_days', {}).get('paid_search_video_rpts', 0)}
-- Previous 7 Days: Spend=${data.get('previous_7_days', {}).get('paid_search_video_spend', 0):,.0f}, Impressions={data.get('previous_7_days', {}).get('paid_search_video_impressions', 0):,}, CTR={data.get('previous_7_days', {}).get('paid_search_video_ctr', 0):.1f}%, Clicks={data.get('previous_7_days', {}).get('paid_search_video_clicks', 0):,}, Leads={data.get('previous_7_days', {}).get('paid_search_video_leads', 0)}, Estimates={data.get('previous_7_days', {}).get('paid_search_video_estimates', 0)}, Closings={data.get('previous_7_days', {}).get('paid_search_video_closings', 0)}, Funded={data.get('previous_7_days', {}).get('paid_search_video_funded', 0)}, RPTs={data.get('previous_7_days', {}).get('paid_search_video_rpts', 0)}
-- Costs: Last 7 Days CPM=${data.get('last_7_days', {}).get('paid_search_video_cpm', 0):.2f}, CPC=${data.get('last_7_days', {}).get('paid_search_video_cpc', 0):.2f}, CPL=${data.get('last_7_days', {}).get('paid_search_video_cost_per_lead', 0):.2f}, CPE=${data.get('last_7_days', {}).get('paid_search_video_cost_per_estimate', 0):.2f}, CPC=${data.get('last_7_days', {}).get('paid_search_video_cost_per_closing', 0):.2f}, CPF=${data.get('last_7_days', {}).get('paid_search_video_cost_per_funded', 0):.2f}
-- Costs: Previous 7 Days CPM=${data.get('previous_7_days', {}).get('paid_search_video_cpm', 0):.2f}, CPC=${data.get('previous_7_days', {}).get('paid_search_video_cpc', 0):.2f}, CPL=${data.get('previous_7_days', {}).get('paid_search_video_cost_per_lead', 0):.2f}, CPE=${data.get('previous_7_days', {}).get('paid_search_video_cost_per_estimate', 0):.2f}, CPC=${data.get('previous_7_days', {}).get('paid_search_video_cost_per_closing', 0):.2f}, CPF=${data.get('previous_7_days', {}).get('paid_search_video_cost_per_funded', 0):.2f}
-- CVRs: Last 7 Days Estimate={data.get('last_7_days', {}).get('paid_search_video_estimate_cvr', 0):.1f}%, Closing={data.get('last_7_days', {}).get('paid_search_video_closing_cvr', 0):.1f}%, Funded={data.get('last_7_days', {}).get('paid_search_video_funded_cvr', 0):.1f}%
-- CVRs: Previous 7 Days Estimate={data.get('previous_7_days', {}).get('paid_search_video_estimate_cvr', 0):.1f}%, Closing={data.get('previous_7_days', {}).get('paid_search_video_closing_cvr', 0):.1f}%, Funded={data.get('previous_7_days', {}).get('paid_search_video_funded_cvr', 0):.1f}%
-
-## OUTPUT REQUIREMENTS
-
-For the MESSAGE field: Focus on CAMPAIGN-LEVEL insights, optimization opportunities, and specific tactical recommendations. Examples:
-- "Video campaigns showing strong CTR gains but higher cost per closing suggests creative refresh needed"
-- "Search campaigns efficient on lead gen but estimates dropping - review landing page experience"
-- "Social campaigns scaling impressions well but CTR declining - test new creative angles"
-- "Cost per estimate increasing across both channels - funnel optimization opportunity"
-
-Don't just summarize the overall account performance - provide specific insights about what's happening within campaigns and what actions to take.
-
-Provide analysis for BOTH channels separately in this exact format:
-
-{{
-  "message": "Campaign-level insights and tactical recommendations based on performance patterns",
-  "colorCode": "green|yellow|red", 
-  "paidSocial": {{
-    "dayOverDayPulse": {{
-      "totalSpend": "value (+/-X.X%)",
-      "totalImpressions": "value (+/-X.X%)",
-      "cpm": "$X.XX (+/-X.X%)",
-      "ctr": "X.X% (+/-X.X%)",
-      "totalClicks": "value (+/-X.X%)",
-      "cpc": "$X.XX (+/-X.X%)",
-      "totalLeads": "value (+/-X.X%)",
-      "costPerLead": "$X.XX (+/-X.X%)",
-      "estimateCVR": "X.X% (+/-X.X%)",
-      "totalEstimates": "value (+/-X.X%)",
-      "costPerEstimate": "$X.XX (+/-X.X%)",
-      "closingsCVR": "X.X% (+/-X.X%)",
-      "totalClosings": "value (+/-X.X%)",
-      "costPerClosing": "$X.XX (+/-X.X%)",
-      "fundedCVR": "X.X% (+/-X.X%)",
-      "totalFunded": "value (+/-X.X%)",
-      "costPerFunded": "$X.XX (+/-X.X%)",
-      "totalRPTs": "value (+/-X.X%)"
-    }},
-    "weekOverWeekPulse": {{
-      "totalSpend": "value (+/-X.X%)",
-      "totalImpressions": "value (+/-X.X%)",
-      "cpm": "$X.XX (+/-X.X%)",
-      "ctr": "X.X% (+/-X.X%)",
-      "totalClicks": "value (+/-X.X%)",
-      "cpc": "$X.XX (+/-X.X%)",
-      "totalLeads": "value (+/-X.X%)",
-      "costPerLead": "$X.XX (+/-X.X%)",
-      "estimateCVR": "X.X% (+/-X.X%)",
-      "totalEstimates": "value (+/-X.X%)",
-      "costPerEstimate": "$X.XX (+/-X.X%)",
-      "closingsCVR": "X.X% (+/-X.X%)",
-      "totalClosings": "value (+/-X.X%)",
-      "costPerClosing": "$X.XX (+/-X.X%)",
-      "fundedCVR": "X.X% (+/-X.X%)",
-      "totalFunded": "value (+/-X.X%)",
-      "costPerFunded": "$X.XX (+/-X.X%)",
-      "totalRPTs": "value (+/-X.X%)"
-    }}
-  }},
-  "paidSearchVideo": {{
-    "dayOverDayPulse": {{
-      "totalSpend": "value (+/-X.X%)",
-      "totalImpressions": "value (+/-X.X%)",
-      "cpm": "$X.XX (+/-X.X%)",
-      "ctr": "X.X% (+/-X.X%)",
-      "totalClicks": "value (+/-X.X%)",
-      "cpc": "$X.XX (+/-X.X%)",
-      "totalLeads": "value (+/-X.X%)",
-      "costPerLead": "$X.XX (+/-X.X%)",
-      "estimateCVR": "X.X% (+/-X.X%)",
-      "totalEstimates": "value (+/-X.X%)",
-      "costPerEstimate": "$X.XX (+/-X.X%)",
-      "closingsCVR": "X.X% (+/-X.X%)",
-      "totalClosings": "value (+/-X.X%)",
-      "costPerClosing": "$X.XX (+/-X.X%)",
-      "fundedCVR": "X.X% (+/-X.X%)",
-      "totalFunded": "value (+/-X.X%)",
-      "costPerFunded": "$X.XX (+/-X.X%)",
-      "totalRPTs": "value (+/-X.X%)"
-    }},
-    "weekOverWeekPulse": {{
-      "totalSpend": "value (+/-X.X%)",
-      "totalImpressions": "value (+/-X.X%)",
-      "cpm": "$X.XX (+/-X.X%)",
-      "ctr": "X.X% (+/-X.X%)",
-      "totalClicks": "value (+/-X.X%)",
-      "cpc": "$X.XX (+/-X.X%)",
-      "totalLeads": "value (+/-X.X%)",
-      "costPerLead": "$X.XX (+/-X.X%)",
-      "estimateCVR": "X.X% (+/-X.X%)",
-      "totalEstimates": "value (+/-X.X%)",
-      "costPerEstimate": "$X.XX (+/-X.X%)",
-      "closingsCVR": "X.X% (+/-X.X%)",
-      "totalClosings": "value (+/-X.X%)",
-      "costPerClosing": "$X.XX (+/-X.X%)",
-      "fundedCVR": "X.X% (+/-X.X%)",
-      "totalFunded": "value (+/-X.X%)",
-      "costPerFunded": "$X.XX (+/-X.X%)",
-      "totalRPTs": "value (+/-X.X%)"
-    }}
-  }}
-}}
-
-Calculate percentage changes using: ((New Value - Old Value) / Old Value) × 100
-For conversion rates, show percentage change of the rates, not percentage points.
-Use "+" for increases, "-" for decreases.
-Round to 1 decimal place.
-
-Output ONLY the JSON object. No additional text.
-"""
-
-    try:
-        # Use DSPy to generate the analysis
-        analysis_result = dspy.Predict("analysis -> json_output")(analysis=analysis_prompt)
-        
-        # Try to parse as JSON
-        if hasattr(analysis_result, 'json_output'):
-            try:
-                return json.loads(analysis_result.json_output)
-            except json.JSONDecodeError:
-                return {"error": "Failed to parse Claude analysis as JSON", "raw_output": analysis_result.json_output}
+    def safe_get(data_dict, key, default=0):
+        val = data_dict.get(key, default)
+        return float(val) if val is not None else default
+    
+    def calc_change(current, previous):
+        if previous == 0:
+            return 100.0 if current > 0 else 0.0
+        return ((current - previous) / previous) * 100
+    
+    def format_value_with_change(current, previous, is_percentage=False, is_currency=False):
+        change = calc_change(current, previous)
+        if is_percentage:
+            return f"{current:.1f}% ({change:+.1f}%)"
+        elif is_currency:
+            return f"${current:.2f} ({change:+.1f}%)"
         else:
-            return {"error": "No json_output field in Claude response", "raw_response": str(analysis_result)}
-            
-    except Exception as e:
-        return {"error": f"Claude analysis failed: {str(e)}"}
+            return f"{current:,.0f} ({change:+.1f}%)"
+    
+    # Extract data for both channels and periods
+    yesterday = data.get('yesterday', {})
+    same_day_last_week = data.get('same_day_last_week', {})
+    last_7_days = data.get('last_7_days', {})
+    previous_7_days = data.get('previous_7_days', {})
+    
+    # PAID SOCIAL DAY-OVER-DAY
+    ps_dod = {
+        "totalSpend": format_value_with_change(
+            safe_get(yesterday, 'paid_social_spend'),
+            safe_get(same_day_last_week, 'paid_social_spend'),
+            is_currency=True
+        ),
+        "totalImpressions": format_value_with_change(
+            safe_get(yesterday, 'paid_social_impressions'),
+            safe_get(same_day_last_week, 'paid_social_impressions')
+        ),
+        "cpm": format_value_with_change(
+            safe_get(yesterday, 'paid_social_cpm'),
+            safe_get(same_day_last_week, 'paid_social_cpm'),
+            is_currency=True
+        ),
+        "ctr": format_value_with_change(
+            safe_get(yesterday, 'paid_social_ctr'),
+            safe_get(same_day_last_week, 'paid_social_ctr'),
+            is_percentage=True
+        ),
+        "totalClicks": format_value_with_change(
+            safe_get(yesterday, 'paid_social_clicks'),
+            safe_get(same_day_last_week, 'paid_social_clicks')
+        ),
+        "cpc": format_value_with_change(
+            safe_get(yesterday, 'paid_social_cpc'),
+            safe_get(same_day_last_week, 'paid_social_cpc'),
+            is_currency=True
+        ),
+        "totalLeads": format_value_with_change(
+            safe_get(yesterday, 'paid_social_leads'),
+            safe_get(same_day_last_week, 'paid_social_leads')
+        ),
+        "costPerLead": format_value_with_change(
+            safe_get(yesterday, 'paid_social_cost_per_lead'),
+            safe_get(same_day_last_week, 'paid_social_cost_per_lead'),
+            is_currency=True
+        ),
+        "estimateCVR": format_value_with_change(
+            safe_get(yesterday, 'paid_social_estimate_cvr'),
+            safe_get(same_day_last_week, 'paid_social_estimate_cvr'),
+            is_percentage=True
+        ),
+        "totalEstimates": format_value_with_change(
+            safe_get(yesterday, 'paid_social_estimates'),
+            safe_get(same_day_last_week, 'paid_social_estimates')
+        ),
+        "costPerEstimate": format_value_with_change(
+            safe_get(yesterday, 'paid_social_cost_per_estimate'),
+            safe_get(same_day_last_week, 'paid_social_cost_per_estimate'),
+            is_currency=True
+        ),
+        "closingsCVR": format_value_with_change(
+            safe_get(yesterday, 'paid_social_closing_cvr'),
+            safe_get(same_day_last_week, 'paid_social_closing_cvr'),
+            is_percentage=True
+        ),
+        "totalClosings": format_value_with_change(
+            safe_get(yesterday, 'paid_social_closings'),
+            safe_get(same_day_last_week, 'paid_social_closings')
+        ),
+        "costPerClosing": format_value_with_change(
+            safe_get(yesterday, 'paid_social_cost_per_closing'),
+            safe_get(same_day_last_week, 'paid_social_cost_per_closing'),
+            is_currency=True
+        ),
+        "fundedCVR": format_value_with_change(
+            safe_get(yesterday, 'paid_social_funded_cvr'),
+            safe_get(same_day_last_week, 'paid_social_funded_cvr'),
+            is_percentage=True
+        ),
+        "totalFunded": format_value_with_change(
+            safe_get(yesterday, 'paid_social_funded'),
+            safe_get(same_day_last_week, 'paid_social_funded')
+        ),
+        "costPerFunded": format_value_with_change(
+            safe_get(yesterday, 'paid_social_cost_per_funded'),
+            safe_get(same_day_last_week, 'paid_social_cost_per_funded'),
+            is_currency=True
+        ),
+        "totalRPTs": format_value_with_change(
+            safe_get(yesterday, 'paid_social_rpts'),
+            safe_get(same_day_last_week, 'paid_social_rpts')
+        )
+    }
+    
+    # PAID SOCIAL WEEK-OVER-WEEK
+    ps_wow = {
+        "totalSpend": format_value_with_change(
+            safe_get(last_7_days, 'paid_social_spend'),
+            safe_get(previous_7_days, 'paid_social_spend'),
+            is_currency=True
+        ),
+        "totalImpressions": format_value_with_change(
+            safe_get(last_7_days, 'paid_social_impressions'),
+            safe_get(previous_7_days, 'paid_social_impressions')
+        ),
+        "cpm": format_value_with_change(
+            safe_get(last_7_days, 'paid_social_cpm'),
+            safe_get(previous_7_days, 'paid_social_cpm'),
+            is_currency=True
+        ),
+        "ctr": format_value_with_change(
+            safe_get(last_7_days, 'paid_social_ctr'),
+            safe_get(previous_7_days, 'paid_social_ctr'),
+            is_percentage=True
+        ),
+        "totalClicks": format_value_with_change(
+            safe_get(last_7_days, 'paid_social_clicks'),
+            safe_get(previous_7_days, 'paid_social_clicks')
+        ),
+        "cpc": format_value_with_change(
+            safe_get(last_7_days, 'paid_social_cpc'),
+            safe_get(previous_7_days, 'paid_social_cpc'),
+            is_currency=True
+        ),
+        "totalLeads": format_value_with_change(
+            safe_get(last_7_days, 'paid_social_leads'),
+            safe_get(previous_7_days, 'paid_social_leads')
+        ),
+        "costPerLead": format_value_with_change(
+            safe_get(last_7_days, 'paid_social_cost_per_lead'),
+            safe_get(previous_7_days, 'paid_social_cost_per_lead'),
+            is_currency=True
+        ),
+        "estimateCVR": format_value_with_change(
+            safe_get(last_7_days, 'paid_social_estimate_cvr'),
+            safe_get(previous_7_days, 'paid_social_estimate_cvr'),
+            is_percentage=True
+        ),
+        "totalEstimates": format_value_with_change(
+            safe_get(last_7_days, 'paid_social_estimates'),
+            safe_get(previous_7_days, 'paid_social_estimates')
+        ),
+        "costPerEstimate": format_value_with_change(
+            safe_get(last_7_days, 'paid_social_cost_per_estimate'),
+            safe_get(previous_7_days, 'paid_social_cost_per_estimate'),
+            is_currency=True
+        ),
+        "closingsCVR": format_value_with_change(
+            safe_get(last_7_days, 'paid_social_closing_cvr'),
+            safe_get(previous_7_days, 'paid_social_closing_cvr'),
+            is_percentage=True
+        ),
+        "totalClosings": format_value_with_change(
+            safe_get(last_7_days, 'paid_social_closings'),
+            safe_get(previous_7_days, 'paid_social_closings')
+        ),
+        "costPerClosing": format_value_with_change(
+            safe_get(last_7_days, 'paid_social_cost_per_closing'),
+            safe_get(previous_7_days, 'paid_social_cost_per_closing'),
+            is_currency=True
+        ),
+        "fundedCVR": format_value_with_change(
+            safe_get(last_7_days, 'paid_social_funded_cvr'),
+            safe_get(previous_7_days, 'paid_social_funded_cvr'),
+            is_percentage=True
+        ),
+        "totalFunded": format_value_with_change(
+            safe_get(last_7_days, 'paid_social_funded'),
+            safe_get(previous_7_days, 'paid_social_funded')
+        ),
+        "costPerFunded": format_value_with_change(
+            safe_get(last_7_days, 'paid_social_cost_per_funded'),
+            safe_get(previous_7_days, 'paid_social_cost_per_funded'),
+            is_currency=True
+        ),
+        "totalRPTs": format_value_with_change(
+            safe_get(last_7_days, 'paid_social_rpts'),
+            safe_get(previous_7_days, 'paid_social_rpts')
+        )
+    }
+    
+    # PAID SEARCH+VIDEO DAY-OVER-DAY
+    psv_dod = {
+        "totalSpend": format_value_with_change(
+            safe_get(yesterday, 'paid_search_video_spend'),
+            safe_get(same_day_last_week, 'paid_search_video_spend'),
+            is_currency=True
+        ),
+        "totalImpressions": format_value_with_change(
+            safe_get(yesterday, 'paid_search_video_impressions'),
+            safe_get(same_day_last_week, 'paid_search_video_impressions')
+        ),
+        "cpm": format_value_with_change(
+            safe_get(yesterday, 'paid_search_video_cpm'),
+            safe_get(same_day_last_week, 'paid_search_video_cpm'),
+            is_currency=True
+        ),
+        "ctr": format_value_with_change(
+            safe_get(yesterday, 'paid_search_video_ctr'),
+            safe_get(same_day_last_week, 'paid_search_video_ctr'),
+            is_percentage=True
+        ),
+        "totalClicks": format_value_with_change(
+            safe_get(yesterday, 'paid_search_video_clicks'),
+            safe_get(same_day_last_week, 'paid_search_video_clicks')
+        ),
+        "cpc": format_value_with_change(
+            safe_get(yesterday, 'paid_search_video_cpc'),
+            safe_get(same_day_last_week, 'paid_search_video_cpc'),
+            is_currency=True
+        ),
+        "totalLeads": format_value_with_change(
+            safe_get(yesterday, 'paid_search_video_leads'),
+            safe_get(same_day_last_week, 'paid_search_video_leads')
+        ),
+        "costPerLead": format_value_with_change(
+            safe_get(yesterday, 'paid_search_video_cost_per_lead'),
+            safe_get(same_day_last_week, 'paid_search_video_cost_per_lead'),
+            is_currency=True
+        ),
+        "estimateCVR": format_value_with_change(
+            safe_get(yesterday, 'paid_search_video_estimate_cvr'),
+            safe_get(same_day_last_week, 'paid_search_video_estimate_cvr'),
+            is_percentage=True
+        ),
+        "totalEstimates": format_value_with_change(
+            safe_get(yesterday, 'paid_search_video_estimates'),
+            safe_get(same_day_last_week, 'paid_search_video_estimates')
+        ),
+        "costPerEstimate": format_value_with_change(
+            safe_get(yesterday, 'paid_search_video_cost_per_estimate'),
+            safe_get(same_day_last_week, 'paid_search_video_cost_per_estimate'),
+            is_currency=True
+        ),
+        "closingsCVR": format_value_with_change(
+            safe_get(yesterday, 'paid_search_video_closing_cvr'),
+            safe_get(same_day_last_week, 'paid_search_video_closing_cvr'),
+            is_percentage=True
+        ),
+        "totalClosings": format_value_with_change(
+            safe_get(yesterday, 'paid_search_video_closings'),
+            safe_get(same_day_last_week, 'paid_search_video_closings')
+        ),
+        "costPerClosing": format_value_with_change(
+            safe_get(yesterday, 'paid_search_video_cost_per_closing'),
+            safe_get(same_day_last_week, 'paid_search_video_cost_per_closing'),
+            is_currency=True
+        ),
+        "fundedCVR": format_value_with_change(
+            safe_get(yesterday, 'paid_search_video_funded_cvr'),
+            safe_get(same_day_last_week, 'paid_search_video_funded_cvr'),
+            is_percentage=True
+        ),
+        "totalFunded": format_value_with_change(
+            safe_get(yesterday, 'paid_search_video_funded'),
+            safe_get(same_day_last_week, 'paid_search_video_funded')
+        ),
+        "costPerFunded": format_value_with_change(
+            safe_get(yesterday, 'paid_search_video_cost_per_funded'),
+            safe_get(same_day_last_week, 'paid_search_video_cost_per_funded'),
+            is_currency=True
+        ),
+        "totalRPTs": format_value_with_change(
+            safe_get(yesterday, 'paid_search_video_rpts'),
+            safe_get(same_day_last_week, 'paid_search_video_rpts')
+        )
+    }
+    
+    # PAID SEARCH+VIDEO WEEK-OVER-WEEK
+    psv_wow = {
+        "totalSpend": format_value_with_change(
+            safe_get(last_7_days, 'paid_search_video_spend'),
+            safe_get(previous_7_days, 'paid_search_video_spend'),
+            is_currency=True
+        ),
+        "totalImpressions": format_value_with_change(
+            safe_get(last_7_days, 'paid_search_video_impressions'),
+            safe_get(previous_7_days, 'paid_search_video_impressions')
+        ),
+        "cpm": format_value_with_change(
+            safe_get(last_7_days, 'paid_search_video_cpm'),
+            safe_get(previous_7_days, 'paid_search_video_cpm'),
+            is_currency=True
+        ),
+        "ctr": format_value_with_change(
+            safe_get(last_7_days, 'paid_search_video_ctr'),
+            safe_get(previous_7_days, 'paid_search_video_ctr'),
+            is_percentage=True
+        ),
+        "totalClicks": format_value_with_change(
+            safe_get(last_7_days, 'paid_search_video_clicks'),
+            safe_get(previous_7_days, 'paid_search_video_clicks')
+        ),
+        "cpc": format_value_with_change(
+            safe_get(last_7_days, 'paid_search_video_cpc'),
+            safe_get(previous_7_days, 'paid_search_video_cpc'),
+            is_currency=True
+        ),
+        "totalLeads": format_value_with_change(
+            safe_get(last_7_days, 'paid_search_video_leads'),
+            safe_get(previous_7_days, 'paid_search_video_leads')
+        ),
+        "costPerLead": format_value_with_change(
+            safe_get(last_7_days, 'paid_search_video_cost_per_lead'),
+            safe_get(previous_7_days, 'paid_search_video_cost_per_lead'),
+            is_currency=True
+        ),
+        "estimateCVR": format_value_with_change(
+            safe_get(last_7_days, 'paid_search_video_estimate_cvr'),
+            safe_get(previous_7_days, 'paid_search_video_estimate_cvr'),
+            is_percentage=True
+        ),
+        "totalEstimates": format_value_with_change(
+            safe_get(last_7_days, 'paid_search_video_estimates'),
+            safe_get(previous_7_days, 'paid_search_video_estimates')
+        ),
+        "costPerEstimate": format_value_with_change(
+            safe_get(last_7_days, 'paid_search_video_cost_per_estimate'),
+            safe_get(previous_7_days, 'paid_search_video_cost_per_estimate'),
+            is_currency=True
+        ),
+        "closingsCVR": format_value_with_change(
+            safe_get(last_7_days, 'paid_search_video_closing_cvr'),
+            safe_get(previous_7_days, 'paid_search_video_closing_cvr'),
+            is_percentage=True
+        ),
+        "totalClosings": format_value_with_change(
+            safe_get(last_7_days, 'paid_search_video_closings'),
+            safe_get(previous_7_days, 'paid_search_video_closings')
+        ),
+        "costPerClosing": format_value_with_change(
+            safe_get(last_7_days, 'paid_search_video_cost_per_closing'),
+            safe_get(previous_7_days, 'paid_search_video_cost_per_closing'),
+            is_currency=True
+        ),
+        "fundedCVR": format_value_with_change(
+            safe_get(last_7_days, 'paid_search_video_funded_cvr'),
+            safe_get(previous_7_days, 'paid_search_video_funded_cvr'),
+            is_percentage=True
+        ),
+        "totalFunded": format_value_with_change(
+            safe_get(last_7_days, 'paid_search_video_funded'),
+            safe_get(previous_7_days, 'paid_search_video_funded')
+        ),
+        "costPerFunded": format_value_with_change(
+            safe_get(last_7_days, 'paid_search_video_cost_per_funded'),
+            safe_get(previous_7_days, 'paid_search_video_cost_per_funded'),
+            is_currency=True
+        ),
+        "totalRPTs": format_value_with_change(
+            safe_get(last_7_days, 'paid_search_video_rpts'),
+            safe_get(previous_7_days, 'paid_search_video_rpts')
+        )
+    }
+    
+    # Generate insights message based on key metrics
+    ps_spend_change = calc_change(safe_get(yesterday, 'paid_social_spend'), safe_get(same_day_last_week, 'paid_social_spend'))
+    ps_ctr_change = calc_change(safe_get(yesterday, 'paid_social_ctr'), safe_get(same_day_last_week, 'paid_social_ctr'))
+    ps_funded_cvr_change = calc_change(safe_get(yesterday, 'paid_social_funded_cvr'), safe_get(same_day_last_week, 'paid_social_funded_cvr'))
+    
+    psv_spend_change = calc_change(safe_get(yesterday, 'paid_search_video_spend'), safe_get(same_day_last_week, 'paid_search_video_spend'))
+    psv_ctr_change = calc_change(safe_get(yesterday, 'paid_search_video_ctr'), safe_get(same_day_last_week, 'paid_search_video_ctr'))
+    
+    # Generate insights message
+    insights = []
+    if abs(ps_ctr_change) > 10:
+        if ps_ctr_change > 0:
+            insights.append("Social campaigns showing strong CTR gains")
+        else:
+            insights.append("Social CTR declining - test new creative angles")
+    
+    if abs(ps_funded_cvr_change) > 15:
+        if ps_funded_cvr_change > 0:
+            insights.append("significant funded conversion rate improvement")
+        else:
+            insights.append("funded CVR dropping - review closing process")
+    
+    if abs(psv_ctr_change) > 10:
+        if psv_ctr_change > 0:
+            insights.append("Search+Video CTR performing well")
+        else:
+            insights.append("Search+Video needs keyword optimization")
+    
+    if not insights:
+        insights.append("Performance relatively stable across channels")
+    
+    message = " - ".join(insights[:2])  # Take first 2 insights
+    
+    # Determine color code
+    if ps_spend_change > 20 or psv_spend_change > 20 or ps_ctr_change < -15 or psv_ctr_change < -15:
+        color_code = "red"
+    elif ps_ctr_change < -5 or psv_ctr_change < -5 or abs(ps_spend_change) > 10:
+        color_code = "yellow"
+    else:
+        color_code = "green"
+    
+    return {
+        "message": message,
+        "colorCode": color_code,
+        "paidSocial": {
+            "dayOverDayPulse": ps_dod,
+            "weekOverWeekPulse": ps_wow
+        },
+        "paidSearchVideo": {
+            "dayOverDayPulse": psv_dod,
+            "weekOverWeekPulse": psv_wow
+        }
+    }
 
 @marketing_router.post("/analyze-trends", response_model=TrendAnalysisResponse)
 async def analyze_marketing_trends(request: TrendAnalysisRequest):
