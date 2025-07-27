@@ -341,7 +341,7 @@ def execute_comprehensive_sql(request: TrendAnalysisRequest):
     return results
 
 def generate_claude_analysis(data):
-    """Generate analysis using direct calculation instead of DSPy"""
+    """Generate comprehensive cross-platform analysis with specific numbers and outlier detection"""
     
     def safe_get(data_dict, key, default=0):
         val = data_dict.get(key, default)
@@ -361,11 +361,21 @@ def generate_claude_analysis(data):
         else:
             return f"{current:,.0f} ({change:+.1f}%)"
     
+    def format_currency(value):
+        return f"${value:,.0f}" if value >= 1000 else f"${value:.0f}"
+    
+    def format_number(value):
+        return f"{value:,.0f}" if value >= 1000 else f"{value:.0f}"
+    
+    def format_percentage(value):
+        return f"{value:.1f}%" if value else "0.0%"
+    
     # Extract data for both channels and periods
     yesterday = data.get('yesterday', {})
     same_day_last_week = data.get('same_day_last_week', {})
     last_7_days = data.get('last_7_days', {})
     previous_7_days = data.get('previous_7_days', {})
+    campaign_performance = data.get('campaign_performance', [])
     
     # PAID SOCIAL DAY-OVER-DAY
     ps_dod = {
