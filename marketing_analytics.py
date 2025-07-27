@@ -64,45 +64,8 @@ async def marketing_root():
         "bigquery_available": BIGQUERY_AVAILABLE
     }
 
-def execute_comprehensive_sql(request: TrendAnalysisRequest):
-    """Execute comprehensive SQL queries matching the structure from paste.txt"""
-    
-    # Parse date ranges from request
-    try:
-        since_date = datetime.strptime(request.date_range["since"], "%Y-%m-%d").date()
-        until_date = datetime.strptime(request.date_range["until"], "%Y-%m-%d").date()
-    except (KeyError, ValueError) as e:
-        raise ValueError(f"Invalid date format in request: {e}")
-    
-    # Calculate date ranges based on request
-    yesterday = until_date - timedelta(days=1)  # 2025-07-25 (one day before until)
-    same_day_last_week = yesterday - timedelta(days=7)  # 2025-07-18
-    last_7_days_end = yesterday
-    last_7_days_start = yesterday - timedelta(days=6)  # 2025-07-19
-    previous_7_days_end = same_day_last_week
-    previous_7_days_start = previous_7_days_end - timedelta(days=6)  # 2025-07-12
-    
-    # Validate that the request date range covers our analysis period
-    if since_date > previous_7_days_start:
-        print(f"Warning: Request since date {since_date} is after calculated start {previous_7_days_start}")
-    if until_date < last_7_days_end:
-        print(f"Warning: Request until date {until_date} is before calculated end {last_7_days_end}")
-    
-    print(f"Date ranges from request:")
-    print(f"  Request: {since_date} to {until_date}")
-    print(f"  Yesterday: {yesterday}")
-    print(f"  Same day last week: {same_day_last_week}")
-    print(f"  Last 7 days: {last_7_days_start} to {last_7_days_end}")
-    print(f"  Previous 7 days: {previous_7_days_start} to {previous_7_days_end}")
-    print(f"  Include historical: {request.include_historical}")
-    print(f"  Analysis depth: {request.analysis_depth}")
-    
-    # FIXED VERSION - Replace the get_comprehensive_query function with this:
-
-    
-        # CORRECT FIX - Replace your get_comprehensive_query function with this:
-
-def get_comprehensive_query(date_filter, period_name):
+def get_comprehensive_query(date_filter, period_name, analysis_depth):
+    """Generate comprehensive query with proper CTEs"""
     base_query = f"""
     WITH meta_aggregated_by_campaign AS (
       -- Pre-aggregate Meta data by utm_campaign and date 
@@ -178,7 +141,7 @@ def get_comprehensive_query(date_filter, period_name):
                   SUM(COALESCE(ma.meta_impressions, 0)) + SUM(COALESCE(ga.google_impressions, 0))) * 100 as overall_ctr"""
     
     # Add channel-specific metrics only if analysis_depth is not "basic"
-    if request.analysis_depth != "basic":
+    if analysis_depth != "basic":
         base_query += f"""
       
       -- Channel-specific metrics (based on utm_medium from hex_data)
@@ -273,67 +236,93 @@ def get_comprehensive_query(date_filter, period_name):
     """
     
     return base_query
+
+def get_campaign_performance_query(last_7_days_start, last_7_days_end):
+    """Generate campaign performance query"""
+    return f"""
+    WITH meta_by_campaign AS (
+      SELECT 
+        mm.utm_campaign,
+        m.date,
+        SUM(SAFE_CAST(m.spend AS FLOAT64)) as spend
+      FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm
+      JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data` m 
+        ON mm.adset_name_mapped = m.adset_name
+      GROUP BY mm.utm_campaign, m.date
+    )
     
- 
-    # ALSO UPDATE the campaign performance query:
-    def get_campaign_performance_query():
-        return f"""
-        WITH meta_by_campaign AS (
-          SELECT 
-            mm.utm_campaign,
-            m.date,
-            SUM(SAFE_CAST(m.spend AS FLOAT64)) as spend
-          FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm
-          JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data` m 
-            ON mm.adset_name_mapped = m.adset_name
-          GROUP BY mm.utm_campaign, m.date
-        )
-        
-        SELECT 
-          h.utm_campaign,
-          mm.campaign_name_mapped AS campaign_name,
-          mm.adset_name_mapped,
-          
-          -- Total Metrics
-          SUM(h.leads) as total_leads,
-          SUM(h.funded) as total_funded,
-          SUM(COALESCE(mc.spend, 0)) as total_meta_spend,
-          SUM(COALESCE(g.spend_usd, 0)) as total_google_spend,
-          SUM(COALESCE(mc.spend, 0)) + SUM(COALESCE(g.spend_usd, 0)) as total_combined_spend,
-          
-          -- Performance Metrics
-          SAFE_DIVIDE(SUM(h.funded), SUM(h.leads)) * 100 as lead_to_funded_rate,
-          SAFE_DIVIDE(SUM(COALESCE(mc.spend, 0)) + SUM(COALESCE(g.spend_usd, 0)), SUM(h.leads)) as cost_per_lead,
-          SAFE_DIVIDE(SUM(COALESCE(mc.spend, 0)) + SUM(COALESCE(g.spend_usd, 0)), SUM(h.funded)) as cost_per_funded,
-          
-          -- Channel Performance
-          SAFE_DIVIDE(SUM(COALESCE(mc.spend, 0)), SUM(COALESCE(mc.spend, 0)) + SUM(COALESCE(g.spend_usd, 0))) * 100 as meta_spend_percentage,
-          SAFE_DIVIDE(SUM(COALESCE(g.spend_usd, 0)), SUM(COALESCE(mc.spend, 0)) + SUM(COALESCE(g.spend_usd, 0))) * 100 as google_spend_percentage
+    SELECT 
+      h.utm_campaign,
+      mm.campaign_name_mapped AS campaign_name,
+      mm.adset_name_mapped,
+      
+      -- Total Metrics
+      SUM(h.leads) as total_leads,
+      SUM(h.funded) as total_funded,
+      SUM(COALESCE(mc.spend, 0)) as total_meta_spend,
+      SUM(COALESCE(g.spend_usd, 0)) as total_google_spend,
+      SUM(COALESCE(mc.spend, 0)) + SUM(COALESCE(g.spend_usd, 0)) as total_combined_spend,
+      
+      -- Performance Metrics
+      SAFE_DIVIDE(SUM(h.funded), SUM(h.leads)) * 100 as lead_to_funded_rate,
+      SAFE_DIVIDE(SUM(COALESCE(mc.spend, 0)) + SUM(COALESCE(g.spend_usd, 0)), SUM(h.leads)) as cost_per_lead,
+      SAFE_DIVIDE(SUM(COALESCE(mc.spend, 0)) + SUM(COALESCE(g.spend_usd, 0)), SUM(h.funded)) as cost_per_funded,
+      
+      -- Channel Performance
+      SAFE_DIVIDE(SUM(COALESCE(mc.spend, 0)), SUM(COALESCE(mc.spend, 0)) + SUM(COALESCE(g.spend_usd, 0))) * 100 as meta_spend_percentage,
+      SAFE_DIVIDE(SUM(COALESCE(g.spend_usd, 0)), SUM(COALESCE(mc.spend, 0)) + SUM(COALESCE(g.spend_usd, 0))) * 100 as google_spend_percentage
+
+    FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data` h
+    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm ON h.utm_campaign = mm.utm_campaign
+    LEFT JOIN meta_by_campaign mc ON h.utm_campaign = mc.utm_campaign AND h.date = mc.date
+    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data` g ON h.utm_campaign = g.campaign_name AND h.date = g.date
+    WHERE h.date BETWEEN "{last_7_days_start}" AND "{last_7_days_end}"
+    GROUP BY h.utm_campaign, mm.campaign_name_mapped, mm.adset_name_mapped
+    HAVING SUM(h.leads) > 0
+    ORDER BY total_combined_spend DESC
+    """
+
+def execute_comprehensive_sql(request: TrendAnalysisRequest):
+    """Execute comprehensive SQL queries with better error handling"""
     
-        FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data` h
-        LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm ON h.utm_campaign = mm.utm_campaign
-        LEFT JOIN meta_by_campaign mc ON h.utm_campaign = mc.utm_campaign AND h.date = mc.date
-        LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data` g ON h.utm_campaign = g.campaign_name AND h.date = g.date
-        WHERE h.date BETWEEN "{last_7_days_start}" AND "{last_7_days_end}"
-        GROUP BY h.utm_campaign, mm.campaign_name_mapped, mm.adset_name_mapped
-        HAVING SUM(h.leads) > 0
-        ORDER BY total_combined_spend DESC
-        """
+    try:
+        # Parse date ranges from request
+        since_date = datetime.strptime(request.date_range["since"], "%Y-%m-%d").date()
+        until_date = datetime.strptime(request.date_range["until"], "%Y-%m-%d").date()
+    except (KeyError, ValueError) as e:
+        raise ValueError(f"Invalid date format in request: {e}")
+    
+    # Calculate date ranges
+    yesterday = until_date - timedelta(days=1)
+    same_day_last_week = yesterday - timedelta(days=7)
+    last_7_days_end = yesterday
+    last_7_days_start = yesterday - timedelta(days=6)
+    previous_7_days_end = same_day_last_week
+    previous_7_days_start = previous_7_days_end - timedelta(days=6)
+    
+    print(f"Date calculations:")
+    print(f"  Yesterday: {yesterday}")
+    print(f"  Same day last week: {same_day_last_week}")
+    print(f"  Last 7 days: {last_7_days_start} to {last_7_days_end}")
+    print(f"  Previous 7 days: {previous_7_days_start} to {previous_7_days_end}")
     
     # Define queries for each period
     queries = {}
     
-    queries['yesterday'] = get_comprehensive_query(f'h.date = "{yesterday}"', 'Yesterday')
-    queries['same_day_last_week'] = get_comprehensive_query(f'h.date = "{same_day_last_week}"', 'Same Day Last Week')
-    queries['last_7_days'] = get_comprehensive_query(f'h.date BETWEEN "{last_7_days_start}" AND "{last_7_days_end}"', 'Last 7 Days')
-    
-    # Only include previous 7 days if include_historical is True
-    if request.include_historical:
-        queries['previous_7_days'] = get_comprehensive_query(f'h.date BETWEEN "{previous_7_days_start}" AND "{previous_7_days_end}"', 'Previous 7 Days')
-    
-    # Campaign performance query (always include if analysis_depth is not basic)
-    if request.analysis_depth != "basic":
-        queries['campaign_performance'] = get_campaign_performance_query()
+    try:
+        queries['yesterday'] = get_comprehensive_query(f'h.date = "{yesterday}"', 'Yesterday', request.analysis_depth)
+        queries['same_day_last_week'] = get_comprehensive_query(f'h.date = "{same_day_last_week}"', 'Same Day Last Week', request.analysis_depth)
+        queries['last_7_days'] = get_comprehensive_query(f'h.date BETWEEN "{last_7_days_start}" AND "{last_7_days_end}"', 'Last 7 Days', request.analysis_depth)
+        
+        if request.include_historical:
+            queries['previous_7_days'] = get_comprehensive_query(f'h.date BETWEEN "{previous_7_days_start}" AND "{previous_7_days_end}"', 'Previous 7 Days', request.analysis_depth)
+        
+        if request.analysis_depth != "basic":
+            queries['campaign_performance'] = get_campaign_performance_query(last_7_days_start, last_7_days_end)
+            
+    except Exception as e:
+        print(f"Error building queries: {e}")
+        raise e
     
     results = {}
     
@@ -341,6 +330,9 @@ def get_comprehensive_query(date_filter, period_name):
         print(f"\n=== EXECUTING {period.upper()} ===")
         
         try:
+            if not bigquery_client:
+                raise Exception("BigQuery client not available")
+                
             df = bigquery_client.query(sql).to_dataframe()
             print(f"Query returned {len(df)} rows")
             
@@ -349,47 +341,58 @@ def get_comprehensive_query(date_filter, period_name):
                     # For campaign performance, return all rows
                     campaigns = []
                     for _, row in df.iterrows():
-                        campaign_data = row.to_dict()
-                        # Clean the data
-                        for key, value in campaign_data.items():
+                        campaign_data = {}
+                        for col in df.columns:
+                            value = row[col]
                             if pd.isna(value):
-                                campaign_data[key] = 0
+                                campaign_data[col] = 0
                             elif hasattr(value, 'item'):
-                                campaign_data[key] = value.item()
+                                campaign_data[col] = value.item()
+                            else:
+                                campaign_data[col] = value
                         campaigns.append(campaign_data)
                     results[period] = campaigns
                 else:
                     # For aggregate queries, return single row
-                    result = df.iloc[0].to_dict()
-                    # Clean the data
-                    for key, value in result.items():
-                        if pd.isna(value):
-                            result[key] = 0
-                        elif hasattr(value, 'item'):
-                            result[key] = value.item()
-                        else:
-                            result[key] = value
-                    
-                    results[period] = result
-                    
-                    # Debug print key metrics
-                    paid_social_spend = result.get('paid_social_spend', 0) or 0
-                    paid_search_video_spend = result.get('paid_search_video_spend', 0) or 0
-                    total_spend = result.get('total_ad_spend', 0) or 0
-                    total_leads = result.get('hex_leads', 0) or 0
-                    
-                    print(f"RESULTS {period}:")
-                    print(f"  Paid Social: ${paid_social_spend:,.0f}")
-                    print(f"  Paid Search+Video: ${paid_search_video_spend:,.0f}")
-                    print(f"  Total: ${total_spend:,.0f}, Leads: {total_leads}")
-                
+                    if len(df) > 0:
+                        result = {}
+                        for col in df.columns:
+                            value = df.iloc[0][col]
+                            if pd.isna(value):
+                                result[col] = 0
+                            elif hasattr(value, 'item'):
+                                result[col] = value.item()
+                            else:
+                                result[col] = value
+                        results[period] = result
+                        
+                        # Debug key metrics
+                        print(f"RESULTS {period}:")
+                        print(f"  Total leads: {result.get('hex_leads', 0)}")
+                        print(f"  Meta clicks: {result.get('meta_clicks', 0)}")
+                        print(f"  Paid social clicks: {result.get('paid_social_clicks', 0)}")
+                    else:
+                        print(f"Empty dataframe for {period}")
+                        results[period] = {}
             else:
                 print(f"No data returned for {period}")
                 results[period] = {} if period != 'campaign_performance' else []
                 
         except Exception as e:
             print(f"ERROR executing {period}: {e}")
+            print(f"SQL that failed: {sql[:500]}...")
+            # Return empty structure instead of failing completely
             results[period] = {} if period != 'campaign_performance' else []
+    
+    print(f"\n=== FINAL RESULTS STRUCTURE ===")
+    print(f"Results keys: {list(results.keys())}")
+    for key, value in results.items():
+        if isinstance(value, dict):
+            print(f"  {key}: dict with {len(value)} keys")
+        elif isinstance(value, list):
+            print(f"  {key}: list with {len(value)} items")
+        else:
+            print(f"  {key}: {type(value)}")
     
     return results
 
@@ -407,15 +410,6 @@ def generate_enhanced_claude_analysis(data):
             return 100.0 if current > 0 else 0.0
         return ((current - previous) / previous) * 100
     
-    def format_value_with_change(current, previous, is_percentage=False, is_currency=False):
-        change = calc_change(current, previous)
-        if is_percentage:
-            return f"{current:.1f}% ({change:+.1f}%)"
-        elif is_currency:
-            return f"${current:.2f} ({change:+.1f}%)"
-        else:
-            return f"{current:,.0f} ({change:+.1f}%)"
-    
     def format_currency(value):
         return f"${value:,.0f}" if value >= 1000 else f"${value:.0f}"
     
@@ -425,12 +419,16 @@ def generate_enhanced_claude_analysis(data):
     def format_percentage(value):
         return f"{value:.1f}%" if value else "0.0%"
     
+    # Validate input data
+    if not isinstance(data, dict):
+        return "Analysis temporarily unavailable due to data processing issue", "yellow"
+    
     # Extract data with safety checks
-    yesterday = data.get('yesterday', {}) if isinstance(data, dict) else {}
-    same_day_last_week = data.get('same_day_last_week', {}) if isinstance(data, dict) else {}
-    last_7_days = data.get('last_7_days', {}) if isinstance(data, dict) else {}
-    previous_7_days = data.get('previous_7_days', {}) if isinstance(data, dict) else {}
-    campaign_performance = data.get('campaign_performance', []) if isinstance(data, dict) else []
+    yesterday = data.get('yesterday', {}) or {}
+    same_day_last_week = data.get('same_day_last_week', {}) or {}
+    last_7_days = data.get('last_7_days', {}) or {}
+    previous_7_days = data.get('previous_7_days', {}) or {}
+    campaign_performance = data.get('campaign_performance', []) or []
     
     # Ensure campaign_performance is a list
     if not isinstance(campaign_performance, list):
@@ -439,7 +437,6 @@ def generate_enhanced_claude_analysis(data):
     insights = []
     
     try:
-    
         # Cross-platform correlation analysis
         ps_spend_curr = safe_get(yesterday, 'paid_social_spend')
         ps_spend_prev = safe_get(same_day_last_week, 'paid_social_spend')
@@ -528,52 +525,10 @@ def generate_enhanced_claude_analysis(data):
                     else:
                         campaign_name = 'Unknown'
                     insights.append(f"High spend outlier: '{campaign_name}' at {format_currency(max_spend)} ({(max_spend/avg_spend):.1f}x average)")
-            
-            # Cost efficiency outliers
-            if cost_per_leads and len(cost_per_leads) > 1:
-                avg_cpl = sum(cost_per_leads) / len(cost_per_leads)
-                best_campaign = None
-                best_cpl = float('inf')
-                
-                for camp in campaign_performance:
-                    if isinstance(camp, dict):
-                        cpl = safe_get(camp, 'cost_per_lead')
-                        if 0 < cpl < avg_cpl * 0.5 and cpl < best_cpl:
-                            best_cpl = cpl
-                            best_campaign = camp
-                
-                if best_campaign:
-                    campaign_name = best_campaign.get('campaign_name', best_campaign.get('utm_campaign', 'Unknown'))
-                    if isinstance(campaign_name, str):
-                        campaign_name = campaign_name[:30]
-                    else:
-                        campaign_name = 'Unknown'
-                    insights.append(f"Efficient performer: '{campaign_name}' at {format_currency(best_cpl)} ({avg_cpl/best_cpl:.1f}x better than average)")
-            
-            # Conversion champion
-            if funded_rates and len(funded_rates) > 1:
-                avg_funded_rate = sum(funded_rates) / len(funded_rates)
-                best_funded_campaign = None
-                best_funded_rate = 0
-                
-                for camp in campaign_performance:
-                    if isinstance(camp, dict):
-                        funded = safe_get(camp, 'lead_to_funded_rate')
-                        if funded > avg_funded_rate * 1.5 and funded > best_funded_rate:
-                            best_funded_rate = funded
-                            best_funded_campaign = camp
-                
-                if best_funded_campaign:
-                    campaign_name = best_funded_campaign.get('campaign_name', best_funded_campaign.get('utm_campaign', 'Unknown'))
-                    if isinstance(campaign_name, str):
-                        campaign_name = campaign_name[:30]
-                    else:
-                        campaign_name = 'Unknown'
-                    insights.append(f"Conversion champion: '{campaign_name}' with {format_percentage(best_funded_rate)} funded rate ({(best_funded_rate/avg_funded_rate):.1f}x average)")
     
     except Exception as e:
         print(f"Error in enhanced analysis: {e}")
-        insights = [f"Analysis temporarily simplified due to data processing issue"]
+        insights = ["Analysis temporarily simplified due to data processing issue"]
     
     # Generate final message
     if not insights:
@@ -597,9 +552,48 @@ def generate_enhanced_claude_analysis(data):
 def generate_claude_analysis(data):
     """Generate analysis with enhanced cross-platform insights"""
     
+    # Validate input data
+    if data is None:
+        print("ERROR: Data is None in generate_claude_analysis")
+        return {
+            "message": "Analysis temporarily unavailable due to data processing issue",
+            "colorCode": "yellow",
+            "paidSocial": {
+                "dayOverDayPulse": {},
+                "weekOverWeekPulse": {}
+            },
+            "paidSearchVideo": {
+                "dayOverDayPulse": {},
+                "weekOverWeekPulse": {}
+            }
+        }
+    
+    if not isinstance(data, dict):
+        print(f"ERROR: Data is not a dict in generate_claude_analysis, it's {type(data)}")
+        return {
+            "message": "Analysis temporarily unavailable due to data format issue",
+            "colorCode": "yellow",
+            "paidSocial": {
+                "dayOverDayPulse": {},
+                "weekOverWeekPulse": {}
+            },
+            "paidSearchVideo": {
+                "dayOverDayPulse": {},
+                "weekOverWeekPulse": {}
+            }
+        }
+    
     def safe_get(data_dict, key, default=0):
+        """Safely get value from dict with multiple fallbacks"""
+        if not isinstance(data_dict, dict):
+            return default
         val = data_dict.get(key, default)
-        return float(val) if val is not None else default
+        if val is None:
+            return default
+        try:
+            return float(val) if val != default else default
+        except (TypeError, ValueError):
+            return default
     
     def calc_change(current, previous):
         if previous == 0:
@@ -615,375 +609,396 @@ def generate_claude_analysis(data):
         else:
             return f"{current:,.0f} ({change:+.1f}%)"
     
-    # Extract data for both channels and periods
-    yesterday = data.get('yesterday', {})
-    same_day_last_week = data.get('same_day_last_week', {})
-    last_7_days = data.get('last_7_days', {})
-    previous_7_days = data.get('previous_7_days', {})
+    # Extract data with multiple safety checks
+    yesterday = data.get('yesterday', {}) or {}
+    same_day_last_week = data.get('same_day_last_week', {}) or {}
+    last_7_days = data.get('last_7_days', {}) or {}
+    previous_7_days = data.get('previous_7_days', {}) or {}
     
-    # Generate enhanced message and color code
-    message, color_code = generate_enhanced_claude_analysis(data)
+    print(f"Data extraction check:")
+    print(f"  Yesterday type: {type(yesterday)}, keys: {list(yesterday.keys()) if isinstance(yesterday, dict) else 'Not dict'}")
+    print(f"  Same day last week type: {type(same_day_last_week)}")
+    print(f"  Last 7 days type: {type(last_7_days)}")
+    print(f"  Previous 7 days type: {type(previous_7_days)}")
     
-    # PAID SOCIAL DAY-OVER-DAY
-    ps_dod = {
-        "totalSpend": format_value_with_change(
-            safe_get(yesterday, 'paid_social_spend'),
-            safe_get(same_day_last_week, 'paid_social_spend'),
-            is_currency=True
-        ),
-        "totalImpressions": format_value_with_change(
-            safe_get(yesterday, 'paid_social_impressions'),
-            safe_get(same_day_last_week, 'paid_social_impressions')
-        ),
-        "cpm": format_value_with_change(
-            safe_get(yesterday, 'paid_social_cpm'),
-            safe_get(same_day_last_week, 'paid_social_cpm'),
-            is_currency=True
-        ),
-        "ctr": format_value_with_change(
-            safe_get(yesterday, 'paid_social_ctr'),
-            safe_get(same_day_last_week, 'paid_social_ctr'),
-            is_percentage=True
-        ),
-        "totalClicks": format_value_with_change(
-            safe_get(yesterday, 'paid_social_clicks'),
-            safe_get(same_day_last_week, 'paid_social_clicks')
-        ),
-        "cpc": format_value_with_change(
-            safe_get(yesterday, 'paid_social_cpc'),
-            safe_get(same_day_last_week, 'paid_social_cpc'),
-            is_currency=True
-        ),
-        "totalLeads": format_value_with_change(
-            safe_get(yesterday, 'paid_social_leads'),
-            safe_get(same_day_last_week, 'paid_social_leads')
-        ),
-        "costPerLead": format_value_with_change(
-            safe_get(yesterday, 'paid_social_cost_per_lead'),
-            safe_get(same_day_last_week, 'paid_social_cost_per_lead'),
-            is_currency=True
-        ),
-        "estimateCVR": format_value_with_change(
-            safe_get(yesterday, 'paid_social_estimate_cvr'),
-            safe_get(same_day_last_week, 'paid_social_estimate_cvr'),
-            is_percentage=True
-        ),
-        "totalEstimates": format_value_with_change(
-            safe_get(yesterday, 'paid_social_estimates'),
-            safe_get(same_day_last_week, 'paid_social_estimates')
-        ),
-        "costPerEstimate": format_value_with_change(
-            safe_get(yesterday, 'paid_social_cost_per_estimate'),
-            safe_get(same_day_last_week, 'paid_social_cost_per_estimate'),
-            is_currency=True
-        ),
-        "closingsCVR": format_value_with_change(
-            safe_get(yesterday, 'paid_social_closing_cvr'),
-            safe_get(same_day_last_week, 'paid_social_closing_cvr'),
-            is_percentage=True
-        ),
-        "totalClosings": format_value_with_change(
-            safe_get(yesterday, 'paid_social_closings'),
-            safe_get(same_day_last_week, 'paid_social_closings')
-        ),
-        "costPerClosing": format_value_with_change(
-            safe_get(yesterday, 'paid_social_cost_per_closing'),
-            safe_get(same_day_last_week, 'paid_social_cost_per_closing'),
-            is_currency=True
-        ),
-        "fundedCVR": format_value_with_change(
-            safe_get(yesterday, 'paid_social_funded_cvr'),
-            safe_get(same_day_last_week, 'paid_social_funded_cvr'),
-            is_percentage=True
-        ),
-        "totalFunded": format_value_with_change(
-            safe_get(yesterday, 'paid_social_funded'),
-            safe_get(same_day_last_week, 'paid_social_funded')
-        ),
-        "costPerFunded": format_value_with_change(
-            safe_get(yesterday, 'paid_social_cost_per_funded'),
-            safe_get(same_day_last_week, 'paid_social_cost_per_funded'),
-            is_currency=True
-        ),
-        "totalRPTs": format_value_with_change(
-            safe_get(yesterday, 'paid_social_rpts'),
-            safe_get(same_day_last_week, 'paid_social_rpts')
-        )
-    }
+    try:
+        # Generate enhanced message and color code
+        message, color_code = generate_enhanced_claude_analysis(data)
+    except Exception as e:
+        print(f"Error in enhanced analysis: {e}")
+        message = "Performance analysis temporarily simplified"
+        color_code = "green"
     
-    # PAID SOCIAL WEEK-OVER-WEEK
-    ps_wow = {
-        "totalSpend": format_value_with_change(
-            safe_get(last_7_days, 'paid_social_spend'),
-            safe_get(previous_7_days, 'paid_social_spend'),
-            is_currency=True
-        ),
-        "totalImpressions": format_value_with_change(
-            safe_get(last_7_days, 'paid_social_impressions'),
-            safe_get(previous_7_days, 'paid_social_impressions')
-        ),
-        "cpm": format_value_with_change(
-            safe_get(last_7_days, 'paid_social_cpm'),
-            safe_get(previous_7_days, 'paid_social_cpm'),
-            is_currency=True
-        ),
-        "ctr": format_value_with_change(
-            safe_get(last_7_days, 'paid_social_ctr'),
-            safe_get(previous_7_days, 'paid_social_ctr'),
-            is_percentage=True
-        ),
-        "totalClicks": format_value_with_change(
-            safe_get(last_7_days, 'paid_social_clicks'),
-            safe_get(previous_7_days, 'paid_social_clicks')
-        ),
-        "cpc": format_value_with_change(
-            safe_get(last_7_days, 'paid_social_cpc'),
-            safe_get(previous_7_days, 'paid_social_cpc'),
-            is_currency=True
-        ),
-        "totalLeads": format_value_with_change(
-            safe_get(last_7_days, 'paid_social_leads'),
-            safe_get(previous_7_days, 'paid_social_leads')
-        ),
-        "costPerLead": format_value_with_change(
-            safe_get(last_7_days, 'paid_social_cost_per_lead'),
-            safe_get(previous_7_days, 'paid_social_cost_per_lead'),
-            is_currency=True
-        ),
-        "estimateCVR": format_value_with_change(
-            safe_get(last_7_days, 'paid_social_estimate_cvr'),
-            safe_get(previous_7_days, 'paid_social_estimate_cvr'),
-            is_percentage=True
-        ),
-        "totalEstimates": format_value_with_change(
-            safe_get(last_7_days, 'paid_social_estimates'),
-            safe_get(previous_7_days, 'paid_social_estimates')
-        ),
-        "costPerEstimate": format_value_with_change(
-            safe_get(last_7_days, 'paid_social_cost_per_estimate'),
-            safe_get(previous_7_days, 'paid_social_cost_per_estimate'),
-            is_currency=True
-        ),
-        "closingsCVR": format_value_with_change(
-            safe_get(last_7_days, 'paid_social_closing_cvr'),
-            safe_get(previous_7_days, 'paid_social_closing_cvr'),
-            is_percentage=True
-        ),
-        "totalClosings": format_value_with_change(
-            safe_get(last_7_days, 'paid_social_closings'),
-            safe_get(previous_7_days, 'paid_social_closings')
-        ),
-        "costPerClosing": format_value_with_change(
-            safe_get(last_7_days, 'paid_social_cost_per_closing'),
-            safe_get(previous_7_days, 'paid_social_cost_per_closing'),
-            is_currency=True
-        ),
-        "fundedCVR": format_value_with_change(
-            safe_get(last_7_days, 'paid_social_funded_cvr'),
-            safe_get(previous_7_days, 'paid_social_funded_cvr'),
-            is_percentage=True
-        ),
-        "totalFunded": format_value_with_change(
-            safe_get(last_7_days, 'paid_social_funded'),
-            safe_get(previous_7_days, 'paid_social_funded')
-        ),
-        "costPerFunded": format_value_with_change(
-            safe_get(last_7_days, 'paid_social_cost_per_funded'),
-            safe_get(previous_7_days, 'paid_social_cost_per_funded'),
-            is_currency=True
-        ),
-        "totalRPTs": format_value_with_change(
-            safe_get(last_7_days, 'paid_social_rpts'),
-            safe_get(previous_7_days, 'paid_social_rpts')
-        )
-    }
-    
-    # PAID SEARCH+VIDEO DAY-OVER-DAY
-    psv_dod = {
-        "totalSpend": format_value_with_change(
-            safe_get(yesterday, 'paid_search_video_spend'),
-            safe_get(same_day_last_week, 'paid_search_video_spend'),
-            is_currency=True
-        ),
-        "totalImpressions": format_value_with_change(
-            safe_get(yesterday, 'paid_search_video_impressions'),
-            safe_get(same_day_last_week, 'paid_search_video_impressions')
-        ),
-        "cpm": format_value_with_change(
-            safe_get(yesterday, 'paid_search_video_cpm'),
-            safe_get(same_day_last_week, 'paid_search_video_cpm'),
-            is_currency=True
-        ),
-        "ctr": format_value_with_change(
-            safe_get(yesterday, 'paid_search_video_ctr'),
-            safe_get(same_day_last_week, 'paid_search_video_ctr'),
-            is_percentage=True
-        ),
-        "totalClicks": format_value_with_change(
-            safe_get(yesterday, 'paid_search_video_clicks'),
-            safe_get(same_day_last_week, 'paid_search_video_clicks')
-        ),
-        "cpc": format_value_with_change(
-            safe_get(yesterday, 'paid_search_video_cpc'),
-            safe_get(same_day_last_week, 'paid_search_video_cpc'),
-            is_currency=True
-        ),
-        "totalLeads": format_value_with_change(
-            safe_get(yesterday, 'paid_search_video_leads'),
-            safe_get(same_day_last_week, 'paid_search_video_leads')
-        ),
-        "costPerLead": format_value_with_change(
-            safe_get(yesterday, 'paid_search_video_cost_per_lead'),
-            safe_get(same_day_last_week, 'paid_search_video_cost_per_lead'),
-            is_currency=True
-        ),
-        "estimateCVR": format_value_with_change(
-            safe_get(yesterday, 'paid_search_video_estimate_cvr'),
-            safe_get(same_day_last_week, 'paid_search_video_estimate_cvr'),
-            is_percentage=True
-        ),
-        "totalEstimates": format_value_with_change(
-            safe_get(yesterday, 'paid_search_video_estimates'),
-            safe_get(same_day_last_week, 'paid_search_video_estimates')
-        ),
-        "costPerEstimate": format_value_with_change(
-            safe_get(yesterday, 'paid_search_video_cost_per_estimate'),
-            safe_get(same_day_last_week, 'paid_search_video_cost_per_estimate'),
-            is_currency=True
-        ),
-        "closingsCVR": format_value_with_change(
-            safe_get(yesterday, 'paid_search_video_closing_cvr'),
-            safe_get(same_day_last_week, 'paid_search_video_closing_cvr'),
-            is_percentage=True
-        ),
-        "totalClosings": format_value_with_change(
-            safe_get(yesterday, 'paid_search_video_closings'),
-            safe_get(same_day_last_week, 'paid_search_video_closings')
-        ),
-        "costPerClosing": format_value_with_change(
-            safe_get(yesterday, 'paid_search_video_cost_per_closing'),
-            safe_get(same_day_last_week, 'paid_search_video_cost_per_closing'),
-            is_currency=True
-        ),
-        "fundedCVR": format_value_with_change(
-            safe_get(yesterday, 'paid_search_video_funded_cvr'),
-            safe_get(same_day_last_week, 'paid_search_video_funded_cvr'),
-            is_percentage=True
-        ),
-        "totalFunded": format_value_with_change(
-            safe_get(yesterday, 'paid_search_video_funded'),
-            safe_get(same_day_last_week, 'paid_search_video_funded')
-        ),
-        "costPerFunded": format_value_with_change(
-            safe_get(yesterday, 'paid_search_video_cost_per_funded'),
-            safe_get(same_day_last_week, 'paid_search_video_cost_per_funded'),
-            is_currency=True
-        ),
-        "totalRPTs": format_value_with_change(
-            safe_get(yesterday, 'paid_search_video_rpts'),
-            safe_get(same_day_last_week, 'paid_search_video_rpts')
-        )
-    }
-    
-    # PAID SEARCH+VIDEO WEEK-OVER-WEEK
-    psv_wow = {
-        "totalSpend": format_value_with_change(
-            safe_get(last_7_days, 'paid_search_video_spend'),
-            safe_get(previous_7_days, 'paid_search_video_spend'),
-            is_currency=True
-        ),
-        "totalImpressions": format_value_with_change(
-            safe_get(last_7_days, 'paid_search_video_impressions'),
-            safe_get(previous_7_days, 'paid_search_video_impressions')
-        ),
-        "cpm": format_value_with_change(
-            safe_get(last_7_days, 'paid_search_video_cpm'),
-            safe_get(previous_7_days, 'paid_search_video_cpm'),
-            is_currency=True
-        ),
-        "ctr": format_value_with_change(
-            safe_get(last_7_days, 'paid_search_video_ctr'),
-            safe_get(previous_7_days, 'paid_search_video_ctr'),
-            is_percentage=True
-        ),
-        "totalClicks": format_value_with_change(
-            safe_get(last_7_days, 'paid_search_video_clicks'),
-            safe_get(previous_7_days, 'paid_search_video_clicks')
-        ),
-        "cpc": format_value_with_change(
-            safe_get(last_7_days, 'paid_search_video_cpc'),
-            safe_get(previous_7_days, 'paid_search_video_cpc'),
-            is_currency=True
-        ),
-        "totalLeads": format_value_with_change(
-            safe_get(last_7_days, 'paid_search_video_leads'),
-            safe_get(previous_7_days, 'paid_search_video_leads')
-        ),
-        "costPerLead": format_value_with_change(
-            safe_get(last_7_days, 'paid_search_video_cost_per_lead'),
-            safe_get(previous_7_days, 'paid_search_video_cost_per_lead'),
-            is_currency=True
-        ),
-        "estimateCVR": format_value_with_change(
-            safe_get(last_7_days, 'paid_search_video_estimate_cvr'),
-            safe_get(previous_7_days, 'paid_search_video_estimate_cvr'),
-            is_percentage=True
-        ),
-        "totalEstimates": format_value_with_change(
-            safe_get(last_7_days, 'paid_search_video_estimates'),
-            safe_get(previous_7_days, 'paid_search_video_estimates')
-        ),
-        "costPerEstimate": format_value_with_change(
-            safe_get(last_7_days, 'paid_search_video_cost_per_estimate'),
-            safe_get(previous_7_days, 'paid_search_video_cost_per_estimate'),
-            is_currency=True
-        ),
-        "closingsCVR": format_value_with_change(
-            safe_get(last_7_days, 'paid_search_video_closing_cvr'),
-            safe_get(previous_7_days, 'paid_search_video_closing_cvr'),
-            is_percentage=True
-        ),
-        "totalClosings": format_value_with_change(
-            safe_get(last_7_days, 'paid_search_video_closings'),
-            safe_get(previous_7_days, 'paid_search_video_closings')
-        ),
-        "costPerClosing": format_value_with_change(
-            safe_get(last_7_days, 'paid_search_video_cost_per_closing'),
-            safe_get(previous_7_days, 'paid_search_video_cost_per_closing'),
-            is_currency=True
-        ),
-        "fundedCVR": format_value_with_change(
-            safe_get(last_7_days, 'paid_search_video_funded_cvr'),
-            safe_get(previous_7_days, 'paid_search_video_funded_cvr'),
-            is_percentage=True
-        ),
-        "totalFunded": format_value_with_change(
-            safe_get(last_7_days, 'paid_search_video_funded'),
-            safe_get(previous_7_days, 'paid_search_video_funded')
-        ),
-        "costPerFunded": format_value_with_change(
-            safe_get(last_7_days, 'paid_search_video_cost_per_funded'),
-            safe_get(previous_7_days, 'paid_search_video_cost_per_funded'),
-            is_currency=True
-        ),
-        "totalRPTs": format_value_with_change(
-            safe_get(last_7_days, 'paid_search_video_rpts'),
-            safe_get(previous_7_days, 'paid_search_video_rpts')
-        )
-    }
-    
-    return {
-        "message": message,
-        "colorCode": color_code,
-        "paidSocial": {
-            "dayOverDayPulse": ps_dod,
-            "weekOverWeekPulse": ps_wow
-        },
-        "paidSearchVideo": {
-            "dayOverDayPulse": psv_dod,
-            "weekOverWeekPulse": psv_wow
+    try:
+        # PAID SOCIAL DAY-OVER-DAY
+        ps_dod = {
+            "totalSpend": format_value_with_change(
+                safe_get(yesterday, 'paid_social_spend'),
+                safe_get(same_day_last_week, 'paid_social_spend'),
+                is_currency=True
+            ),
+            "totalImpressions": format_value_with_change(
+                safe_get(yesterday, 'paid_social_impressions'),
+                safe_get(same_day_last_week, 'paid_social_impressions')
+            ),
+            "cpm": format_value_with_change(
+                safe_get(yesterday, 'paid_social_cpm'),
+                safe_get(same_day_last_week, 'paid_social_cpm'),
+                is_currency=True
+            ),
+            "ctr": format_value_with_change(
+                safe_get(yesterday, 'paid_social_ctr'),
+                safe_get(same_day_last_week, 'paid_social_ctr'),
+                is_percentage=True
+            ),
+            "totalClicks": format_value_with_change(
+                safe_get(yesterday, 'paid_social_clicks'),
+                safe_get(same_day_last_week, 'paid_social_clicks')
+            ),
+            "cpc": format_value_with_change(
+                safe_get(yesterday, 'paid_social_cpc'),
+                safe_get(same_day_last_week, 'paid_social_cpc'),
+                is_currency=True
+            ),
+            "totalLeads": format_value_with_change(
+                safe_get(yesterday, 'paid_social_leads'),
+                safe_get(same_day_last_week, 'paid_social_leads')
+            ),
+            "costPerLead": format_value_with_change(
+                safe_get(yesterday, 'paid_social_cost_per_lead'),
+                safe_get(same_day_last_week, 'paid_social_cost_per_lead'),
+                is_currency=True
+            ),
+            "estimateCVR": format_value_with_change(
+                safe_get(yesterday, 'paid_social_estimate_cvr'),
+                safe_get(same_day_last_week, 'paid_social_estimate_cvr'),
+                is_percentage=True
+            ),
+            "totalEstimates": format_value_with_change(
+                safe_get(yesterday, 'paid_social_estimates'),
+                safe_get(same_day_last_week, 'paid_social_estimates')
+            ),
+            "costPerEstimate": format_value_with_change(
+                safe_get(yesterday, 'paid_social_cost_per_estimate'),
+                safe_get(same_day_last_week, 'paid_social_cost_per_estimate'),
+                is_currency=True
+            ),
+            "closingsCVR": format_value_with_change(
+                safe_get(yesterday, 'paid_social_closing_cvr'),
+                safe_get(same_day_last_week, 'paid_social_closing_cvr'),
+                is_percentage=True
+            ),
+            "totalClosings": format_value_with_change(
+                safe_get(yesterday, 'paid_social_closings'),
+                safe_get(same_day_last_week, 'paid_social_closings')
+            ),
+            "costPerClosing": format_value_with_change(
+                safe_get(yesterday, 'paid_social_cost_per_closing'),
+                safe_get(same_day_last_week, 'paid_social_cost_per_closing'),
+                is_currency=True
+            ),
+            "fundedCVR": format_value_with_change(
+                safe_get(yesterday, 'paid_social_funded_cvr'),
+                safe_get(same_day_last_week, 'paid_social_funded_cvr'),
+                is_percentage=True
+            ),
+            "totalFunded": format_value_with_change(
+                safe_get(yesterday, 'paid_social_funded'),
+                safe_get(same_day_last_week, 'paid_social_funded')
+            ),
+            "costPerFunded": format_value_with_change(
+                safe_get(yesterday, 'paid_social_cost_per_funded'),
+                safe_get(same_day_last_week, 'paid_social_cost_per_funded'),
+                is_currency=True
+            ),
+            "totalRPTs": format_value_with_change(
+                safe_get(yesterday, 'paid_social_rpts'),
+                safe_get(same_day_last_week, 'paid_social_rpts')
+            )
         }
-    }
+        
+        # PAID SOCIAL WEEK-OVER-WEEK
+        ps_wow = {
+            "totalSpend": format_value_with_change(
+                safe_get(last_7_days, 'paid_social_spend'),
+                safe_get(previous_7_days, 'paid_social_spend'),
+                is_currency=True
+            ),
+            "totalImpressions": format_value_with_change(
+                safe_get(last_7_days, 'paid_social_impressions'),
+                safe_get(previous_7_days, 'paid_social_impressions')
+            ),
+            "cpm": format_value_with_change(
+                safe_get(last_7_days, 'paid_social_cpm'),
+                safe_get(previous_7_days, 'paid_social_cpm'),
+                is_currency=True
+            ),
+            "ctr": format_value_with_change(
+                safe_get(last_7_days, 'paid_social_ctr'),
+                safe_get(previous_7_days, 'paid_social_ctr'),
+                is_percentage=True
+            ),
+            "totalClicks": format_value_with_change(
+                safe_get(last_7_days, 'paid_social_clicks'),
+                safe_get(previous_7_days, 'paid_social_clicks')
+            ),
+            "cpc": format_value_with_change(
+                safe_get(last_7_days, 'paid_social_cpc'),
+                safe_get(previous_7_days, 'paid_social_cpc'),
+                is_currency=True
+            ),
+            "totalLeads": format_value_with_change(
+                safe_get(last_7_days, 'paid_social_leads'),
+                safe_get(previous_7_days, 'paid_social_leads')
+            ),
+            "costPerLead": format_value_with_change(
+                safe_get(last_7_days, 'paid_social_cost_per_lead'),
+                safe_get(previous_7_days, 'paid_social_cost_per_lead'),
+                is_currency=True
+            ),
+            "estimateCVR": format_value_with_change(
+                safe_get(last_7_days, 'paid_social_estimate_cvr'),
+                safe_get(previous_7_days, 'paid_social_estimate_cvr'),
+                is_percentage=True
+            ),
+            "totalEstimates": format_value_with_change(
+                safe_get(last_7_days, 'paid_social_estimates'),
+                safe_get(previous_7_days, 'paid_social_estimates')
+            ),
+            "costPerEstimate": format_value_with_change(
+                safe_get(last_7_days, 'paid_social_cost_per_estimate'),
+                safe_get(previous_7_days, 'paid_social_cost_per_estimate'),
+                is_currency=True
+            ),
+            "closingsCVR": format_value_with_change(
+                safe_get(last_7_days, 'paid_social_closing_cvr'),
+                safe_get(previous_7_days, 'paid_social_closing_cvr'),
+                is_percentage=True
+            ),
+            "totalClosings": format_value_with_change(
+                safe_get(last_7_days, 'paid_social_closings'),
+                safe_get(previous_7_days, 'paid_social_closings')
+            ),
+            "costPerClosing": format_value_with_change(
+                safe_get(last_7_days, 'paid_social_cost_per_closing'),
+                safe_get(previous_7_days, 'paid_social_cost_per_closing'),
+                is_currency=True
+            ),
+            "fundedCVR": format_value_with_change(
+                safe_get(last_7_days, 'paid_social_funded_cvr'),
+                safe_get(previous_7_days, 'paid_social_funded_cvr'),
+                is_percentage=True
+            ),
+            "totalFunded": format_value_with_change(
+                safe_get(last_7_days, 'paid_social_funded'),
+                safe_get(previous_7_days, 'paid_social_funded')
+            ),
+            "costPerFunded": format_value_with_change(
+                safe_get(last_7_days, 'paid_social_cost_per_funded'),
+                safe_get(previous_7_days, 'paid_social_cost_per_funded'),
+                is_currency=True
+            ),
+            "totalRPTs": format_value_with_change(
+                safe_get(last_7_days, 'paid_social_rpts'),
+                safe_get(previous_7_days, 'paid_social_rpts')
+            )
+        }
+        
+        # PAID SEARCH+VIDEO DAY-OVER-DAY
+        psv_dod = {
+            "totalSpend": format_value_with_change(
+                safe_get(yesterday, 'paid_search_video_spend'),
+                safe_get(same_day_last_week, 'paid_search_video_spend'),
+                is_currency=True
+            ),
+            "totalImpressions": format_value_with_change(
+                safe_get(yesterday, 'paid_search_video_impressions'),
+                safe_get(same_day_last_week, 'paid_search_video_impressions')
+            ),
+            "cpm": format_value_with_change(
+                safe_get(yesterday, 'paid_search_video_cpm'),
+                safe_get(same_day_last_week, 'paid_search_video_cpm'),
+                is_currency=True
+            ),
+            "ctr": format_value_with_change(
+                safe_get(yesterday, 'paid_search_video_ctr'),
+                safe_get(same_day_last_week, 'paid_search_video_ctr'),
+                is_percentage=True
+            ),
+            "totalClicks": format_value_with_change(
+                safe_get(yesterday, 'paid_search_video_clicks'),
+                safe_get(same_day_last_week, 'paid_search_video_clicks')
+            ),
+            "cpc": format_value_with_change(
+                safe_get(yesterday, 'paid_search_video_cpc'),
+                safe_get(same_day_last_week, 'paid_search_video_cpc'),
+                is_currency=True
+            ),
+            "totalLeads": format_value_with_change(
+                safe_get(yesterday, 'paid_search_video_leads'),
+                safe_get(same_day_last_week, 'paid_search_video_leads')
+            ),
+            "costPerLead": format_value_with_change(
+                safe_get(yesterday, 'paid_search_video_cost_per_lead'),
+                safe_get(same_day_last_week, 'paid_search_video_cost_per_lead'),
+                is_currency=True
+            ),
+            "estimateCVR": format_value_with_change(
+                safe_get(yesterday, 'paid_search_video_estimate_cvr'),
+                safe_get(same_day_last_week, 'paid_search_video_estimate_cvr'),
+                is_percentage=True
+            ),
+            "totalEstimates": format_value_with_change(
+                safe_get(yesterday, 'paid_search_video_estimates'),
+                safe_get(same_day_last_week, 'paid_search_video_estimates')
+            ),
+            "costPerEstimate": format_value_with_change(
+                safe_get(yesterday, 'paid_search_video_cost_per_estimate'),
+                safe_get(same_day_last_week, 'paid_search_video_cost_per_estimate'),
+                is_currency=True
+            ),
+            "closingsCVR": format_value_with_change(
+                safe_get(yesterday, 'paid_search_video_closing_cvr'),
+                safe_get(same_day_last_week, 'paid_search_video_closing_cvr'),
+                is_percentage=True
+            ),
+            "totalClosings": format_value_with_change(
+                safe_get(yesterday, 'paid_search_video_closings'),
+                safe_get(same_day_last_week, 'paid_search_video_closings')
+            ),
+            "costPerClosing": format_value_with_change(
+                safe_get(yesterday, 'paid_search_video_cost_per_closing'),
+                safe_get(same_day_last_week, 'paid_search_video_cost_per_closing'),
+                is_currency=True
+            ),
+            "fundedCVR": format_value_with_change(
+                safe_get(yesterday, 'paid_search_video_funded_cvr'),
+                safe_get(same_day_last_week, 'paid_search_video_funded_cvr'),
+                is_percentage=True
+            ),
+            "totalFunded": format_value_with_change(
+                safe_get(yesterday, 'paid_search_video_funded'),
+                safe_get(same_day_last_week, 'paid_search_video_funded')
+            ),
+            "costPerFunded": format_value_with_change(
+                safe_get(yesterday, 'paid_search_video_cost_per_funded'),
+                safe_get(same_day_last_week, 'paid_search_video_cost_per_funded'),
+                is_currency=True
+            ),
+            "totalRPTs": format_value_with_change(
+                safe_get(yesterday, 'paid_search_video_rpts'),
+                safe_get(same_day_last_week, 'paid_search_video_rpts')
+            )
+        }
+        
+        # PAID SEARCH+VIDEO WEEK-OVER-WEEK
+        psv_wow = {
+            "totalSpend": format_value_with_change(
+                safe_get(last_7_days, 'paid_search_video_spend'),
+                safe_get(previous_7_days, 'paid_search_video_spend'),
+                is_currency=True
+            ),
+            "totalImpressions": format_value_with_change(
+                safe_get(last_7_days, 'paid_search_video_impressions'),
+                safe_get(previous_7_days, 'paid_search_video_impressions')
+            ),
+            "cpm": format_value_with_change(
+                safe_get(last_7_days, 'paid_search_video_cpm'),
+                safe_get(previous_7_days, 'paid_search_video_cpm'),
+                is_currency=True
+            ),
+            "ctr": format_value_with_change(
+                safe_get(last_7_days, 'paid_search_video_ctr'),
+                safe_get(previous_7_days, 'paid_search_video_ctr'),
+                is_percentage=True
+            ),
+            "totalClicks": format_value_with_change(
+                safe_get(last_7_days, 'paid_search_video_clicks'),
+                safe_get(previous_7_days, 'paid_search_video_clicks')
+            ),
+            "cpc": format_value_with_change(
+                safe_get(last_7_days, 'paid_search_video_cpc'),
+                safe_get(previous_7_days, 'paid_search_video_cpc'),
+                is_currency=True
+            ),
+            "totalLeads": format_value_with_change(
+                safe_get(last_7_days, 'paid_search_video_leads'),
+                safe_get(previous_7_days, 'paid_search_video_leads')
+            ),
+            "costPerLead": format_value_with_change(
+                safe_get(last_7_days, 'paid_search_video_cost_per_lead'),
+                safe_get(previous_7_days, 'paid_search_video_cost_per_lead'),
+                is_currency=True
+            ),
+            "estimateCVR": format_value_with_change(
+                safe_get(last_7_days, 'paid_search_video_estimate_cvr'),
+                safe_get(previous_7_days, 'paid_search_video_estimate_cvr'),
+                is_percentage=True
+            ),
+            "totalEstimates": format_value_with_change(
+                safe_get(last_7_days, 'paid_search_video_estimates'),
+                safe_get(previous_7_days, 'paid_search_video_estimates')
+            ),
+            "costPerEstimate": format_value_with_change(
+                safe_get(last_7_days, 'paid_search_video_cost_per_estimate'),
+                safe_get(previous_7_days, 'paid_search_video_cost_per_estimate'),
+                is_currency=True
+            ),
+            "closingsCVR": format_value_with_change(
+                safe_get(last_7_days, 'paid_search_video_closing_cvr'),
+                safe_get(previous_7_days, 'paid_search_video_closing_cvr'),
+                is_percentage=True
+            ),
+            "totalClosings": format_value_with_change(
+                safe_get(last_7_days, 'paid_search_video_closings'),
+                safe_get(previous_7_days, 'paid_search_video_closings')
+            ),
+            "costPerClosing": format_value_with_change(
+                safe_get(last_7_days, 'paid_search_video_cost_per_closing'),
+                safe_get(previous_7_days, 'paid_search_video_cost_per_closing'),
+                is_currency=True
+            ),
+            "fundedCVR": format_value_with_change(
+                safe_get(last_7_days, 'paid_search_video_funded_cvr'),
+                safe_get(previous_7_days, 'paid_search_video_funded_cvr'),
+                is_percentage=True
+            ),
+            "totalFunded": format_value_with_change(
+                safe_get(last_7_days, 'paid_search_video_funded'),
+                safe_get(previous_7_days, 'paid_search_video_funded')
+            ),
+            "costPerFunded": format_value_with_change(
+                safe_get(last_7_days, 'paid_search_video_cost_per_funded'),
+                safe_get(previous_7_days, 'paid_search_video_cost_per_funded'),
+                is_currency=True
+            ),
+            "totalRPTs": format_value_with_change(
+                safe_get(last_7_days, 'paid_search_video_rpts'),
+                safe_get(previous_7_days, 'paid_search_video_rpts')
+            )
+        }
+        
+        return {
+            "message": message,
+            "colorCode": color_code,
+            "paidSocial": {
+                "dayOverDayPulse": ps_dod,
+                "weekOverWeekPulse": ps_wow
+            },
+            "paidSearchVideo": {
+                "dayOverDayPulse": psv_dod,
+                "weekOverWeekPulse": psv_wow
+            }
+        }
+        
+    except Exception as e:
+        print(f"Error building claude analysis response: {e}")
+        return {
+            "message": "Analysis completed with limited data",
+            "colorCode": "yellow",
+            "paidSocial": {"dayOverDayPulse": {}, "weekOverWeekPulse": {}},
+            "paidSearchVideo": {"dayOverDayPulse": {}, "weekOverWeekPulse": {}}
+        }
 
 @marketing_router.post("/analyze-trends", response_model=TrendAnalysisResponse)
 async def analyze_marketing_trends(request: TrendAnalysisRequest):
