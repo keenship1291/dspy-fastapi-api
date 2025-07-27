@@ -65,239 +65,198 @@ async def marketing_root():
     }
 
 def get_comprehensive_query(date_filter, period_name, analysis_depth):
-    """Generate comprehensive query - COMPLETELY SEPARATE Meta aggregation"""
+    """Generate comprehensive query with proper CTEs using utm_campaign_mapped table"""
     base_query = f"""
-    WITH hex_aggregated AS (
-      -- Aggregate hex_data first
+    WITH meta_aggregated_by_campaign AS (
+      -- Pre-aggregate Meta data by utm_campaign and date using utm_campaign_mapped table
+      -- This gives us the TRUE platform metrics regardless of hex mapping
       SELECT 
-        utm_medium,
-        SUM(leads) as hex_leads,
-        SUM(start_flows) as hex_start_flows,
-        SUM(estimates) as hex_estimates,
-        SUM(closings) as hex_closings,
-        SUM(funded) as hex_funded,
-        SUM(rpts) as hex_rpts
-      FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data`
-      WHERE {date_filter}
-      GROUP BY utm_medium
-    ),
-    meta_aggregated AS (
-      -- Aggregate Meta data COMPLETELY SEPARATELY - no joining to hex yet
-      SELECT 
+        ucm.utm_campaign_mapped as utm_campaign,
+        m.date,
         SUM(SAFE_CAST(m.spend AS FLOAT64)) as meta_spend,
         SUM(SAFE_CAST(m.impressions AS INT64)) as meta_impressions,
         SUM(SAFE_CAST(m.clicks AS INT64)) as meta_clicks,
         SUM(SAFE_CAST(m.leads AS INT64)) as meta_leads,
         SUM(SAFE_CAST(m.purchases AS INT64)) as meta_purchases,
         SUM(SAFE_CAST(m.landing_page_views AS INT64)) as meta_landing_page_views
-      FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data` m
-      WHERE {date_filter.replace('h.date', 'm.date')}
+      FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.utm_campaign_mapped` ucm
+      JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data` m 
+        ON ucm.campaign_name = m.campaign_name
+        AND ucm.adset_name = m.adset_name
+      GROUP BY ucm.utm_campaign_mapped, m.date
     ),
-    google_aggregated AS (
-      -- Aggregate Google data COMPLETELY SEPARATELY
+    google_aggregated_by_campaign AS (
+      -- Pre-aggregate Google data by campaign and date
       SELECT 
+        campaign_name as utm_campaign,
+        date,
         SUM(spend_usd) as google_spend,
         SUM(impressions) as google_impressions,
         SUM(clicks) as google_clicks,
         SUM(conversions) as google_conversions
       FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data`
-      WHERE {date_filter.replace('h.date', 'date')}
+      GROUP BY campaign_name, date
     )
     
     SELECT 
       '{period_name}' as period,
       
-      -- Hex Funnel Metrics (from hex_aggregated)
-      COALESCE((SELECT hex_leads FROM hex_aggregated WHERE utm_medium = 'paid-social'), 0) + 
-      COALESCE((SELECT hex_leads FROM hex_aggregated WHERE utm_medium = 'paid-search'), 0) + 
-      COALESCE((SELECT hex_leads FROM hex_aggregated WHERE utm_medium = 'paid-video'), 0) as hex_leads,
+      -- Hex Funnel Metrics (prioritize hex_data for conversions)
+      SUM(h.leads) as hex_leads,
+      SUM(h.start_flows) as hex_start_flows,
+      SUM(h.estimates) as hex_estimates,
+      SUM(h.closings) as hex_closings,
+      SUM(h.funded) as hex_funded,
+      SUM(h.rpts) as hex_rpts,
       
-      COALESCE((SELECT hex_start_flows FROM hex_aggregated WHERE utm_medium = 'paid-social'), 0) + 
-      COALESCE((SELECT hex_start_flows FROM hex_aggregated WHERE utm_medium = 'paid-search'), 0) + 
-      COALESCE((SELECT hex_start_flows FROM hex_aggregated WHERE utm_medium = 'paid-video'), 0) as hex_start_flows,
+      -- Meta Advertising Metrics (prioritize meta platform data)
+      SUM(COALESCE(ma.meta_spend, 0)) as meta_spend,
+      SUM(COALESCE(ma.meta_impressions, 0)) as meta_impressions,
+      SUM(COALESCE(ma.meta_clicks, 0)) as meta_clicks,
+      SUM(COALESCE(ma.meta_leads, 0)) as meta_leads,
+      SUM(COALESCE(ma.meta_purchases, 0)) as meta_purchases,
+      SUM(COALESCE(ma.meta_landing_page_views, 0)) as meta_landing_page_views,
       
-      COALESCE((SELECT hex_estimates FROM hex_aggregated WHERE utm_medium = 'paid-social'), 0) + 
-      COALESCE((SELECT hex_estimates FROM hex_aggregated WHERE utm_medium = 'paid-search'), 0) + 
-      COALESCE((SELECT hex_estimates FROM hex_aggregated WHERE utm_medium = 'paid-video'), 0) as hex_estimates,
-      
-      COALESCE((SELECT hex_closings FROM hex_aggregated WHERE utm_medium = 'paid-social'), 0) + 
-      COALESCE((SELECT hex_closings FROM hex_aggregated WHERE utm_medium = 'paid-search'), 0) + 
-      COALESCE((SELECT hex_closings FROM hex_aggregated WHERE utm_medium = 'paid-video'), 0) as hex_closings,
-      
-      COALESCE((SELECT hex_funded FROM hex_aggregated WHERE utm_medium = 'paid-social'), 0) + 
-      COALESCE((SELECT hex_funded FROM hex_aggregated WHERE utm_medium = 'paid-search'), 0) + 
-      COALESCE((SELECT hex_funded FROM hex_aggregated WHERE utm_medium = 'paid-video'), 0) as hex_funded,
-      
-      COALESCE((SELECT hex_rpts FROM hex_aggregated WHERE utm_medium = 'paid-social'), 0) + 
-      COALESCE((SELECT hex_rpts FROM hex_aggregated WHERE utm_medium = 'paid-search'), 0) + 
-      COALESCE((SELECT hex_rpts FROM hex_aggregated WHERE utm_medium = 'paid-video'), 0) as hex_rpts,
-      
-      -- Meta Advertising Metrics (from meta_aggregated - NO DUPLICATION POSSIBLE)
-      (SELECT meta_spend FROM meta_aggregated) as meta_spend,
-      (SELECT meta_impressions FROM meta_aggregated) as meta_impressions,
-      (SELECT meta_clicks FROM meta_aggregated) as meta_clicks,
-      (SELECT meta_leads FROM meta_aggregated) as meta_leads,
-      (SELECT meta_purchases FROM meta_aggregated) as meta_purchases,
-      (SELECT meta_landing_page_views FROM meta_aggregated) as meta_landing_page_views,
-      
-      -- Google Advertising Metrics (from google_aggregated - NO DUPLICATION POSSIBLE)
-      (SELECT google_spend FROM google_aggregated) as google_spend,
-      (SELECT google_impressions FROM google_aggregated) as google_impressions,
-      (SELECT google_clicks FROM google_aggregated) as google_clicks,
-      (SELECT google_conversions FROM google_aggregated) as google_conversions,
+      -- Google Advertising Metrics (prioritize google platform data)
+      SUM(COALESCE(ga.google_spend, 0)) as google_spend,
+      SUM(COALESCE(ga.google_impressions, 0)) as google_impressions,
+      SUM(COALESCE(ga.google_clicks, 0)) as google_clicks,
+      SUM(COALESCE(ga.google_conversions, 0)) as google_conversions,
       
       -- Combined Spend
-      (SELECT meta_spend FROM meta_aggregated) + (SELECT google_spend FROM google_aggregated) as total_ad_spend,
+      SUM(COALESCE(ma.meta_spend, 0)) + SUM(COALESCE(ga.google_spend, 0)) as total_ad_spend,
       
-      -- Conversion Rates (using hex_data totals)
-      SAFE_DIVIDE(
-        COALESCE((SELECT hex_start_flows FROM hex_aggregated WHERE utm_medium = 'paid-social'), 0) + 
-        COALESCE((SELECT hex_start_flows FROM hex_aggregated WHERE utm_medium = 'paid-search'), 0) + 
-        COALESCE((SELECT hex_start_flows FROM hex_aggregated WHERE utm_medium = 'paid-video'), 0),
-        COALESCE((SELECT hex_leads FROM hex_aggregated WHERE utm_medium = 'paid-social'), 0) + 
-        COALESCE((SELECT hex_leads FROM hex_aggregated WHERE utm_medium = 'paid-search'), 0) + 
-        COALESCE((SELECT hex_leads FROM hex_aggregated WHERE utm_medium = 'paid-video'), 0)
-      ) * 100 as lead_to_start_flow_rate,
+      -- Conversion Rates (using hex_data as source of truth for conversions)
+      SAFE_DIVIDE(SUM(h.start_flows), SUM(h.leads)) * 100 as lead_to_start_flow_rate,
+      SAFE_DIVIDE(SUM(h.estimates), SUM(h.start_flows)) * 100 as start_flow_to_estimate_rate,
+      SAFE_DIVIDE(SUM(h.closings), SUM(h.estimates)) * 100 as estimate_to_closing_rate,
+      SAFE_DIVIDE(SUM(h.funded), SUM(h.closings)) * 100 as closing_to_funded_rate,
+      SAFE_DIVIDE(SUM(h.funded), SUM(h.leads)) * 100 as overall_lead_to_funded_rate,
       
       -- Cost Metrics (platform spend / hex conversions)
-      SAFE_DIVIDE(
-        (SELECT meta_spend FROM meta_aggregated) + (SELECT google_spend FROM google_aggregated),
-        COALESCE((SELECT hex_leads FROM hex_aggregated WHERE utm_medium = 'paid-social'), 0) + 
-        COALESCE((SELECT hex_leads FROM hex_aggregated WHERE utm_medium = 'paid-search'), 0) + 
-        COALESCE((SELECT hex_leads FROM hex_aggregated WHERE utm_medium = 'paid-video'), 0)
-      ) as cost_per_lead,
+      SAFE_DIVIDE(SUM(COALESCE(ma.meta_spend, 0)) + SUM(COALESCE(ga.google_spend, 0)), SUM(h.leads)) as cost_per_lead,
+      SAFE_DIVIDE(SUM(COALESCE(ma.meta_spend, 0)) + SUM(COALESCE(ga.google_spend, 0)), SUM(h.funded)) as cost_per_funded,
       
-      -- CTR (platform metrics only)
-      SAFE_DIVIDE(
-        (SELECT meta_clicks FROM meta_aggregated) + (SELECT google_clicks FROM google_aggregated),
-        (SELECT meta_impressions FROM meta_aggregated) + (SELECT google_impressions FROM google_aggregated)
-      ) * 100 as overall_ctr"""
-    
+      -- CTR (platform metrics)
+      SAFE_DIVIDE(SUM(COALESCE(ma.meta_clicks, 0)) + SUM(COALESCE(ga.google_clicks, 0)), 
+                  SUM(COALESCE(ma.meta_impressions, 0)) + SUM(COALESCE(ga.google_impressions, 0))) * 100 as overall_ctr"""
     
     # Add channel-specific metrics only if analysis_depth is not "basic"
     if analysis_depth != "basic":
         base_query += f"""
       
-      -- Channel-specific metrics - NO JOINS, PURE AGGREGATION
-      ,(SELECT meta_spend FROM meta_aggregated) as paid_social_spend,
-      (SELECT google_spend FROM google_aggregated) as paid_search_video_spend,
+      -- Channel-specific metrics (based on utm_medium from hex_data)
+      -- Meta platform spend for paid-social campaigns
+      ,SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_spend, 0) ELSE 0 END) as paid_social_spend,
+      -- Google platform spend for paid-search/paid-video campaigns  
+      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_spend, 0) ELSE 0 END) as paid_search_video_spend,
       
-      (SELECT meta_impressions FROM meta_aggregated) as paid_social_impressions,
-      (SELECT google_impressions FROM google_aggregated) as paid_search_video_impressions,
+      -- Meta platform impressions for paid-social campaigns
+      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_impressions, 0) ELSE 0 END) as paid_social_impressions,
+      -- Google platform impressions for paid-search/paid-video campaigns
+      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_impressions, 0) ELSE 0 END) as paid_search_video_impressions,
       
-      (SELECT meta_clicks FROM meta_aggregated) as paid_social_clicks,
-      (SELECT google_clicks FROM google_aggregated) as paid_search_video_clicks,
+      -- Meta platform clicks for paid-social campaigns
+      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_clicks, 0) ELSE 0 END) as paid_social_clicks,
+      -- Google platform clicks for paid-search/paid-video campaigns
+      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_clicks, 0) ELSE 0 END) as paid_search_video_clicks,
       
-      -- Hex conversion data by channel
-      COALESCE((SELECT hex_leads FROM hex_aggregated WHERE utm_medium = 'paid-social'), 0) as paid_social_leads,
-      COALESCE((SELECT hex_leads FROM hex_aggregated WHERE utm_medium = 'paid-search'), 0) + 
-      COALESCE((SELECT hex_leads FROM hex_aggregated WHERE utm_medium = 'paid-video'), 0) as paid_search_video_leads,
+      -- Hex conversion data by channel (source of truth for conversions)
+      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.leads ELSE 0 END) as paid_social_leads,
+      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.leads ELSE 0 END) as paid_search_video_leads,
       
-      COALESCE((SELECT hex_estimates FROM hex_aggregated WHERE utm_medium = 'paid-social'), 0) as paid_social_estimates,
-      COALESCE((SELECT hex_estimates FROM hex_aggregated WHERE utm_medium = 'paid-search'), 0) + 
-      COALESCE((SELECT hex_estimates FROM hex_aggregated WHERE utm_medium = 'paid-video'), 0) as paid_search_video_estimates,
+      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.estimates ELSE 0 END) as paid_social_estimates,
+      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.estimates ELSE 0 END) as paid_search_video_estimates,
       
-      COALESCE((SELECT hex_closings FROM hex_aggregated WHERE utm_medium = 'paid-social'), 0) as paid_social_closings,
-      COALESCE((SELECT hex_closings FROM hex_aggregated WHERE utm_medium = 'paid-search'), 0) + 
-      COALESCE((SELECT hex_closings FROM hex_aggregated WHERE utm_medium = 'paid-video'), 0) as paid_search_video_closings,
+      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.closings ELSE 0 END) as paid_social_closings,
+      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.closings ELSE 0 END) as paid_search_video_closings,
       
-      COALESCE((SELECT hex_funded FROM hex_aggregated WHERE utm_medium = 'paid-social'), 0) as paid_social_funded,
-      COALESCE((SELECT hex_funded FROM hex_aggregated WHERE utm_medium = 'paid-search'), 0) + 
-      COALESCE((SELECT hex_funded FROM hex_aggregated WHERE utm_medium = 'paid-video'), 0) as paid_search_video_funded,
+      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.funded ELSE 0 END) as paid_social_funded,
+      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.funded ELSE 0 END) as paid_search_video_funded,
       
-      COALESCE((SELECT hex_rpts FROM hex_aggregated WHERE utm_medium = 'paid-social'), 0) as paid_social_rpts,
-      COALESCE((SELECT hex_rpts FROM hex_aggregated WHERE utm_medium = 'paid-search'), 0) + 
-      COALESCE((SELECT hex_rpts FROM hex_aggregated WHERE utm_medium = 'paid-video'), 0) as paid_search_video_rpts,
+      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.rpts ELSE 0 END) as paid_social_rpts,
+      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.rpts ELSE 0 END) as paid_search_video_rpts,
       
-      -- Channel-specific conversion rates
-      SAFE_DIVIDE((SELECT meta_clicks FROM meta_aggregated), (SELECT meta_impressions FROM meta_aggregated)) * 100 as paid_social_ctr,
-      SAFE_DIVIDE((SELECT google_clicks FROM google_aggregated), (SELECT google_impressions FROM google_aggregated)) * 100 as paid_search_video_ctr,
+      -- Channel-specific conversion rates (platform clicks / hex conversions)
+      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_clicks, 0) ELSE 0 END), 
+                  SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_impressions, 0) ELSE 0 END)) * 100 as paid_social_ctr,
+      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_clicks, 0) ELSE 0 END), 
+                  SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_impressions, 0) ELSE 0 END)) * 100 as paid_search_video_ctr,
       
-      SAFE_DIVIDE(
-        COALESCE((SELECT hex_estimates FROM hex_aggregated WHERE utm_medium = 'paid-social'), 0), 
-        COALESCE((SELECT hex_leads FROM hex_aggregated WHERE utm_medium = 'paid-social'), 0)
-      ) * 100 as paid_social_estimate_cvr,
+      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.estimates ELSE 0 END), 
+                  SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.leads ELSE 0 END)) * 100 as paid_social_estimate_cvr,
+      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.estimates ELSE 0 END), 
+                  SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.leads ELSE 0 END)) * 100 as paid_search_video_estimate_cvr,
       
-      SAFE_DIVIDE(
-        COALESCE((SELECT hex_estimates FROM hex_aggregated WHERE utm_medium = 'paid-search'), 0) + 
-        COALESCE((SELECT hex_estimates FROM hex_aggregated WHERE utm_medium = 'paid-video'), 0), 
-        COALESCE((SELECT hex_leads FROM hex_aggregated WHERE utm_medium = 'paid-search'), 0) + 
-        COALESCE((SELECT hex_leads FROM hex_aggregated WHERE utm_medium = 'paid-video'), 0)
-      ) * 100 as paid_search_video_estimate_cvr,
+      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.closings ELSE 0 END), 
+                  SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.estimates ELSE 0 END)) * 100 as paid_social_closing_cvr,
+      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.closings ELSE 0 END), 
+                  SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.estimates ELSE 0 END)) * 100 as paid_search_video_closing_cvr,
       
-      -- Channel-specific cost metrics
-      SAFE_DIVIDE((SELECT meta_spend FROM meta_aggregated), (SELECT meta_impressions FROM meta_aggregated) / 1000) as paid_social_cpm,
-      SAFE_DIVIDE((SELECT google_spend FROM google_aggregated), (SELECT google_impressions FROM google_aggregated) / 1000) as paid_search_video_cpm,
+      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.funded ELSE 0 END), 
+                  SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.closings ELSE 0 END)) * 100 as paid_social_funded_cvr,
+      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.funded ELSE 0 END), 
+                  SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.closings ELSE 0 END)) * 100 as paid_search_video_funded_cvr,
       
-      SAFE_DIVIDE((SELECT meta_spend FROM meta_aggregated), (SELECT meta_clicks FROM meta_aggregated)) as paid_social_cpc,
-      SAFE_DIVIDE((SELECT google_spend FROM google_aggregated), (SELECT google_clicks FROM google_aggregated)) as paid_search_video_cpc,
+      -- Channel-specific cost metrics (platform spend / platform impressions|clicks or hex conversions)
+      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_spend, 0) ELSE 0 END), 
+                  SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_impressions, 0) ELSE 0 END) / 1000) as paid_social_cpm,
+      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_spend, 0) ELSE 0 END), 
+                  SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_impressions, 0) ELSE 0 END) / 1000) as paid_search_video_cpm,
       
-      SAFE_DIVIDE(
-        (SELECT meta_spend FROM meta_aggregated), 
-        COALESCE((SELECT hex_leads FROM hex_aggregated WHERE utm_medium = 'paid-social'), 0)
-      ) as paid_social_cost_per_lead,
+      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_spend, 0) ELSE 0 END), 
+                  SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_clicks, 0) ELSE 0 END)) as paid_social_cpc,
+      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_spend, 0) ELSE 0 END), 
+                  SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_clicks, 0) ELSE 0 END)) as paid_search_video_cpc,
       
-      SAFE_DIVIDE(
-        (SELECT meta_spend FROM meta_aggregated), 
-        COALESCE((SELECT hex_estimates FROM hex_aggregated WHERE utm_medium = 'paid-social'), 0)
-      ) as paid_social_cost_per_estimate,
+      -- Platform spend / hex conversions (best of both worlds)
+      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_spend, 0) ELSE 0 END), 
+                  SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.leads ELSE 0 END)) as paid_social_cost_per_lead,
+      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_spend, 0) ELSE 0 END), 
+                  SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.estimates ELSE 0 END)) as paid_social_cost_per_estimate,
+      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_spend, 0) ELSE 0 END), 
+                  SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.closings ELSE 0 END)) as paid_social_cost_per_closing,
+      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN COALESCE(ma.meta_spend, 0) ELSE 0 END), 
+                  SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.funded ELSE 0 END)) as paid_social_cost_per_funded,
       
-      SAFE_DIVIDE(
-        (SELECT meta_spend FROM meta_aggregated), 
-        COALESCE((SELECT hex_closings FROM hex_aggregated WHERE utm_medium = 'paid-social'), 0)
-      ) as paid_social_cost_per_closing,
-      
-      SAFE_DIVIDE(
-        (SELECT meta_spend FROM meta_aggregated), 
-        COALESCE((SELECT hex_funded FROM hex_aggregated WHERE utm_medium = 'paid-social'), 0)
-      ) as paid_social_cost_per_funded,
-      
-      SAFE_DIVIDE(
-        (SELECT google_spend FROM google_aggregated), 
-        COALESCE((SELECT hex_leads FROM hex_aggregated WHERE utm_medium = 'paid-search'), 0) + 
-        COALESCE((SELECT hex_leads FROM hex_aggregated WHERE utm_medium = 'paid-video'), 0)
-      ) as paid_search_video_cost_per_lead,
-      
-      SAFE_DIVIDE(
-        (SELECT google_spend FROM google_aggregated), 
-        COALESCE((SELECT hex_estimates FROM hex_aggregated WHERE utm_medium = 'paid-search'), 0) + 
-        COALESCE((SELECT hex_estimates FROM hex_aggregated WHERE utm_medium = 'paid-video'), 0)
-      ) as paid_search_video_cost_per_estimate,
-      
-      SAFE_DIVIDE(
-        (SELECT google_spend FROM google_aggregated), 
-        COALESCE((SELECT hex_closings FROM hex_aggregated WHERE utm_medium = 'paid-search'), 0) + 
-        COALESCE((SELECT hex_closings FROM hex_aggregated WHERE utm_medium = 'paid-video'), 0)
-      ) as paid_search_video_cost_per_closing,
-      
-      SAFE_DIVIDE(
-        (SELECT google_spend FROM google_aggregated), 
-        COALESCE((SELECT hex_funded FROM hex_aggregated WHERE utm_medium = 'paid-search'), 0) + 
-        COALESCE((SELECT hex_funded FROM hex_aggregated WHERE utm_medium = 'paid-video'), 0)
-      ) as paid_search_video_cost_per_funded"""
+      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_spend, 0) ELSE 0 END), 
+                  SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.leads ELSE 0 END)) as paid_search_video_cost_per_lead,
+      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_spend, 0) ELSE 0 END), 
+                  SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.estimates ELSE 0 END)) as paid_search_video_cost_per_estimate,
+      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_spend, 0) ELSE 0 END), 
+                  SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.closings ELSE 0 END)) as paid_search_video_cost_per_closing,
+      SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN COALESCE(ga.google_spend, 0) ELSE 0 END), 
+                  SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.funded ELSE 0 END)) as paid_search_video_cost_per_funded"""
 
-    # NO FROM CLAUSE - This is a pure aggregation query with no joins
+    base_query += f"""
+
+    FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data` h
+    LEFT JOIN meta_aggregated_by_campaign ma ON h.utm_campaign = ma.utm_campaign AND h.date = ma.date
+    LEFT JOIN google_aggregated_by_campaign ga ON h.utm_campaign = ga.utm_campaign AND h.date = ga.date
+    WHERE {date_filter}
+    """
     
     return base_query
 
 def get_campaign_performance_query(last_7_days_start, last_7_days_end):
-    """Generate campaign performance query"""
+    """Generate campaign performance query using utm_campaign_mapped table"""
     return f"""
     WITH meta_by_campaign AS (
       SELECT 
-        mm.utm_campaign,
+        ucm.utm_campaign_mapped as utm_campaign,
         m.date,
         SUM(SAFE_CAST(m.spend AS FLOAT64)) as spend
-      FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm
+      FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.utm_campaign_mapped` ucm
       JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data` m 
-        ON mm.adset_name_mapped = m.adset_name
-      GROUP BY mm.utm_campaign, m.date
+        ON ucm.campaign_name = m.campaign_name
+        AND ucm.adset_name = m.adset_name
+      GROUP BY ucm.utm_campaign_mapped, m.date
     )
     
     SELECT 
       h.utm_campaign,
-      mm.campaign_name_mapped AS campaign_name,
-      mm.adset_name_mapped,
+      ucm.campaign_name AS campaign_name,
+      ucm.adset_name,
       
       -- Total Metrics
       SUM(h.leads) as total_leads,
@@ -316,11 +275,11 @@ def get_campaign_performance_query(last_7_days_start, last_7_days_end):
       SAFE_DIVIDE(SUM(COALESCE(g.spend_usd, 0)), SUM(COALESCE(mc.spend, 0)) + SUM(COALESCE(g.spend_usd, 0))) * 100 as google_spend_percentage
 
     FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data` h
-    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm ON h.utm_campaign = mm.utm_campaign
+    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.utm_campaign_mapped` ucm ON h.utm_campaign = ucm.utm_campaign_mapped
     LEFT JOIN meta_by_campaign mc ON h.utm_campaign = mc.utm_campaign AND h.date = mc.date
     LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data` g ON h.utm_campaign = g.campaign_name AND h.date = g.date
     WHERE h.date BETWEEN "{last_7_days_start}" AND "{last_7_days_end}"
-    GROUP BY h.utm_campaign, mm.campaign_name_mapped, mm.adset_name_mapped
+    GROUP BY h.utm_campaign, ucm.campaign_name, ucm.adset_name
     HAVING SUM(h.leads) > 0
     ORDER BY total_combined_spend DESC
     """
@@ -1064,27 +1023,4 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
             status="success",
             message="Comprehensive analysis with enhanced cross-platform insights completed",
             data={
-                "claude_analysis": claude_analysis,
-                "raw_data": {
-                    "yesterday": data.get('yesterday', {}),
-                    "same_day_last_week": data.get('same_day_last_week', {}),
-                    "last_7_days": data.get('last_7_days', {}),
-                    "previous_7_days": data.get('previous_7_days', {})
-                },
-                "campaign_performance": data.get('campaign_performance', []),
-                "debug_info": {
-                    "yesterday_paid_social_spend": data.get('yesterday', {}).get('paid_social_spend', 0),
-                    "yesterday_paid_search_video_spend": data.get('yesterday', {}).get('paid_search_video_spend', 0),
-                    "last_7_days_paid_social_spend": data.get('last_7_days', {}).get('paid_social_spend', 0),
-                    "last_7_days_paid_search_video_spend": data.get('last_7_days', {}).get('paid_search_video_spend', 0),
-                    "total_campaigns": len(data.get('campaign_performance', []))
-                }
-            }
-        )
-        
-    except Exception as e:
-        return TrendAnalysisResponse(
-            status="error",
-            message="Comprehensive analysis failed",
-            error=str(e)
-        )
+                "
