@@ -65,10 +65,10 @@ async def marketing_root():
     }
 
 def get_comprehensive_query(date_filter, period_name, analysis_depth):
-    """Generate comprehensive query with proper CTEs using utm_campaign_mapped table"""
+    """Generate comprehensive query with proper CTEs"""
     base_query = f"""
     WITH meta_aggregated_by_campaign AS (
-      -- Pre-aggregate Meta data by utm_campaign and date using utm_campaign_mapped table
+      -- Pre-aggregate Meta data by utm_campaign and date 
       -- This gives us the TRUE platform metrics regardless of hex mapping
       SELECT 
         ucm.utm_campaign_mapped as utm_campaign,
@@ -239,7 +239,7 @@ def get_comprehensive_query(date_filter, period_name, analysis_depth):
     return base_query
 
 def get_campaign_performance_query(last_7_days_start, last_7_days_end):
-    """Generate campaign performance query using utm_campaign_mapped table"""
+    """Generate campaign performance query"""
     return f"""
     WITH meta_by_campaign AS (
       SELECT 
