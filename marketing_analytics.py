@@ -1,4 +1,4 @@
-# marketing_analytics.py - DIRECT SQL APPROACH - NO BULLSHIT
+# marketing_analytics.py - CLAUDE ANALYSIS WITH CHANNEL SEPARATION
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Dict, Optional, Any
@@ -58,14 +58,14 @@ marketing_router = APIRouter(prefix="/marketing", tags=["marketing"])
 @marketing_router.get("/")
 async def marketing_root():
     return {
-        "message": "Marketing Analytics API - DIRECT SQL NO BULLSHIT",
-        "version": "4.0.0",
+        "message": "Marketing Analytics API - Claude Analysis with Channel Separation",
+        "version": "5.0.0",
         "status": "running",
         "bigquery_available": BIGQUERY_AVAILABLE
     }
 
-def execute_direct_sql():
-    """Execute the exact SQL queries from your examples - no modifications"""
+def execute_channel_separated_sql():
+    """Execute SQL queries with channel separation: Paid Social vs Paid Search+Video"""
     
     # Calculate date ranges
     current_date = date.today()  # 2025-07-26
@@ -80,215 +80,147 @@ def execute_direct_sql():
     print(f"Last 7 days: {last_7_days_start} to {last_7_days_end}")
     print(f"Previous 7 days: {previous_7_days_start} to {previous_7_days_end}")
     
-    # EXACT SQL FROM YOUR EXAMPLES - Yesterday
-    yesterday_sql = f"""
-    SELECT 
-      'Yesterday' as period,
-      h.date,
-      
-      -- Hex Funnel Metrics
-      SUM(h.leads) as hex_leads,
-      SUM(h.start_flows) as hex_start_flows,
-      SUM(h.estimates) as hex_estimates,
-      SUM(h.closings) as hex_closings,
-      SUM(h.funded) as hex_funded,
-      SUM(h.rpts) as hex_rpts,
-      
-      -- Meta Advertising Metrics
-      SUM(SAFE_CAST(m.spend AS FLOAT64)) as meta_spend,
-      SUM(SAFE_CAST(m.impressions AS INT64)) as meta_impressions,
-      SUM(SAFE_CAST(m.clicks AS INT64)) as meta_clicks,
-      SUM(SAFE_CAST(m.leads AS INT64)) as meta_leads,
-      SUM(SAFE_CAST(m.purchases AS INT64)) as meta_purchases,
-      SUM(SAFE_CAST(m.landing_page_views AS INT64)) as meta_landing_page_views,
-      
-      -- Google Advertising Metrics
-      SUM(g.spend_usd) as google_spend,
-      SUM(g.impressions) as google_impressions,
-      SUM(g.clicks) as google_clicks,
-      SUM(g.conversions) as google_conversions,
-      
-      -- Combined Spend
-      SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd) as total_ad_spend,
-      
-      -- Conversion Rates
-      SAFE_DIVIDE(SUM(h.start_flows), SUM(h.leads)) * 100 as lead_to_start_flow_rate,
-      SAFE_DIVIDE(SUM(h.estimates), SUM(h.start_flows)) * 100 as start_flow_to_estimate_rate,
-      SAFE_DIVIDE(SUM(h.closings), SUM(h.estimates)) * 100 as estimate_to_closing_rate,
-      SAFE_DIVIDE(SUM(h.funded), SUM(h.closings)) * 100 as closing_to_funded_rate,
-      SAFE_DIVIDE(SUM(h.funded), SUM(h.leads)) * 100 as overall_lead_to_funded_rate,
-      
-      -- Cost Metrics
-      SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd), SUM(h.leads)) as cost_per_lead,
-      SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd), SUM(h.funded)) as cost_per_funded,
-      
-      -- CTR
-      SAFE_DIVIDE(SUM(SAFE_CAST(m.clicks AS INT64)) + SUM(g.clicks), SUM(SAFE_CAST(m.impressions AS INT64)) + SUM(g.impressions)) * 100 as overall_ctr
+    # Base query template with channel separation
+    def get_channel_query(date_filter, period_name, channel_condition):
+        return f"""
+        SELECT 
+          '{period_name}' as period,
+          
+          -- Hex Funnel Metrics (filtered by channel)
+          SUM(h.leads) as hex_leads,
+          SUM(h.start_flows) as hex_start_flows,
+          SUM(h.estimates) as hex_estimates,
+          SUM(h.closings) as hex_closings,
+          SUM(h.funded) as hex_funded,
+          SUM(h.rpts) as hex_rpts,
+          
+          -- Meta Advertising Metrics (only for paid-social)
+          SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.spend AS FLOAT64) ELSE 0 END) as meta_spend,
+          SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.impressions AS INT64) ELSE 0 END) as meta_impressions,
+          SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.clicks AS INT64) ELSE 0 END) as meta_clicks,
+          SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.leads AS INT64) ELSE 0 END) as meta_leads,
+          
+          -- Google Advertising Metrics (only for paid-search and paid-video)
+          SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.spend_usd ELSE 0 END) as google_spend,
+          SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.impressions ELSE 0 END) as google_impressions,
+          SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.clicks ELSE 0 END) as google_clicks,
+          SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.conversions ELSE 0 END) as google_conversions,
+          
+          -- Channel-specific totals
+          SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.spend AS FLOAT64) ELSE 0 END) as paid_social_spend,
+          SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.spend_usd ELSE 0 END) as paid_search_video_spend,
+          
+          SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.impressions AS INT64) ELSE 0 END) as paid_social_impressions,
+          SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.impressions ELSE 0 END) as paid_search_video_impressions,
+          
+          SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.clicks AS INT64) ELSE 0 END) as paid_social_clicks,
+          SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.clicks ELSE 0 END) as paid_search_video_clicks,
+          
+          SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.leads ELSE 0 END) as paid_social_leads,
+          SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.leads ELSE 0 END) as paid_search_video_leads,
+          
+          SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.estimates ELSE 0 END) as paid_social_estimates,
+          SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.estimates ELSE 0 END) as paid_search_video_estimates,
+          
+          SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.closings ELSE 0 END) as paid_social_closings,
+          SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.closings ELSE 0 END) as paid_search_video_closings,
+          
+          SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.funded ELSE 0 END) as paid_social_funded,
+          SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.funded ELSE 0 END) as paid_search_video_funded,
+          
+          SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.rpts ELSE 0 END) as paid_social_rpts,
+          SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.rpts ELSE 0 END) as paid_search_video_rpts,
+          
+          -- Combined totals
+          SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd) as total_ad_spend,
+          SUM(h.leads) as total_leads,
+          SUM(h.estimates) as total_estimates,
+          SUM(h.closings) as total_closings,
+          SUM(h.funded) as total_funded,
+          SUM(h.rpts) as total_rpts,
+          
+          -- Conversion Rates
+          SAFE_DIVIDE(SUM(h.estimates), SUM(h.leads)) * 100 as overall_estimate_cvr,
+          SAFE_DIVIDE(SUM(h.closings), SUM(h.estimates)) * 100 as overall_closing_cvr,
+          SAFE_DIVIDE(SUM(h.funded), SUM(h.leads)) * 100 as overall_lead_to_funded_rate,
+          
+          -- Channel-specific conversion rates
+          SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.clicks AS INT64) ELSE 0 END), 
+                      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.impressions AS INT64) ELSE 0 END)) * 100 as paid_social_ctr,
+          SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.clicks ELSE 0 END), 
+                      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.impressions ELSE 0 END)) * 100 as paid_search_video_ctr,
+          
+          SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.estimates ELSE 0 END), 
+                      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.leads ELSE 0 END)) * 100 as paid_social_estimate_cvr,
+          SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.estimates ELSE 0 END), 
+                      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.leads ELSE 0 END)) * 100 as paid_search_video_estimate_cvr,
+          
+          SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.closings ELSE 0 END), 
+                      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.estimates ELSE 0 END)) * 100 as paid_social_closing_cvr,
+          SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.closings ELSE 0 END), 
+                      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.estimates ELSE 0 END)) * 100 as paid_search_video_closing_cvr,
+          
+          SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.funded ELSE 0 END), 
+                      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.closings ELSE 0 END)) * 100 as paid_social_funded_cvr,
+          SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.funded ELSE 0 END), 
+                      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.closings ELSE 0 END)) * 100 as paid_search_video_funded_cvr,
+          
+          -- Cost Metrics
+          SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd), SUM(h.leads)) as cost_per_lead,
+          SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd), SUM(h.estimates)) as cost_per_estimate,
+          SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd), SUM(h.closings)) as cost_per_closing,
+          SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd), SUM(h.funded)) as cost_per_funded,
+          
+          -- Channel-specific cost metrics
+          SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.spend AS FLOAT64) ELSE 0 END), 
+                      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.impressions AS INT64) ELSE 0 END) / 1000) as paid_social_cpm,
+          SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.spend_usd ELSE 0 END), 
+                      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.impressions ELSE 0 END) / 1000) as paid_search_video_cpm,
+          
+          SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.spend AS FLOAT64) ELSE 0 END), 
+                      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.clicks AS INT64) ELSE 0 END)) as paid_social_cpc,
+          SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.spend_usd ELSE 0 END), 
+                      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.clicks ELSE 0 END)) as paid_search_video_cpc,
+          
+          SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.spend AS FLOAT64) ELSE 0 END), 
+                      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.leads ELSE 0 END)) as paid_social_cost_per_lead,
+          SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.spend AS FLOAT64) ELSE 0 END), 
+                      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.estimates ELSE 0 END)) as paid_social_cost_per_estimate,
+          SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.spend AS FLOAT64) ELSE 0 END), 
+                      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.closings ELSE 0 END)) as paid_social_cost_per_closing,
+          SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium = 'paid-social' THEN SAFE_CAST(m.spend AS FLOAT64) ELSE 0 END), 
+                      SUM(CASE WHEN h.utm_medium = 'paid-social' THEN h.funded ELSE 0 END)) as paid_social_cost_per_funded,
+          
+          SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.spend_usd ELSE 0 END), 
+                      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.leads ELSE 0 END)) as paid_search_video_cost_per_lead,
+          SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.spend_usd ELSE 0 END), 
+                      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.estimates ELSE 0 END)) as paid_search_video_cost_per_estimate,
+          SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.spend_usd ELSE 0 END), 
+                      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.closings ELSE 0 END)) as paid_search_video_cost_per_closing,
+          SAFE_DIVIDE(SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN g.spend_usd ELSE 0 END), 
+                      SUM(CASE WHEN h.utm_medium IN ('paid-search', 'paid-video') THEN h.funded ELSE 0 END)) as paid_search_video_cost_per_funded
 
-    FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data` h
-    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm ON h.utm_campaign = mm.utm_campaign
-    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data` m ON mm.adset_name_mapped = m.adset_name AND h.date = m.date
-    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data` g ON h.utm_campaign = g.campaign_name AND h.date = g.date
-    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_history_data` gh ON g.campaign_name = gh.campaign_name
-    WHERE h.date = "{yesterday}"
-    GROUP BY h.date;
-    """
+        FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data` h
+        LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm ON h.utm_campaign = mm.utm_campaign
+        LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data` m ON mm.adset_name_mapped = m.adset_name AND h.date = m.date
+        LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data` g ON h.utm_campaign = g.campaign_name AND h.date = g.date
+        LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_history_data` gh ON g.campaign_name = gh.campaign_name
+        WHERE {date_filter}
+        AND h.utm_medium IN ('paid-social', 'paid-search', 'paid-video')
+        """
     
-    # EXACT SQL FROM YOUR EXAMPLES - Same Day Last Week
-    same_day_last_week_sql = f"""
-    SELECT 
-      'Same Day Last Week' as period,
-      h.date,
-      
-      -- Hex Funnel Metrics
-      SUM(h.leads) as hex_leads,
-      SUM(h.start_flows) as hex_start_flows,
-      SUM(h.estimates) as hex_estimates,
-      SUM(h.closings) as hex_closings,
-      SUM(h.funded) as hex_funded,
-      SUM(h.rpts) as hex_rpts,
-      
-      -- Meta Advertising Metrics
-      SUM(SAFE_CAST(m.spend AS FLOAT64)) as meta_spend,
-      SUM(SAFE_CAST(m.impressions AS INT64)) as meta_impressions,
-      SUM(SAFE_CAST(m.clicks AS INT64)) as meta_clicks,
-      SUM(SAFE_CAST(m.leads AS INT64)) as meta_leads,
-      SUM(SAFE_CAST(m.purchases AS INT64)) as meta_purchases,
-      
-      -- Google Advertising Metrics
-      SUM(g.spend_usd) as google_spend,
-      SUM(g.impressions) as google_impressions,
-      SUM(g.clicks) as google_clicks,
-      SUM(g.conversions) as google_conversions,
-      
-      -- Combined Spend
-      SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd) as total_ad_spend,
-      
-      -- Conversion Rates
-      SAFE_DIVIDE(SUM(h.funded), SUM(h.leads)) * 100 as overall_lead_to_funded_rate,
-      
-      -- Cost Metrics
-      SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd), SUM(h.leads)) as cost_per_lead,
-      SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd), SUM(h.funded)) as cost_per_funded
-
-    FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data` h
-    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm ON h.utm_campaign = mm.utm_campaign
-    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data` m ON mm.adset_name_mapped = m.adset_name AND h.date = m.date
-    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data` g ON h.utm_campaign = g.campaign_name AND h.date = g.date
-    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_history_data` gh ON g.campaign_name = gh.campaign_name
-    WHERE h.date = "{same_day_last_week}"
-    GROUP BY h.date;
-    """
-    
-    # EXACT SQL FROM YOUR EXAMPLES - Last 7 Days
-    last_7_days_sql = f"""
-    SELECT 
-      'Last 7 Days' as period,
-      
-      -- Hex Funnel Metrics
-      SUM(h.leads) as hex_leads,
-      SUM(h.start_flows) as hex_start_flows,
-      SUM(h.estimates) as hex_estimates,
-      SUM(h.closings) as hex_closings,
-      SUM(h.funded) as hex_funded,
-      SUM(h.rpts) as hex_rpts,
-      
-      -- Meta Advertising Metrics
-      SUM(SAFE_CAST(m.spend AS FLOAT64)) as meta_spend,
-      SUM(SAFE_CAST(m.impressions AS INT64)) as meta_impressions,
-      SUM(SAFE_CAST(m.clicks AS INT64)) as meta_clicks,
-      SUM(SAFE_CAST(m.leads AS INT64)) as meta_leads,
-      SUM(SAFE_CAST(m.purchases AS INT64)) as meta_purchases,
-      SUM(SAFE_CAST(m.landing_page_views AS INT64)) as meta_landing_page_views,
-      
-      -- Google Advertising Metrics
-      SUM(g.spend_usd) as google_spend,
-      SUM(g.impressions) as google_impressions,
-      SUM(g.clicks) as google_clicks,
-      SUM(g.conversions) as google_conversions,
-      
-      -- Combined Spend
-      SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd) as total_ad_spend,
-      
-      -- Conversion Rates
-      SAFE_DIVIDE(SUM(h.start_flows), SUM(h.leads)) * 100 as lead_to_start_flow_rate,
-      SAFE_DIVIDE(SUM(h.estimates), SUM(h.start_flows)) * 100 as start_flow_to_estimate_rate,
-      SAFE_DIVIDE(SUM(h.closings), SUM(h.estimates)) * 100 as estimate_to_closing_rate,
-      SAFE_DIVIDE(SUM(h.funded), SUM(h.closings)) * 100 as closing_to_funded_rate,
-      SAFE_DIVIDE(SUM(h.funded), SUM(h.leads)) * 100 as overall_lead_to_funded_rate,
-      
-      -- Cost Metrics
-      SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd), SUM(h.leads)) as cost_per_lead,
-      SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd), SUM(h.funded)) as cost_per_funded,
-      
-      -- CTR
-      SAFE_DIVIDE(SUM(SAFE_CAST(m.clicks AS INT64)) + SUM(g.clicks), SUM(SAFE_CAST(m.impressions AS INT64)) + SUM(g.impressions)) * 100 as overall_ctr
-
-    FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data` h
-    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm ON h.utm_campaign = mm.utm_campaign
-    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data` m ON mm.adset_name_mapped = m.adset_name AND h.date = m.date
-    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data` g ON h.utm_campaign = g.campaign_name AND h.date = g.date
-    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_history_data` gh ON g.campaign_name = gh.campaign_name
-    WHERE h.date BETWEEN "{last_7_days_start}" AND "{last_7_days_end}";
-    """
-    
-    # EXACT SQL FROM YOUR EXAMPLES - Previous 7 Days
-    previous_7_days_sql = f"""
-    SELECT 
-      'Previous 7 Days' as period,
-      
-      -- Hex Funnel Metrics
-      SUM(h.leads) as hex_leads,
-      SUM(h.start_flows) as hex_start_flows,
-      SUM(h.estimates) as hex_estimates,
-      SUM(h.closings) as hex_closings,
-      SUM(h.funded) as hex_funded,
-      SUM(h.rpts) as hex_rpts,
-      
-      -- Meta Advertising Metrics
-      SUM(SAFE_CAST(m.spend AS FLOAT64)) as meta_spend,
-      SUM(SAFE_CAST(m.impressions AS INT64)) as meta_impressions,
-      SUM(SAFE_CAST(m.clicks AS INT64)) as meta_clicks,
-      SUM(SAFE_CAST(m.leads AS INT64)) as meta_leads,
-      SUM(SAFE_CAST(m.purchases AS INT64)) as meta_purchases,
-      
-      -- Google Advertising Metrics
-      SUM(g.spend_usd) as google_spend,
-      SUM(g.impressions) as google_impressions,
-      SUM(g.clicks) as google_clicks,
-      SUM(g.conversions) as google_conversions,
-      
-      -- Combined Spend
-      SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd) as total_ad_spend,
-      
-      -- Conversion Rates
-      SAFE_DIVIDE(SUM(h.funded), SUM(h.leads)) * 100 as overall_lead_to_funded_rate,
-      
-      -- Cost Metrics
-      SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd), SUM(h.leads)) as cost_per_lead,
-      SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)) + SUM(g.spend_usd), SUM(h.funded)) as cost_per_funded
-
-    FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data` h
-    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm ON h.utm_campaign = mm.utm_campaign
-    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data` m ON mm.adset_name_mapped = m.adset_name AND h.date = m.date
-    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data` g ON h.utm_campaign = g.campaign_name AND h.date = g.date
-    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_history_data` gh ON g.campaign_name = gh.campaign_name
-    WHERE h.date BETWEEN "{previous_7_days_start}" AND "{previous_7_days_end}";
-    """
-    
-    # Execute each query
+    # Define queries for each period
     queries = {
-        'yesterday': yesterday_sql,
-        'same_day_last_week': same_day_last_week_sql,
-        'last_7_days': last_7_days_sql,
-        'previous_7_days': previous_7_days_sql
+        'yesterday': get_channel_query(f'h.date = "{yesterday}"', 'Yesterday', ''),
+        'same_day_last_week': get_channel_query(f'h.date = "{same_day_last_week}"', 'Same Day Last Week', ''),
+        'last_7_days': get_channel_query(f'h.date BETWEEN "{last_7_days_start}" AND "{last_7_days_end}"', 'Last 7 Days', ''),
+        'previous_7_days': get_channel_query(f'h.date BETWEEN "{previous_7_days_start}" AND "{previous_7_days_end}"', 'Previous 7 Days', '')
     }
     
     results = {}
     
     for period, sql in queries.items():
         print(f"\n=== EXECUTING {period.upper()} ===")
-        print(f"SQL: {sql[:200]}...")
         
         try:
             df = bigquery_client.query(sql).to_dataframe()
@@ -307,13 +239,16 @@ def execute_direct_sql():
                 
                 results[period] = result
                 
-                # Debug print the key metrics
-                meta_spend = result.get('meta_spend', 0) or 0
-                google_spend = result.get('google_spend', 0) or 0
+                # Debug print the key metrics by channel
+                paid_social_spend = result.get('paid_social_spend', 0) or 0
+                paid_search_video_spend = result.get('paid_search_video_spend', 0) or 0
                 total_spend = result.get('total_ad_spend', 0) or 0
-                hex_leads = result.get('hex_leads', 0) or 0
+                total_leads = result.get('total_leads', 0) or 0
                 
-                print(f"RESULTS {period}: Meta=${meta_spend:,.0f}, Google=${google_spend:,.0f}, Total=${total_spend:,.0f}, Leads={hex_leads}")
+                print(f"RESULTS {period}:")
+                print(f"  Paid Social: ${paid_social_spend:,.0f}")
+                print(f"  Paid Search+Video: ${paid_search_video_spend:,.0f}")
+                print(f"  Total: ${total_spend:,.0f}, Leads: {total_leads}")
                 
             else:
                 print(f"No data returned for {period}")
@@ -325,97 +260,179 @@ def execute_direct_sql():
     
     return results
 
-def format_comparison(current, previous, period_name):
-    """Simple format comparison"""
+def generate_claude_analysis(data):
+    """Generate Claude analysis using DSPy"""
     
-    def safe_get(data, key, default=0):
-        val = data.get(key, default)
-        return float(val) if val is not None else default
-    
-    def calc_change(curr_val, prev_val):
-        if prev_val == 0:
-            return 100.0 if curr_val > 0 else 0.0
-        return ((curr_val - prev_val) / prev_val) * 100
-    
-    def format_change_str(change_pct):
-        return f"({change_pct:+.1f}%)"
-    
-    # Get values
-    curr_total_spend = safe_get(current, 'total_ad_spend')
-    curr_meta_spend = safe_get(current, 'meta_spend')
-    curr_google_spend = safe_get(current, 'google_spend')
-    curr_hex_leads = safe_get(current, 'hex_leads')
-    curr_hex_estimates = safe_get(current, 'hex_estimates')
-    curr_hex_closings = safe_get(current, 'hex_closings')
-    curr_hex_funded = safe_get(current, 'hex_funded')
-    curr_meta_impressions = safe_get(current, 'meta_impressions')
-    curr_meta_clicks = safe_get(current, 'meta_clicks')
-    curr_google_impressions = safe_get(current, 'google_impressions')
-    curr_google_clicks = safe_get(current, 'google_clicks')
-    curr_cost_per_lead = safe_get(current, 'cost_per_lead')
-    curr_cost_per_funded = safe_get(current, 'cost_per_funded')
-    curr_overall_ctr = safe_get(current, 'overall_ctr')
-    curr_lead_to_funded_rate = safe_get(current, 'overall_lead_to_funded_rate')
-    
-    prev_total_spend = safe_get(previous, 'total_ad_spend')
-    prev_meta_spend = safe_get(previous, 'meta_spend')
-    prev_google_spend = safe_get(previous, 'google_spend')
-    prev_hex_leads = safe_get(previous, 'hex_leads')
-    prev_hex_estimates = safe_get(previous, 'hex_estimates')
-    prev_hex_closings = safe_get(previous, 'hex_closings')
-    prev_hex_funded = safe_get(previous, 'hex_funded')
-    prev_meta_impressions = safe_get(previous, 'meta_impressions')
-    prev_meta_clicks = safe_get(previous, 'meta_clicks')
-    prev_google_impressions = safe_get(previous, 'google_impressions')
-    prev_google_clicks = safe_get(previous, 'google_clicks')
-    prev_cost_per_lead = safe_get(previous, 'cost_per_lead')
-    prev_cost_per_funded = safe_get(previous, 'cost_per_funded')
-    prev_overall_ctr = safe_get(previous, 'overall_ctr')
-    prev_lead_to_funded_rate = safe_get(previous, 'overall_lead_to_funded_rate')
-    
-    # Calculate changes
-    total_spend_change = calc_change(curr_total_spend, prev_total_spend)
-    meta_spend_change = calc_change(curr_meta_spend, prev_meta_spend)
-    google_spend_change = calc_change(curr_google_spend, prev_google_spend)
-    leads_change = calc_change(curr_hex_leads, prev_hex_leads)
-    estimates_change = calc_change(curr_hex_estimates, prev_hex_estimates)
-    closings_change = calc_change(curr_hex_closings, prev_hex_closings)
-    funded_change = calc_change(curr_hex_funded, prev_hex_funded)
-    impressions_change = calc_change(curr_meta_impressions + curr_google_impressions, prev_meta_impressions + prev_google_impressions)
-    clicks_change = calc_change(curr_meta_clicks + curr_google_clicks, prev_meta_clicks + prev_google_clicks)
-    cost_per_lead_change = calc_change(curr_cost_per_lead, prev_cost_per_lead)
-    cost_per_funded_change = calc_change(curr_cost_per_funded, prev_cost_per_funded)
-    ctr_change = calc_change(curr_overall_ctr, prev_overall_ctr)
-    lead_to_funded_rate_change = curr_lead_to_funded_rate - prev_lead_to_funded_rate
-    
-    return f"""
-COMPREHENSIVE ANALYSIS - {period_name}
+    # Format the data for Claude
+    analysis_prompt = f"""
+You are a marketing performance analyst. Analyze this marketing data and provide insights focused on CAMPAIGN-LEVEL performance within the account, not just overall account metrics.
 
-💰 SPEND METRICS:
-• Total Ad Spend: ${curr_total_spend:,.0f} {format_change_str(total_spend_change)}
- - Meta Spend: ${curr_meta_spend:,.0f} {format_change_str(meta_spend_change)}
- - Google Spend: ${curr_google_spend:,.0f} {format_change_str(google_spend_change)}
+## DATA ANALYSIS
 
-📊 FUNNEL PERFORMANCE:
-• Total Leads: {curr_hex_leads:.0f} {format_change_str(leads_change)}
-• Total Estimates: {curr_hex_estimates:.0f} {format_change_str(estimates_change)}
-• Total Closings: {curr_hex_closings:.0f} {format_change_str(closings_change)}
-• Total Funded: {curr_hex_funded:.0f} {format_change_str(funded_change)}
+### DAY-OVER-DAY COMPARISON (Yesterday vs Same Day Last Week):
 
-📈 TRAFFIC METRICS:
-• Total Impressions: {curr_meta_impressions + curr_google_impressions:,.0f} {format_change_str(impressions_change)}
-• Total Clicks: {curr_meta_clicks + curr_google_clicks:,.0f} {format_change_str(clicks_change)}
-• Overall CTR: {curr_overall_ctr:.2f}% {format_change_str(ctr_change)}
+**PAID SOCIAL (Meta)**:
+- Yesterday: Spend=${data.get('yesterday', {}).get('paid_social_spend', 0):,.0f}, Impressions={data.get('yesterday', {}).get('paid_social_impressions', 0):,}, CTR={data.get('yesterday', {}).get('paid_social_ctr', 0):.1f}%, Clicks={data.get('yesterday', {}).get('paid_social_clicks', 0):,}, Leads={data.get('yesterday', {}).get('paid_social_leads', 0)}, Estimates={data.get('yesterday', {}).get('paid_social_estimates', 0)}, Closings={data.get('yesterday', {}).get('paid_social_closings', 0)}, Funded={data.get('yesterday', {}).get('paid_social_funded', 0)}, RPTs={data.get('yesterday', {}).get('paid_social_rpts', 0)}
+- Same Day Last Week: Spend=${data.get('same_day_last_week', {}).get('paid_social_spend', 0):,.0f}, Impressions={data.get('same_day_last_week', {}).get('paid_social_impressions', 0):,}, CTR={data.get('same_day_last_week', {}).get('paid_social_ctr', 0):.1f}%, Clicks={data.get('same_day_last_week', {}).get('paid_social_clicks', 0):,}, Leads={data.get('same_day_last_week', {}).get('paid_social_leads', 0)}, Estimates={data.get('same_day_last_week', {}).get('paid_social_estimates', 0)}, Closings={data.get('same_day_last_week', {}).get('paid_social_closings', 0)}, Funded={data.get('same_day_last_week', {}).get('paid_social_funded', 0)}, RPTs={data.get('same_day_last_week', {}).get('paid_social_rpts', 0)}
+- Costs: Yesterday CPM=${data.get('yesterday', {}).get('paid_social_cpm', 0):.2f}, CPC=${data.get('yesterday', {}).get('paid_social_cpc', 0):.2f}, CPL=${data.get('yesterday', {}).get('paid_social_cost_per_lead', 0):.2f}, CPE=${data.get('yesterday', {}).get('paid_social_cost_per_estimate', 0):.2f}, CPC=${data.get('yesterday', {}).get('paid_social_cost_per_closing', 0):.2f}, CPF=${data.get('yesterday', {}).get('paid_social_cost_per_funded', 0):.2f}
+- Costs: Last Week CPM=${data.get('same_day_last_week', {}).get('paid_social_cpm', 0):.2f}, CPC=${data.get('same_day_last_week', {}).get('paid_social_cpc', 0):.2f}, CPL=${data.get('same_day_last_week', {}).get('paid_social_cost_per_lead', 0):.2f}, CPE=${data.get('same_day_last_week', {}).get('paid_social_cost_per_estimate', 0):.2f}, CPC=${data.get('same_day_last_week', {}).get('paid_social_cost_per_closing', 0):.2f}, CPF=${data.get('same_day_last_week', {}).get('paid_social_cost_per_funded', 0):.2f}
+- CVRs: Yesterday Estimate={data.get('yesterday', {}).get('paid_social_estimate_cvr', 0):.1f}%, Closing={data.get('yesterday', {}).get('paid_social_closing_cvr', 0):.1f}%, Funded={data.get('yesterday', {}).get('paid_social_funded_cvr', 0):.1f}%
+- CVRs: Last Week Estimate={data.get('same_day_last_week', {}).get('paid_social_estimate_cvr', 0):.1f}%, Closing={data.get('same_day_last_week', {}).get('paid_social_closing_cvr', 0):.1f}%, Funded={data.get('same_day_last_week', {}).get('paid_social_funded_cvr', 0):.1f}%
 
-💡 EFFICIENCY METRICS:
-• Cost per Lead: ${curr_cost_per_lead:.2f} {format_change_str(cost_per_lead_change)}
-• Cost per Funded: ${curr_cost_per_funded:.2f} {format_change_str(cost_per_funded_change)}
-• Lead to Funded Rate: {curr_lead_to_funded_rate:.1f}% ({lead_to_funded_rate_change:+.1f}pp)
+**PAID SEARCH + VIDEO (Google)**:
+- Yesterday: Spend=${data.get('yesterday', {}).get('paid_search_video_spend', 0):,.0f}, Impressions={data.get('yesterday', {}).get('paid_search_video_impressions', 0):,}, CTR={data.get('yesterday', {}).get('paid_search_video_ctr', 0):.1f}%, Clicks={data.get('yesterday', {}).get('paid_search_video_clicks', 0):,}, Leads={data.get('yesterday', {}).get('paid_search_video_leads', 0)}, Estimates={data.get('yesterday', {}).get('paid_search_video_estimates', 0)}, Closings={data.get('yesterday', {}).get('paid_search_video_closings', 0)}, Funded={data.get('yesterday', {}).get('paid_search_video_funded', 0)}, RPTs={data.get('yesterday', {}).get('paid_search_video_rpts', 0)}
+- Same Day Last Week: Spend=${data.get('same_day_last_week', {}).get('paid_search_video_spend', 0):,.0f}, Impressions={data.get('same_day_last_week', {}).get('paid_search_video_impressions', 0):,}, CTR={data.get('same_day_last_week', {}).get('paid_search_video_ctr', 0):.1f}%, Clicks={data.get('same_day_last_week', {}).get('paid_search_video_clicks', 0):,}, Leads={data.get('same_day_last_week', {}).get('paid_search_video_leads', 0)}, Estimates={data.get('same_day_last_week', {}).get('paid_search_video_estimates', 0)}, Closings={data.get('same_day_last_week', {}).get('paid_search_video_closings', 0)}, Funded={data.get('same_day_last_week', {}).get('paid_search_video_funded', 0)}, RPTs={data.get('same_day_last_week', {}).get('paid_search_video_rpts', 0)}
+- Costs: Yesterday CPM=${data.get('yesterday', {}).get('paid_search_video_cpm', 0):.2f}, CPC=${data.get('yesterday', {}).get('paid_search_video_cpc', 0):.2f}, CPL=${data.get('yesterday', {}).get('paid_search_video_cost_per_lead', 0):.2f}, CPE=${data.get('yesterday', {}).get('paid_search_video_cost_per_estimate', 0):.2f}, CPC=${data.get('yesterday', {}).get('paid_search_video_cost_per_closing', 0):.2f}, CPF=${data.get('yesterday', {}).get('paid_search_video_cost_per_funded', 0):.2f}
+- Costs: Last Week CPM=${data.get('same_day_last_week', {}).get('paid_search_video_cpm', 0):.2f}, CPC=${data.get('same_day_last_week', {}).get('paid_search_video_cpc', 0):.2f}, CPL=${data.get('same_day_last_week', {}).get('paid_search_video_cost_per_lead', 0):.2f}, CPE=${data.get('same_day_last_week', {}).get('paid_search_video_cost_per_estimate', 0):.2f}, CPC=${data.get('same_day_last_week', {}).get('paid_search_video_cost_per_closing', 0):.2f}, CPF=${data.get('same_day_last_week', {}).get('paid_search_video_cost_per_funded', 0):.2f}
+- CVRs: Yesterday Estimate={data.get('yesterday', {}).get('paid_search_video_estimate_cvr', 0):.1f}%, Closing={data.get('yesterday', {}).get('paid_search_video_closing_cvr', 0):.1f}%, Funded={data.get('yesterday', {}).get('paid_search_video_funded_cvr', 0):.1f}%
+- CVRs: Last Week Estimate={data.get('same_day_last_week', {}).get('paid_search_video_estimate_cvr', 0):.1f}%, Closing={data.get('same_day_last_week', {}).get('paid_search_video_closing_cvr', 0):.1f}%, Funded={data.get('same_day_last_week', {}).get('paid_search_video_funded_cvr', 0):.1f}%
+
+### WEEK-OVER-WEEK COMPARISON (Last 7 Days vs Previous 7 Days):
+
+**PAID SOCIAL (Meta)**:
+- Last 7 Days: Spend=${data.get('last_7_days', {}).get('paid_social_spend', 0):,.0f}, Impressions={data.get('last_7_days', {}).get('paid_social_impressions', 0):,}, CTR={data.get('last_7_days', {}).get('paid_social_ctr', 0):.1f}%, Clicks={data.get('last_7_days', {}).get('paid_social_clicks', 0):,}, Leads={data.get('last_7_days', {}).get('paid_social_leads', 0)}, Estimates={data.get('last_7_days', {}).get('paid_social_estimates', 0)}, Closings={data.get('last_7_days', {}).get('paid_social_closings', 0)}, Funded={data.get('last_7_days', {}).get('paid_social_funded', 0)}, RPTs={data.get('last_7_days', {}).get('paid_social_rpts', 0)}
+- Previous 7 Days: Spend=${data.get('previous_7_days', {}).get('paid_social_spend', 0):,.0f}, Impressions={data.get('previous_7_days', {}).get('paid_social_impressions', 0):,}, CTR={data.get('previous_7_days', {}).get('paid_social_ctr', 0):.1f}%, Clicks={data.get('previous_7_days', {}).get('paid_social_clicks', 0):,}, Leads={data.get('previous_7_days', {}).get('paid_social_leads', 0)}, Estimates={data.get('previous_7_days', {}).get('paid_social_estimates', 0)}, Closings={data.get('previous_7_days', {}).get('paid_social_closings', 0)}, Funded={data.get('previous_7_days', {}).get('paid_social_funded', 0)}, RPTs={data.get('previous_7_days', {}).get('paid_social_rpts', 0)}
+- Costs: Last 7 Days CPM=${data.get('last_7_days', {}).get('paid_social_cpm', 0):.2f}, CPC=${data.get('last_7_days', {}).get('paid_social_cpc', 0):.2f}, CPL=${data.get('last_7_days', {}).get('paid_social_cost_per_lead', 0):.2f}, CPE=${data.get('last_7_days', {}).get('paid_social_cost_per_estimate', 0):.2f}, CPC=${data.get('last_7_days', {}).get('paid_social_cost_per_closing', 0):.2f}, CPF=${data.get('last_7_days', {}).get('paid_social_cost_per_funded', 0):.2f}
+- Costs: Previous 7 Days CPM=${data.get('previous_7_days', {}).get('paid_social_cpm', 0):.2f}, CPC=${data.get('previous_7_days', {}).get('paid_social_cpc', 0):.2f}, CPL=${data.get('previous_7_days', {}).get('paid_social_cost_per_lead', 0):.2f}, CPE=${data.get('previous_7_days', {}).get('paid_social_cost_per_estimate', 0):.2f}, CPC=${data.get('previous_7_days', {}).get('paid_social_cost_per_closing', 0):.2f}, CPF=${data.get('previous_7_days', {}).get('paid_social_cost_per_funded', 0):.2f}
+- CVRs: Last 7 Days Estimate={data.get('last_7_days', {}).get('paid_social_estimate_cvr', 0):.1f}%, Closing={data.get('last_7_days', {}).get('paid_social_closing_cvr', 0):.1f}%, Funded={data.get('last_7_days', {}).get('paid_social_funded_cvr', 0):.1f}%
+- CVRs: Previous 7 Days Estimate={data.get('previous_7_days', {}).get('paid_social_estimate_cvr', 0):.1f}%, Closing={data.get('previous_7_days', {}).get('paid_social_closing_cvr', 0):.1f}%, Funded={data.get('previous_7_days', {}).get('paid_social_funded_cvr', 0):.1f}%
+
+**PAID SEARCH + VIDEO (Google)**:
+- Last 7 Days: Spend=${data.get('last_7_days', {}).get('paid_search_video_spend', 0):,.0f}, Impressions={data.get('last_7_days', {}).get('paid_search_video_impressions', 0):,}, CTR={data.get('last_7_days', {}).get('paid_search_video_ctr', 0):.1f}%, Clicks={data.get('last_7_days', {}).get('paid_search_video_clicks', 0):,}, Leads={data.get('last_7_days', {}).get('paid_search_video_leads', 0)}, Estimates={data.get('last_7_days', {}).get('paid_search_video_estimates', 0)}, Closings={data.get('last_7_days', {}).get('paid_search_video_closings', 0)}, Funded={data.get('last_7_days', {}).get('paid_search_video_funded', 0)}, RPTs={data.get('last_7_days', {}).get('paid_search_video_rpts', 0)}
+- Previous 7 Days: Spend=${data.get('previous_7_days', {}).get('paid_search_video_spend', 0):,.0f}, Impressions={data.get('previous_7_days', {}).get('paid_search_video_impressions', 0):,}, CTR={data.get('previous_7_days', {}).get('paid_search_video_ctr', 0):.1f}%, Clicks={data.get('previous_7_days', {}).get('paid_search_video_clicks', 0):,}, Leads={data.get('previous_7_days', {}).get('paid_search_video_leads', 0)}, Estimates={data.get('previous_7_days', {}).get('paid_search_video_estimates', 0)}, Closings={data.get('previous_7_days', {}).get('paid_search_video_closings', 0)}, Funded={data.get('previous_7_days', {}).get('paid_search_video_funded', 0)}, RPTs={data.get('previous_7_days', {}).get('paid_search_video_rpts', 0)}
+- Costs: Last 7 Days CPM=${data.get('last_7_days', {}).get('paid_search_video_cpm', 0):.2f}, CPC=${data.get('last_7_days', {}).get('paid_search_video_cpc', 0):.2f}, CPL=${data.get('last_7_days', {}).get('paid_search_video_cost_per_lead', 0):.2f}, CPE=${data.get('last_7_days', {}).get('paid_search_video_cost_per_estimate', 0):.2f}, CPC=${data.get('last_7_days', {}).get('paid_search_video_cost_per_closing', 0):.2f}, CPF=${data.get('last_7_days', {}).get('paid_search_video_cost_per_funded', 0):.2f}
+- Costs: Previous 7 Days CPM=${data.get('previous_7_days', {}).get('paid_search_video_cpm', 0):.2f}, CPC=${data.get('previous_7_days', {}).get('paid_search_video_cpc', 0):.2f}, CPL=${data.get('previous_7_days', {}).get('paid_search_video_cost_per_lead', 0):.2f}, CPE=${data.get('previous_7_days', {}).get('paid_search_video_cost_per_estimate', 0):.2f}, CPC=${data.get('previous_7_days', {}).get('paid_search_video_cost_per_closing', 0):.2f}, CPF=${data.get('previous_7_days', {}).get('paid_search_video_cost_per_funded', 0):.2f}
+- CVRs: Last 7 Days Estimate={data.get('last_7_days', {}).get('paid_search_video_estimate_cvr', 0):.1f}%, Closing={data.get('last_7_days', {}).get('paid_search_video_closing_cvr', 0):.1f}%, Funded={data.get('last_7_days', {}).get('paid_search_video_funded_cvr', 0):.1f}%
+- CVRs: Previous 7 Days Estimate={data.get('previous_7_days', {}).get('paid_search_video_estimate_cvr', 0):.1f}%, Closing={data.get('previous_7_days', {}).get('paid_search_video_closing_cvr', 0):.1f}%, Funded={data.get('previous_7_days', {}).get('paid_search_video_funded_cvr', 0):.1f}%
+
+## OUTPUT REQUIREMENTS
+
+For the MESSAGE field: Focus on CAMPAIGN-LEVEL insights, optimization opportunities, and specific tactical recommendations. Examples:
+- "Video campaigns showing strong CTR gains but higher cost per closing suggests creative refresh needed"
+- "Search campaigns efficient on lead gen but estimates dropping - review landing page experience"
+- "Social campaigns scaling impressions well but CTR declining - test new creative angles"
+- "Cost per estimate increasing across both channels - funnel optimization opportunity"
+
+Don't just summarize the overall account performance - provide specific insights about what's happening within campaigns and what actions to take.
+
+Provide analysis for BOTH channels separately in this exact format:
+
+{{
+  "message": "Campaign-level insights and tactical recommendations based on performance patterns",
+  "colorCode": "green|yellow|red", 
+  "paidSocial": {{
+    "dayOverDayPulse": {{
+      "totalSpend": "value (+/-X.X%)",
+      "totalImpressions": "value (+/-X.X%)",
+      "cpm": "$X.XX (+/-X.X%)",
+      "ctr": "X.X% (+/-X.X%)",
+      "totalClicks": "value (+/-X.X%)",
+      "cpc": "$X.XX (+/-X.X%)",
+      "totalLeads": "value (+/-X.X%)",
+      "costPerLead": "$X.XX (+/-X.X%)",
+      "estimateCVR": "X.X% (+/-X.X%)",
+      "totalEstimates": "value (+/-X.X%)",
+      "costPerEstimate": "$X.XX (+/-X.X%)",
+      "closingsCVR": "X.X% (+/-X.X%)",
+      "totalClosings": "value (+/-X.X%)",
+      "costPerClosing": "$X.XX (+/-X.X%)",
+      "fundedCVR": "X.X% (+/-X.X%)",
+      "totalFunded": "value (+/-X.X%)",
+      "costPerFunded": "$X.XX (+/-X.X%)",
+      "totalRPTs": "value (+/-X.X%)"
+    }},
+    "weekOverWeekPulse": {{
+      "totalSpend": "value (+/-X.X%)",
+      "totalImpressions": "value (+/-X.X%)",
+      "cpm": "$X.XX (+/-X.X%)",
+      "ctr": "X.X% (+/-X.X%)",
+      "totalClicks": "value (+/-X.X%)",
+      "cpc": "$X.XX (+/-X.X%)",
+      "totalLeads": "value (+/-X.X%)",
+      "costPerLead": "$X.XX (+/-X.X%)",
+      "estimateCVR": "X.X% (+/-X.X%)",
+      "totalEstimates": "value (+/-X.X%)",
+      "costPerEstimate": "$X.XX (+/-X.X%)",
+      "closingsCVR": "X.X% (+/-X.X%)",
+      "totalClosings": "value (+/-X.X%)",
+      "costPerClosing": "$X.XX (+/-X.X%)",
+      "fundedCVR": "X.X% (+/-X.X%)",
+      "totalFunded": "value (+/-X.X%)",
+      "costPerFunded": "$X.XX (+/-X.X%)",
+      "totalRPTs": "value (+/-X.X%)"
+    }}
+  }},
+  "paidSearchVideo": {{
+    "dayOverDayPulse": {{
+      "totalSpend": "value (+/-X.X%)",
+      "totalImpressions": "value (+/-X.X%)",
+      "cpm": "$X.XX (+/-X.X%)",
+      "ctr": "X.X% (+/-X.X%)",
+      "totalClicks": "value (+/-X.X%)",
+      "cpc": "$X.XX (+/-X.X%)",
+      "totalLeads": "value (+/-X.X%)",
+      "costPerLead": "$X.XX (+/-X.X%)",
+      "estimateCVR": "X.X% (+/-X.X%)",
+      "totalEstimates": "value (+/-X.X%)",
+      "costPerEstimate": "$X.XX (+/-X.X%)",
+      "closingsCVR": "X.X% (+/-X.X%)",
+      "totalClosings": "value (+/-X.X%)",
+      "costPerClosing": "$X.XX (+/-X.X%)",
+      "fundedCVR": "X.X% (+/-X.X%)",
+      "totalFunded": "value (+/-X.X%)",
+      "costPerFunded": "$X.XX (+/-X.X%)",
+      "totalRPTs": "value (+/-X.X%)"
+    }},
+    "weekOverWeekPulse": {{
+      "totalSpend": "value (+/-X.X%)",
+      "totalImpressions": "value (+/-X.X%)",
+      "cpm": "$X.XX (+/-X.X%)",
+      "ctr": "X.X% (+/-X.X%)",
+      "totalClicks": "value (+/-X.X%)",
+      "cpc": "$X.XX (+/-X.X%)",
+      "totalLeads": "value (+/-X.X%)",
+      "costPerLead": "$X.XX (+/-X.X%)",
+      "estimateCVR": "X.X% (+/-X.X%)",
+      "totalEstimates": "value (+/-X.X%)",
+      "costPerEstimate": "$X.XX (+/-X.X%)",
+      "closingsCVR": "X.X% (+/-X.X%)",
+      "totalClosings": "value (+/-X.X%)",
+      "costPerClosing": "$X.XX (+/-X.X%)",
+      "fundedCVR": "X.X% (+/-X.X%)",
+      "totalFunded": "value (+/-X.X%)",
+      "costPerFunded": "$X.XX (+/-X.X%)",
+      "totalRPTs": "value (+/-X.X%)"
+    }}
+  }}
+}}
+
+Calculate percentage changes using: ((New Value - Old Value) / Old Value) × 100
+For conversion rates, show percentage change of the rates, not percentage points.
+Use "+" for increases, "-" for decreases.
+Round to 1 decimal place.
+
+Output ONLY the JSON object. No additional text.
 """
+
+    try:
+        # Use DSPy to generate the analysis
+        analysis_result = dspy.Predict("analysis -> json_output")(analysis=analysis_prompt)
+        
+        # Try to parse as JSON
+        if hasattr(analysis_result, 'json_output'):
+            try:
+                return json.loads(analysis_result.json_output)
+            except json.JSONDecodeError:
+                return {"error": "Failed to parse Claude analysis as JSON", "raw_output": analysis_result.json_output}
+        else:
+            return {"error": "No json_output field in Claude response", "raw_response": str(analysis_result)}
+            
+    except Exception as e:
+        return {"error": f"Claude analysis failed: {str(e)}"}
 
 @marketing_router.post("/analyze-trends", response_model=TrendAnalysisResponse)
 async def analyze_marketing_trends(request: TrendAnalysisRequest):
-    """Execute the EXACT SQL from your examples - no modifications"""
+    """Execute SQL with channel separation and generate Claude analysis"""
     try:
         if not BIGQUERY_AVAILABLE or not bigquery_client:
             return TrendAnalysisResponse(
@@ -424,34 +441,23 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
                 error="BigQuery client not initialized"
             )
         
-        # Execute the direct SQL
-        data = execute_direct_sql()
+        # Execute the channel-separated SQL
+        data = execute_channel_separated_sql()
         
-        # Format comparisons
-        comparisons = {
-            'yesterday_vs_same_day_last_week': format_comparison(
-                data.get('yesterday', {}),
-                data.get('same_day_last_week', {}),
-                'Yesterday vs Same Day Last Week'
-            ),
-            'last_7_days_vs_previous_7_days': format_comparison(
-                data.get('last_7_days', {}),
-                data.get('previous_7_days', {}),
-                'Last 7 Days vs Previous 7 Days'
-            )
-        }
+        # Generate Claude analysis
+        claude_analysis = generate_claude_analysis(data)
         
         return TrendAnalysisResponse(
             status="success",
-            message="DIRECT SQL EXECUTION - NO BULLSHIT",
+            message="Channel-separated analysis with Claude insights completed",
             data={
-                "performance_summary": comparisons,
+                "claude_analysis": claude_analysis,
                 "raw_data": data,
                 "debug_info": {
-                    "yesterday_google_spend": data.get('yesterday', {}).get('google_spend', 'NOT_FOUND'),
-                    "yesterday_meta_spend": data.get('yesterday', {}).get('meta_spend', 'NOT_FOUND'),
-                    "yesterday_total_spend": data.get('yesterday', {}).get('total_ad_spend', 'NOT_FOUND'),
-                    "sql_executed": "DIRECT_FROM_YOUR_EXAMPLES"
+                    "yesterday_paid_social_spend": data.get('yesterday', {}).get('paid_social_spend', 0),
+                    "yesterday_paid_search_video_spend": data.get('yesterday', {}).get('paid_search_video_spend', 0),
+                    "last_7_days_paid_social_spend": data.get('last_7_days', {}).get('paid_social_spend', 0),
+                    "last_7_days_paid_search_video_spend": data.get('last_7_days', {}).get('paid_search_video_spend', 0)
                 }
             }
         )
@@ -459,6 +465,6 @@ async def analyze_marketing_trends(request: TrendAnalysisRequest):
     except Exception as e:
         return TrendAnalysisResponse(
             status="error",
-            message="DIRECT SQL EXECUTION FAILED",
+            message="Channel-separated analysis failed",
             error=str(e)
         )
