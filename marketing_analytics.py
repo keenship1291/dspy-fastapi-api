@@ -376,46 +376,6 @@ def generate_claude_analysis(data):
     last_7_days = data.get('last_7_days', {})
     previous_7_days = data.get('previous_7_days', {})
     campaign_performance = data.get('campaign_performance', [])
-    
-    # Generate comprehensive insights first
-    cross_platform_insights = generate_cross_platform_insights()
-    campaign_outliers = identify_campaign_outliers()
-    
-    # Debug logging
-    print(f"Cross-platform insights generated: {len(cross_platform_insights)}")
-    for i, insight in enumerate(cross_platform_insights):
-        print(f"  Insight {i+1}: {insight}")
-    
-    print(f"Campaign outliers identified: {len(campaign_outliers)}")
-    for i, outlier in enumerate(campaign_outliers):
-        print(f"  Outlier {i+1}: {outlier}")
-    
-    # Combine insights into a comprehensive message
-    all_insights = cross_platform_insights + campaign_outliers
-    
-    if not all_insights:
-        message = "Performance relatively stable across channels with no significant outliers detected"
-    else:
-        # Take the top 2-3 most impactful insights
-        message = " | ".join(all_insights[:3])
-    
-    print(f"Final message generated: {message}")
-    
-    # Determine color code based on the insights
-    high_impact_keywords = ['surge', 'doubled', 'dominating', 'significantly outperforming', 'champion']
-    warning_keywords = ['outlier', 'shift', 'decreased', 'dropping']
-    
-    if any(keyword in message.lower() for keyword in high_impact_keywords):
-        color_code = "green"
-    elif any(keyword in message.lower() for keyword in warning_keywords):
-        color_code = "yellow"  
-    else:
-        color_code = "green"
-    
-    print(f"Color code determined: {color_code}")
-    
-    # PAID SOCIAL DAY-OVER-DAY
-    ps_dod = {
         "totalSpend": format_value_with_change(
             safe_get(yesterday, 'paid_social_spend'),
             safe_get(same_day_last_week, 'paid_social_spend'),
