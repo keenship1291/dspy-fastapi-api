@@ -157,41 +157,41 @@ def calculate_week_over_week_changes(funnel_data: List[FunnelDataPoint], spend_d
         "channel": "funnelPerformance",
         "period_type": "weekOverWeekPulse",
         "totalLeads": format_value_with_change(
-            week_changes.get('last_7_leads', 0),
-            week_changes.get('previous_7_leads', 0)
+            data.get('last_7_leads', 0),
+            data.get('previous_7_leads', 0)
         ),
         "startFlows": format_value_with_change(
-            week_changes.get('last_7_start_flows', 0),
-            week_changes.get('previous_7_start_flows', 0)
+            data.get('last_7_start_flows', 0),
+            data.get('previous_7_start_flows', 0)
         ),
         "estimates": format_value_with_change(
-            week_changes.get('last_7_estimates', 0),
-            week_changes.get('previous_7_estimates', 0)
+            data.get('last_7_estimates', 0),
+            data.get('previous_7_estimates', 0)
         ),
         "closings": format_value_with_change(
-            week_changes.get('last_7_closings', 0),
-            week_changes.get('previous_7_closings', 0)
+            data.get('last_7_closings', 0),
+            data.get('previous_7_closings', 0)
         ),
         "funded": format_value_with_change(
-            week_changes.get('last_7_funded', 0),
-            week_changes.get('previous_7_funded', 0)
+            data.get('last_7_funded', 0),
+            data.get('previous_7_funded', 0)
         ),
         "revenue": format_value_with_change(
-            week_changes.get('last_7_rpts', 0),
-            week_changes.get('previous_7_rpts', 0),
+            data.get('last_7_rpts', 0),
+            data.get('previous_7_rpts', 0),
             is_currency=True
         )
     }
     
     # Add spend metrics from BigQuery if available
     spend_metrics = {}
-    if 'last_7_spend' in week_changes and 'previous_7_spend' in week_changes:
+    if 'last_7_spend' in data and 'previous_7_spend' in data:
         spend_metrics = {
             "channel": "adSpend",
             "period_type": "weekOverWeekPulse", 
             "totalSpend": format_value_with_change(
-                week_changes.get('last_7_spend', 0),
-                week_changes.get('previous_7_spend', 0),
+                data.get('last_7_spend', 0),
+                data.get('previous_7_spend', 0),
                 is_currency=True
             )
         }
@@ -201,39 +201,39 @@ def calculate_week_over_week_changes(funnel_data: List[FunnelDataPoint], spend_d
         return (numerator / denominator * 100) if denominator > 0 else 0
     
     last_7_lead_to_start = safe_divide(
-        week_changes.get('last_7_start_flows', 0),
-        week_changes.get('last_7_leads', 0)
+        data.get('last_7_start_flows', 0),
+        data.get('last_7_leads', 0)
     )
     previous_7_lead_to_start = safe_divide(
-        week_changes.get('previous_7_start_flows', 0),
-        week_changes.get('previous_7_leads', 0)
+        data.get('previous_7_start_flows', 0),
+        data.get('previous_7_leads', 0)
     )
     
     last_7_start_to_estimate = safe_divide(
-        week_changes.get('last_7_estimates', 0),
-        week_changes.get('last_7_start_flows', 0)
+        data.get('last_7_estimates', 0),
+        data.get('last_7_start_flows', 0)
     )
     previous_7_start_to_estimate = safe_divide(
-        week_changes.get('previous_7_estimates', 0),
-        week_changes.get('previous_7_start_flows', 0)
+        data.get('previous_7_estimates', 0),
+        data.get('previous_7_start_flows', 0)
     )
     
     last_7_estimate_to_closing = safe_divide(
-        week_changes.get('last_7_closings', 0),
-        week_changes.get('last_7_estimates', 0)
+        data.get('last_7_closings', 0),
+        data.get('last_7_estimates', 0)
     )
     previous_7_estimate_to_closing = safe_divide(
-        week_changes.get('previous_7_closings', 0),
-        week_changes.get('previous_7_estimates', 0)
+        data.get('previous_7_closings', 0),
+        data.get('previous_7_estimates', 0)
     )
     
     last_7_closing_to_funded = safe_divide(
-        week_changes.get('last_7_funded', 0),
-        week_changes.get('last_7_closings', 0)
+        data.get('last_7_funded', 0),
+        data.get('last_7_closings', 0)
     )
     previous_7_closing_to_funded = safe_divide(
-        week_changes.get('previous_7_funded', 0),
-        week_changes.get('previous_7_closings', 0)
+        data.get('previous_7_funded', 0),
+        data.get('previous_7_closings', 0)
     )
     
     conversion_metrics = {
@@ -478,7 +478,7 @@ async def analyze_funnel_trends(request: FunnelAnalysisRequest):
                 error=week_changes['error']
             )
         
-        # Determine color code based on performance (after week_changes is calculated)
+        # Determine color code based on performance
         color_code = determine_color_code(week_changes)
         
         # Format metrics in structured format
