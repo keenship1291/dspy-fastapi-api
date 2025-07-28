@@ -1,4 +1,4 @@
-# marketing_analytics.py - CLAUDE AUTO-ANALYSIS OF AVAILABLE DATA
+# marketing_analytics.py - CLAUDE TREND ANALYSIS WITH DIRECT FUNNEL DATA INPUT
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Dict, Optional, Any
@@ -9,7 +9,7 @@ import logging
 from google.oauth2 import service_account
 import json
 
-# BigQuery imports
+# BigQuery imports (for spend data)
 try:
     from google.cloud import bigquery
     import pandas as pd
@@ -39,12 +39,24 @@ else:
     bigquery_client = None
 
 # Pydantic Models
+class FunnelDataPoint(BaseModel):
+    date: str
+    leads: int
+    start_flows: int
+    estimates: int
+    closings: int
+    funded: int
+    rpts: int
+
+class FunnelAnalysisRequest(BaseModel):
+    funnel_data: List[FunnelDataPoint]
+
 class TrendAnalysisResponse(BaseModel):
     status: str
     trend_summary: str
+    formatted_metrics: Optional[Dict[str, Any]] = None
     trend_insights: Optional[Dict[str, Any]] = None
-    significant_changes: Optional[List[Dict[str, Any]]] = None
-    data_coverage: Optional[Dict[str, Any]] = None
+    week_over_week_changes: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
 
 # Create router
@@ -53,199 +65,298 @@ marketing_router = APIRouter(prefix="/marketing", tags=["marketing"])
 @marketing_router.get("/")
 async def marketing_root():
     return {
-        "message": "Marketing Analytics API - Auto-Analysis of Available Data",
-        "version": "11.0.0",
+        "message": "Marketing Analytics API - Funnel Data Trend Analysis",
+        "version": "12.0.0",
         "status": "running",
         "bigquery_available": BIGQUERY_AVAILABLE,
-        "note": "Analyzes all available partitioned data automatically"
+        "input_format": "Accepts funnel_data array with date, leads, start_flows, estimates, closings, funded, rpts"
     }
 
-def get_all_available_data():
-    """Pull all available data from BigQuery partitions using correct schema"""
+def get_platform_spend_data():
+    """Get platform spend data from BigQuery for comparison"""
     
-    # Daily aggregated view - combines all data using correct column references
-    daily_summary_query = """
-    WITH meta_daily AS (
-      SELECT 
-        m.date,
-        SUM(SAFE_CAST(m.spend AS FLOAT64)) as meta_spend,
-        SUM(SAFE_CAST(m.impressions AS INT64)) as meta_impressions,
-        SUM(SAFE_CAST(m.clicks AS INT64)) as meta_clicks,
-        SUM(SAFE_CAST(m.leads AS INT64)) as meta_leads
-      FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm
-      JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data` m 
-        ON mm.adset_name_mapped = m.adset_name
-      GROUP BY m.date
-    ),
-    google_daily AS (
-      SELECT 
-        date,
-        SUM(spend_usd) as google_spend,
-        SUM(impressions) as google_impressions,
-        SUM(clicks) as google_clicks,
-        SUM(conversions) as google_conversions,
-        AVG(ctr_percent) as avg_ctr,
-        AVG(cpc_usd) as avg_cpc
-      FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data`
-      GROUP BY date
-    ),
-    hex_daily AS (
-      SELECT 
-        date,
-        SUM(leads) as hex_leads,
-        SUM(start_flows) as hex_start_flows,
-        SUM(estimates) as hex_estimates,
-        SUM(closings) as hex_closings,
-        SUM(funded) as hex_funded,
-        SUM(rpts) as hex_rpts
-      FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data`
-      GROUP BY date
-    )
-    
-    SELECT 
-      COALESCE(m.date, g.date, h.date) as date,
-      
-      -- Spend metrics
-      COALESCE(m.meta_spend, 0) as meta_spend,
-      COALESCE(g.google_spend, 0) as google_spend,
-      COALESCE(m.meta_spend, 0) + COALESCE(g.google_spend, 0) as total_spend,
-      
-      -- High funnel metrics
-      COALESCE(m.meta_impressions, 0) as meta_impressions,
-      COALESCE(g.google_impressions, 0) as google_impressions,
-      COALESCE(m.meta_clicks, 0) as meta_clicks,
-      COALESCE(g.google_clicks, 0) as google_clicks,
-      COALESCE(g.avg_ctr, 0) as google_ctr,
-      COALESCE(g.avg_cpc, 0) as google_cpc,
-      
-      -- Lower funnel metrics  
-      COALESCE(h.hex_leads, 0) as leads,
-      COALESCE(h.hex_start_flows, 0) as start_flows,
-      COALESCE(h.hex_estimates, 0) as estimates,
-      COALESCE(h.hex_closings, 0) as closings,
-      COALESCE(h.hex_funded, 0) as funded,
-      COALESCE(h.hex_rpts, 0) as rpts,
-      
-      -- Conversion rates
-      SAFE_DIVIDE(COALESCE(h.hex_start_flows, 0), COALESCE(h.hex_leads, 0)) * 100 as lead_to_start_rate,
-      SAFE_DIVIDE(COALESCE(h.hex_estimates, 0), COALESCE(h.hex_start_flows, 0)) * 100 as start_to_estimate_rate,
-      SAFE_DIVIDE(COALESCE(h.hex_closings, 0), COALESCE(h.hex_estimates, 0)) * 100 as estimate_to_closing_rate,
-      SAFE_DIVIDE(COALESCE(h.hex_funded, 0), COALESCE(h.hex_closings, 0)) * 100 as closing_to_funded_rate,
-      SAFE_DIVIDE(COALESCE(h.hex_funded, 0), COALESCE(h.hex_leads, 0)) * 100 as overall_funded_rate,
-      
-      -- Cost metrics
-      SAFE_DIVIDE(COALESCE(m.meta_spend, 0) + COALESCE(g.google_spend, 0), COALESCE(h.hex_leads, 0)) as cost_per_lead,
-      SAFE_DIVIDE(COALESCE(m.meta_spend, 0) + COALESCE(g.google_spend, 0), COALESCE(h.hex_funded, 0)) as cost_per_funded
-      
-    FROM meta_daily m
-    FULL OUTER JOIN google_daily g ON m.date = g.date
-    FULL OUTER JOIN hex_daily h ON COALESCE(m.date, g.date) = h.date
-    ORDER BY date DESC
-    """
-    
-    # Campaign level breakdown for additional insights
-    campaign_summary_query = """
-    SELECT 
-      h.utm_campaign,
-      h.utm_medium,
-      h.date,
-      SUM(h.leads) as campaign_leads,
-      SUM(h.funded) as campaign_funded,
-      SAFE_DIVIDE(SUM(h.funded), SUM(h.leads)) * 100 as campaign_funded_rate
-    FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data` h
-    GROUP BY h.utm_campaign, h.utm_medium, h.date
-    HAVING SUM(h.leads) > 0
-    ORDER BY h.date DESC, campaign_leads DESC
-    """
+    if not BIGQUERY_AVAILABLE or not bigquery_client:
+        return []
     
     try:
-        if not bigquery_client:
-            raise Exception("BigQuery client not available")
+        spend_query = """
+        WITH meta_daily AS (
+          SELECT 
+            m.date,
+            SUM(SAFE_CAST(m.spend AS FLOAT64)) as meta_spend
+          FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm
+          JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data` m 
+            ON mm.adset_name_mapped = m.adset_name
+          GROUP BY m.date
+        ),
+        google_daily AS (
+          SELECT 
+            date,
+            SUM(spend_usd) as google_spend
+          FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data`
+          GROUP BY date
+        )
         
-        # Execute queries
-        daily_summary_df = bigquery_client.query(daily_summary_query).to_dataframe()
-        campaign_summary_df = bigquery_client.query(campaign_summary_query).to_dataframe()
+        SELECT 
+          COALESCE(m.date, g.date) as date,
+          COALESCE(m.meta_spend, 0) as meta_spend,
+          COALESCE(g.google_spend, 0) as google_spend,
+          COALESCE(m.meta_spend, 0) + COALESCE(g.google_spend, 0) as total_spend
+        FROM meta_daily m
+        FULL OUTER JOIN google_daily g ON m.date = g.date
+        ORDER BY date DESC
+        """
         
-        # Convert to lists of dicts
-        def df_to_dict_list(df):
-            if df.empty:
-                return []
-            result = []
-            for _, row in df.iterrows():
-                row_data = {}
-                for col in df.columns:
-                    value = row[col]
-                    if pd.isna(value):
-                        row_data[col] = 0 if col != 'date' else None
-                    elif hasattr(value, 'item'):
-                        row_data[col] = value.item()
-                    else:
-                        row_data[col] = str(value) if col == 'date' else value
-                result.append(row_data)
-            return result
+        df = bigquery_client.query(spend_query).to_dataframe()
         
-        return {
-            "daily_summary": df_to_dict_list(daily_summary_df),
-            "campaign_summary": df_to_dict_list(campaign_summary_df),
-            "data_coverage": {
-                "daily_summary_days": len(daily_summary_df) if not daily_summary_df.empty else 0,
-                "total_campaigns": len(campaign_summary_df['utm_campaign'].unique()) if not campaign_summary_df.empty else 0,
-                "date_range": {
-                    "earliest": str(daily_summary_df['date'].min()) if not daily_summary_df.empty else "N/A",
-                    "latest": str(daily_summary_df['date'].max()) if not daily_summary_df.empty else "N/A"
-                }
-            }
-        }
+        spend_data = []
+        for _, row in df.iterrows():
+            spend_data.append({
+                'date': str(row['date']),
+                'meta_spend': float(row['meta_spend']) if not pd.isna(row['meta_spend']) else 0,
+                'google_spend': float(row['google_spend']) if not pd.isna(row['google_spend']) else 0,
+                'total_spend': float(row['total_spend']) if not pd.isna(row['total_spend']) else 0
+            })
+        
+        return spend_data
         
     except Exception as e:
-        print(f"Error pulling available data: {e}")
-        return {
-            "daily_summary": [],
-            "campaign_summary": [],
-            "data_coverage": {"error": str(e)}
-        }
+        print(f"Error getting spend data: {e}")
+        return []
 
-def generate_claude_auto_analysis(all_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Claude analyzes whatever data is available automatically with simplified output"""
+def calculate_week_over_week_changes(funnel_data: List[FunnelDataPoint], spend_data: List[Dict]) -> Dict[str, Any]:
+    """Format metrics in structured JSON format like the example"""
     
-    daily_summary = all_data.get("daily_summary", [])
-    campaign_summary = all_data.get("campaign_summary", [])
-    data_coverage = all_data.get("data_coverage", {})
+    def format_value_with_change(current, previous, is_currency=False, is_percentage=False):
+        """Format current value with percentage change"""
+        if previous == 0:
+            change_pct = 100.0 if current > 0 else 0.0
+        else:
+            change_pct = ((current - previous) / previous) * 100
+        
+        # Format the current value
+        if is_currency:
+            if current >= 1000:
+                current_formatted = f"${current/1000:,.1f}k"
+            else:
+                current_formatted = f"${current:,.0f}"
+        elif is_percentage:
+            current_formatted = f"{current:.1f}%"
+        else:
+            current_formatted = f"{current:,.0f}"
+        
+        # Format the change
+        change_sign = "+" if change_pct >= 0 else ""
+        change_formatted = f"({change_sign}{change_pct:.1f}%)"
+        
+        return f"{current_formatted} {change_formatted}"
     
-    if not daily_summary:
-        return {
-            "trend_summary": "No marketing data available for analysis",
-            "error": "Daily summary data not available"
+    # Extract values from week_changes
+    funnel_metrics = {
+        "channel": "funnelPerformance",
+        "period_type": "weekOverWeekPulse",
+        "totalLeads": format_value_with_change(
+            week_changes.get('last_7_leads', 0),
+            week_changes.get('previous_7_leads', 0)
+        ),
+        "startFlows": format_value_with_change(
+            week_changes.get('last_7_start_flows', 0),
+            week_changes.get('previous_7_start_flows', 0)
+        ),
+        "estimates": format_value_with_change(
+            week_changes.get('last_7_estimates', 0),
+            week_changes.get('previous_7_estimates', 0)
+        ),
+        "closings": format_value_with_change(
+            week_changes.get('last_7_closings', 0),
+            week_changes.get('previous_7_closings', 0)
+        ),
+        "funded": format_value_with_change(
+            week_changes.get('last_7_funded', 0),
+            week_changes.get('previous_7_funded', 0)
+        ),
+        "revenue": format_value_with_change(
+            week_changes.get('last_7_rpts', 0),
+            week_changes.get('previous_7_rpts', 0),
+            is_currency=True
+        )
+    }
+    
+    # Add spend metrics from BigQuery if available
+    spend_metrics = {}
+    if 'last_7_spend' in week_changes and 'previous_7_spend' in week_changes:
+        spend_metrics = {
+            "channel": "adSpend",
+            "period_type": "weekOverWeekPulse", 
+            "totalSpend": format_value_with_change(
+                week_changes.get('last_7_spend', 0),
+                week_changes.get('previous_7_spend', 0),
+                is_currency=True
+            )
         }
     
-    # Simplified analysis prompt to avoid JSON parsing issues
+    # Calculate conversion rates for current and previous periods
+    def safe_divide(numerator, denominator):
+        return (numerator / denominator * 100) if denominator > 0 else 0
+    
+    last_7_lead_to_start = safe_divide(
+        week_changes.get('last_7_start_flows', 0),
+        week_changes.get('last_7_leads', 0)
+    )
+    previous_7_lead_to_start = safe_divide(
+        week_changes.get('previous_7_start_flows', 0),
+        week_changes.get('previous_7_leads', 0)
+    )
+    
+    last_7_start_to_estimate = safe_divide(
+        week_changes.get('last_7_estimates', 0),
+        week_changes.get('last_7_start_flows', 0)
+    )
+    previous_7_start_to_estimate = safe_divide(
+        week_changes.get('previous_7_estimates', 0),
+        week_changes.get('previous_7_start_flows', 0)
+    )
+    
+    last_7_estimate_to_closing = safe_divide(
+        week_changes.get('last_7_closings', 0),
+        week_changes.get('last_7_estimates', 0)
+    )
+    previous_7_estimate_to_closing = safe_divide(
+        week_changes.get('previous_7_closings', 0),
+        week_changes.get('previous_7_estimates', 0)
+    )
+    
+    last_7_closing_to_funded = safe_divide(
+        week_changes.get('last_7_funded', 0),
+        week_changes.get('last_7_closings', 0)
+    )
+    previous_7_closing_to_funded = safe_divide(
+        week_changes.get('previous_7_funded', 0),
+        week_changes.get('previous_7_closings', 0)
+    )
+    
+    conversion_metrics = {
+        "channel": "conversionRates",
+        "period_type": "weekOverWeekPulse",
+        "leadToStartFlowRate": format_value_with_change(
+            last_7_lead_to_start,
+            previous_7_lead_to_start,
+            is_percentage=True
+        ),
+        "startFlowToEstimateRate": format_value_with_change(
+            last_7_start_to_estimate,
+            previous_7_start_to_estimate,
+            is_percentage=True
+        ),
+        "estimateToClosingRate": format_value_with_change(
+            last_7_estimate_to_closing,
+            previous_7_estimate_to_closing,
+            is_percentage=True
+        ),
+        "closingToFundedRate": format_value_with_change(
+            last_7_closing_to_funded,
+            previous_7_closing_to_funded,
+            is_percentage=True
+        )
+    }
+    """Calculate week-over-week changes like the example"""
+    
+    # Sort by date (most recent first)
+    sorted_funnel = sorted(funnel_data, key=lambda x: x.date, reverse=True)
+    
+    if len(sorted_funnel) < 14:
+        return {"error": "Need at least 14 days of data for week-over-week comparison"}
+    
+    # Split into last 7 days vs previous 7 days
+    last_7_days = sorted_funnel[:7]
+    previous_7_days = sorted_funnel[7:14]
+    
+    # Calculate funnel totals
+    def sum_funnel_metrics(days):
+        return {
+            'leads': sum(day.leads for day in days),
+            'start_flows': sum(day.start_flows for day in days),
+            'estimates': sum(day.estimates for day in days),
+            'closings': sum(day.closings for day in days),
+            'funded': sum(day.funded for day in days),
+            'rpts': sum(day.rpts for day in days)
+        }
+    
+    last_7_totals = sum_funnel_metrics(last_7_days)
+    previous_7_totals = sum_funnel_metrics(previous_7_days)
+    
+    # Calculate spend totals if available
+    spend_changes = {}
+    if spend_data:
+        spend_dict = {item['date']: item for item in spend_data}
+        
+        last_7_dates = [day.date for day in last_7_days]
+        previous_7_dates = [day.date for day in previous_7_days]
+        
+        last_7_spend = sum(spend_dict.get(date, {}).get('total_spend', 0) for date in last_7_dates)
+        previous_7_spend = sum(spend_dict.get(date, {}).get('total_spend', 0) for date in previous_7_dates)
+        
+        spend_changes = {
+            'last_7_spend': last_7_spend,
+            'previous_7_spend': previous_7_spend,
+            'spend_change': last_7_spend - previous_7_spend
+        }
+    
+    # Calculate changes
+    changes = {}
+    for metric in ['leads', 'start_flows', 'estimates', 'closings', 'funded', 'rpts']:
+        change = last_7_totals[metric] - previous_7_totals[metric]
+        changes[f'{metric}_change'] = change
+        changes[f'last_7_{metric}'] = last_7_totals[metric]
+        changes[f'previous_7_{metric}'] = previous_7_totals[metric]
+    
+    return {
+        **changes,
+        **spend_changes,
+        'analysis_period': {
+            'last_7_start': last_7_days[-1].date,
+            'last_7_end': last_7_days[0].date,
+            'previous_7_start': previous_7_days[-1].date,
+            'previous_7_end': previous_7_days[0].date
+        }
+    }
+
+def generate_claude_funnel_analysis(funnel_data: List[FunnelDataPoint], week_changes: Dict[str, Any]) -> Dict[str, Any]:
+    """Claude analyzes funnel trends and generates insights"""
+    
+    # Prepare data for Claude
+    recent_data = sorted(funnel_data, key=lambda x: x.date, reverse=True)[:7]
+    
     analysis_prompt = f"""
-    Analyze LeaseEnd marketing performance data and provide insights:
+    Analyze LeaseEnd marketing funnel performance trends:
 
-    DATA AVAILABLE: {data_coverage.get('daily_summary_days', 0)} days from {data_coverage.get('date_range', {}).get('earliest', 'N/A')} to {data_coverage.get('date_range', {}).get('latest', 'N/A')}
+    WEEK-OVER-WEEK CHANGES:
+    {json.dumps(week_changes, indent=2)}
 
-    RECENT DAILY PERFORMANCE (last 5 days):
-    {json.dumps(daily_summary[:5], indent=2)}
+    RECENT 7 DAYS DAILY BREAKDOWN:
+    {json.dumps([{'date': day.date, 'leads': day.leads, 'start_flows': day.start_flows, 'estimates': day.estimates, 'closings': day.closings, 'funded': day.funded, 'rpts': day.rpts} for day in recent_data], indent=2)}
 
-    TOP CAMPAIGNS:
-    {json.dumps(campaign_summary[:10], indent=2)}
-
-    Provide analysis in this EXACT format - no extra formatting or characters:
+    Provide analysis in this EXACT format:
 
     {{
-        "summary": "Brief 2-sentence overview of key trends",
-        "spend_trend": "increasing/decreasing/stable/volatile",
-        "lead_trend": "increasing/decreasing/stable/volatile", 
-        "efficiency_trend": "improving/declining/stable",
+        "summary": "Brief trend analysis highlighting key changes like the example format",
+        "spend_analysis": "Analysis of spend changes and efficiency",
+        "funnel_performance": {{
+            "leads_trend": "assessment of lead generation changes",
+            "conversion_trends": "analysis of funnel stage performance",
+            "bottlenecks": "identification of problem areas",
+            "improvements": "areas showing positive trends"
+        }},
         "key_insights": [
-            "First key insight",
-            "Second key insight", 
-            "Third key insight"
+            "Most significant finding",
+            "Secondary insight",
+            "Additional observation"
         ],
-        "alerts": [
-            "Any concerning patterns"
-        ],
-        "top_opportunity": "Main optimization opportunity"
+        "formatted_changes": "Example: ['+$15k spend past 7 days', '+2,333 leads', '+539 start flows', '+499 estimates', '-25 closings', '+39 funded', '+$150k rpts']",
+        "priority_actions": [
+            "Top recommended action based on trends",
+            "Secondary recommendation"
+        ]
     }}
     """
     
@@ -253,7 +364,7 @@ def generate_claude_auto_analysis(all_data: Dict[str, Any]) -> Dict[str, Any]:
         # Use DSPy configured Claude instance
         response = dspy.settings.lm.basic_request(analysis_prompt)
         
-        # Clean response more aggressively
+        # Clean response
         response_clean = response.strip()
         
         # Remove markdown code blocks
@@ -261,190 +372,229 @@ def generate_claude_auto_analysis(all_data: Dict[str, Any]) -> Dict[str, Any]:
             lines = response_clean.split('\n')
             response_clean = '\n'.join([line for line in lines if not line.startswith('```')])
         
-        # Find JSON content more carefully
+        # Find JSON content
         json_start = response_clean.find('{')
         json_end = response_clean.rfind('}') + 1
         
         if json_start == -1 or json_end == 0:
-            # Fallback if no JSON found
-            return create_fallback_analysis(daily_summary, data_coverage)
+            return create_fallback_funnel_analysis(week_changes)
         
         json_content = response_clean[json_start:json_end]
-        
-        # Try to parse
         parsed_analysis = json.loads(json_content)
-        
-        # Add metadata
-        parsed_analysis['analysis_metadata'] = {
-            'days_analyzed': data_coverage.get('daily_summary_days', 0),
-            'campaigns_analyzed': data_coverage.get('total_campaigns', 0),
-            'analysis_timestamp': datetime.now().isoformat()
-        }
         
         return parsed_analysis
         
     except json.JSONDecodeError as e:
         print(f"JSON parsing error: {e}")
-        print(f"Response content: {response_clean[:500]}...")
-        return create_fallback_analysis(daily_summary, data_coverage)
+        return create_fallback_funnel_analysis(week_changes)
     except Exception as e:
         print(f"Analysis error: {e}")
-        return create_fallback_analysis(daily_summary, data_coverage)
+        return create_fallback_funnel_analysis(week_changes)
 
-def create_fallback_analysis(daily_summary, data_coverage):
-    """Create a simple fallback analysis when Claude's response can't be parsed"""
+def create_fallback_funnel_analysis(week_changes: Dict[str, Any]) -> Dict[str, Any]:
+    """Create fallback analysis when Claude parsing fails"""
     
-    if not daily_summary:
-        return {
-            "summary": "No data available for analysis",
-            "error": "No daily summary data found"
-        }
+    def format_change(value, is_currency=False):
+        """Format change values with proper currency/number formatting"""
+        if is_currency:
+            if abs(value) >= 1000:
+                return f"${value/1000:,.0f}k" if value >= 0 else f"-${abs(value)/1000:,.0f}k"
+            else:
+                return f"${value:,.0f}"
+        else:
+            return f"{value:,.0f}"
     
-    # Simple calculations from the data
-    recent_days = daily_summary[:3] if len(daily_summary) >= 3 else daily_summary
-    older_days = daily_summary[3:6] if len(daily_summary) >= 6 else []
+    def format_change_with_sign(value, is_currency=False):
+        """Add + or - sign to formatted value"""
+        formatted = format_change(abs(value), is_currency)
+        if value > 0:
+            return f"+{formatted}"
+        elif value < 0:
+            return f"-{formatted}"
+        else:
+            return formatted
     
-    def avg_metric(days, metric):
-        if not days:
-            return 0
-        values = [day.get(metric, 0) for day in days if day.get(metric, 0) > 0]
-        return sum(values) / len(values) if values else 0
+    formatted_changes = []
     
-    recent_spend = avg_metric(recent_days, 'total_spend')
-    older_spend = avg_metric(older_days, 'total_spend')
-    recent_leads = avg_metric(recent_days, 'leads')
-    older_leads = avg_metric(older_days, 'leads')
+    # Spend change (currency)
+    if 'spend_change' in week_changes:
+        formatted_changes.append(f"{format_change_with_sign(week_changes['spend_change'], True)} spend past 7 days")
     
-    spend_trend = "increasing" if recent_spend > older_spend * 1.1 else "decreasing" if recent_spend < older_spend * 0.9 else "stable"
-    lead_trend = "increasing" if recent_leads > older_leads * 1.1 else "decreasing" if recent_leads < older_leads * 0.9 else "stable"
+    # Funnel metrics (non-currency)
+    funnel_metrics = [
+        ('leads_change', 'leads'),
+        ('start_flows_change', 'start flows'),
+        ('estimates_change', 'estimates'),
+        ('closings_change', 'closings'),
+        ('funded_change', 'funded')
+    ]
+    
+    for change_key, display_name in funnel_metrics:
+        if change_key in week_changes:
+            formatted_changes.append(f"{format_change_with_sign(week_changes[change_key])} {display_name}")
+    
+    # RPTs (currency)
+    if 'rpts_change' in week_changes:
+        formatted_changes.append(f"{format_change_with_sign(week_changes['rpts_change'], True)} rpts")
     
     return {
-        "summary": f"Analysis of {data_coverage.get('daily_summary_days', 0)} days shows {spend_trend} spend trend and {lead_trend} lead generation",
-        "spend_trend": spend_trend,
-        "lead_trend": lead_trend,
-        "efficiency_trend": "stable",
+        "summary": "Week-over-week analysis shows mixed funnel performance with some positive and negative trends",
+        "spend_analysis": "Spend data analysis limited in fallback mode",
+        "funnel_performance": {
+            "leads_trend": "Lead generation showing variation",
+            "conversion_trends": "Conversion rates fluctuating across funnel stages",
+            "bottlenecks": "Analysis system limitations",
+            "improvements": "Data collection and processing"
+        },
         "key_insights": [
-            f"Average daily spend: ${recent_spend:.0f}",
-            f"Average daily leads: {recent_leads:.0f}",
-            f"Data coverage: {data_coverage.get('daily_summary_days', 0)} days"
+            "Week-over-week comparison completed",
+            "Funnel metrics show normal variation",
+            "Enhanced analysis requires system improvements"
         ],
-        "alerts": ["Analysis system using fallback mode - full insights limited"],
-        "top_opportunity": "Improve analysis system for deeper insights",
-        "analysis_metadata": {
-            "fallback_mode": True,
-            "days_analyzed": data_coverage.get('daily_summary_days', 0),
-            "analysis_timestamp": datetime.now().isoformat()
-        }
+        "formatted_changes": formatted_changes,
+        "priority_actions": [
+            "Review detailed funnel performance by stage",
+            "Investigate any significant metric changes"
+        ],
+        "fallback_mode": True
     }
 
-@marketing_router.get("/auto-analysis", response_model=TrendAnalysisResponse)
-async def auto_analyze_available_data():
-    """Automatically analyze all available marketing data"""
+@marketing_router.post("/funnel-analysis", response_model=TrendAnalysisResponse)
+async def analyze_funnel_trends(request: FunnelAnalysisRequest):
+    """Analyze funnel data trends with week-over-week comparison"""
     
     try:
-        if not BIGQUERY_AVAILABLE or not bigquery_client:
+        # Get platform spend data
+        spend_data = get_platform_spend_data()
+        
+        # Calculate week-over-week changes
+        week_changes = calculate_week_over_week_changes(request.funnel_data, spend_data)
+        
+        if 'error' in week_changes:
             return TrendAnalysisResponse(
                 status="error",
-                trend_summary="BigQuery not available for auto-analysis",
-                error="BigQuery client not initialized"
+                trend_summary=week_changes['error'],
+                error=week_changes['error']
             )
         
-        # Pull all available data
-        all_data = get_all_available_data()
+        # Format metrics in structured format
+        formatted_metrics = format_metrics_structured(week_changes)
         
-        # Generate Claude's auto-analysis
-        trend_insights = generate_claude_auto_analysis(all_data)
+        # Generate Claude analysis
+        trend_insights = generate_claude_funnel_analysis(request.funnel_data, week_changes)
         
-        # Extract components for response
-        if isinstance(trend_insights, dict):
-            trend_summary = trend_insights.get('summary', 'Auto-analysis completed')
-            significant_changes = trend_insights.get('alerts', [])
-            
-            # Convert alerts to expected format
-            if significant_changes:
-                significant_changes = [{"finding": alert, "priority": "medium"} for alert in significant_changes]
-        else:
-            trend_summary = "Analysis completed with limitations"
-            significant_changes = []
-        data_coverage = all_data.get('data_coverage', {})
+        # Extract trend summary
+        trend_summary = trend_insights.get('summary', 'Funnel trend analysis completed')
         
         return TrendAnalysisResponse(
             status="success",
             trend_summary=trend_summary,
+            formatted_metrics=formatted_metrics,
             trend_insights=trend_insights,
-            significant_changes=significant_changes,
-            data_coverage=data_coverage
+            week_over_week_changes=week_changes
         )
         
     except Exception as e:
         return TrendAnalysisResponse(
             status="error",
-            trend_summary="Auto-analysis failed - see error details",
+            trend_summary="Funnel analysis failed - see error details",
             error=str(e)
         )
 
-@marketing_router.get("/data-status")
-async def check_data_availability():
-    """Check what data is available for analysis"""
+@marketing_router.post("/quick-funnel-trends")
+async def get_quick_funnel_trends(request: FunnelAnalysisRequest):
+    """Get quick formatted changes like the example"""
     
     try:
-        if not BIGQUERY_AVAILABLE or not bigquery_client:
+        # Get spend data
+        spend_data = get_platform_spend_data()
+        
+        # Calculate changes
+        week_changes = calculate_week_over_week_changes(request.funnel_data, spend_data)
+        
+        if 'error' in week_changes:
             return {
                 "status": "error",
-                "message": "BigQuery not available",
-                "data_available": False
+                "error": week_changes['error']
             }
         
-        # Quick data availability check
-        availability_check = """
-        SELECT 
-          'google_ads' as source,
-          COUNT(*) as record_count,
-          MIN(date) as earliest_date,
-          MAX(date) as latest_date
-        FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data`
+        # Format in structured format
+        formatted_metrics = format_metrics_structured(week_changes)
         
-        UNION ALL
+        # Format changes like the example
+        def format_change(value, is_currency=False):
+            """Format change values with proper currency/number formatting"""
+            if is_currency:
+                if abs(value) >= 1000:
+                    return f"${value/1000:,.0f}k" if value >= 0 else f"-${abs(value)/1000:,.0f}k"
+                else:
+                    return f"${value:,.0f}"
+            else:
+                return f"{value:,.0f}"
         
-        SELECT 
-          'meta_data' as source,
-          COUNT(*) as record_count,
-          MIN(date) as earliest_date,
-          MAX(date) as latest_date
-        FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data`
+        def format_change_with_sign(value, is_currency=False):
+            """Add + or - sign to formatted value"""
+            formatted = format_change(abs(value), is_currency)
+            if value > 0:
+                return f"+{formatted}"
+            elif value < 0:
+                return f"-{formatted}"
+            else:
+                return formatted
         
-        UNION ALL
+        formatted_output = []
         
-        SELECT 
-          'hex_data' as source,
-          COUNT(*) as record_count,
-          MIN(date) as earliest_date,
-          MAX(date) as latest_date
-        FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data`
-        """
+        # Add spend change if available (currency)
+        if 'spend_change' in week_changes:
+            formatted_output.append(f"* {format_change_with_sign(week_changes['spend_change'], True)} spend past 7 days")
         
-        df = bigquery_client.query(availability_check).to_dataframe()
+        # Add funnel changes (non-currency)
+        funnel_metrics = [
+            ('leads_change', 'leads'),
+            ('start_flows_change', 'start flows'),
+            ('estimates_change', 'estimates'),
+            ('closings_change', 'closings'),
+            ('funded_change', 'funded')
+        ]
         
-        availability = {}
-        for _, row in df.iterrows():
-            availability[row['source']] = {
-                'record_count': int(row['record_count']),
-                'earliest_date': str(row['earliest_date']),
-                'latest_date': str(row['latest_date'])
-            }
+        for change_key, display_name in funnel_metrics:
+            if change_key in week_changes:
+                formatted_output.append(f"* {format_change_with_sign(week_changes[change_key])} {display_name}")
+        
+        # Add RPTs (currency)
+        if 'rpts_change' in week_changes:
+            formatted_output.append(f"* {format_change_with_sign(week_changes['rpts_change'], True)} rpts")
         
         return {
             "status": "success",
-            "message": "Data availability checked",
-            "data_available": True,
-            "sources": availability,
-            "ready_for_analysis": all(info['record_count'] > 0 for info in availability.values())
+            "formatted_metrics": formatted_metrics,
+            "raw_changes": week_changes
         }
         
     except Exception as e:
         return {
             "status": "error",
-            "message": f"Data availability check failed: {str(e)}",
-            "data_available": False,
             "error": str(e)
         }
+
+@marketing_router.get("/test-funnel")
+async def test_funnel_analysis():
+    """Test endpoint - requires funnel_data to be sent via POST"""
+    
+    return {
+        "status": "info",
+        "message": "Use POST /marketing/funnel-analysis with funnel_data in request body",
+        "example_request": {
+            "funnel_data": [
+                {
+                    "date": "2025-07-26",
+                    "leads": 7535,
+                    "start_flows": 491,
+                    "estimates": 537,
+                    "closings": 66,
+                    "funded": 18,
+                    "rpts": 46327
+                }
+            ]
+        }
+    }
