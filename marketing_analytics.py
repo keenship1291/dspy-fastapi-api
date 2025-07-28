@@ -35,8 +35,11 @@ if BIGQUERY_AVAILABLE:
 else:
     bigquery_client = None
 
-# Claude API configuration
-CLAUDE_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+# Load API key from environment variable (set in Railway dashboard)
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+if not ANTHROPIC_API_KEY:
+    raise ValueError("ANTHROPIC_API_KEY environment variable not set")
+
 CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
 
 # Models
@@ -404,7 +407,7 @@ async def check_campaign_anomalies():
         context = get_campaign_context()
         
         # Analyze alerts with Claude if we have any
-        if alerts and CLAUDE_API_KEY:
+        if alerts and ANTHROPIC_API_KEY:
             try:
                 # Get Claude's analysis for individual alerts
                 for alert in alerts:
@@ -508,7 +511,7 @@ def get_campaign_context() -> Dict[str, Any]:
 async def analyze_alert_with_claude(alert: AnomalyAlert, context: Dict[str, Any]) -> str:
     """Get Claude's analysis for a specific alert"""
     
-    if not CLAUDE_API_KEY:
+    if not ANTHROPIC_API_KEY:
         return None
     
     # Get relevant trend data for this campaign
@@ -543,7 +546,7 @@ Focus on actionable insights for a marketing manager managing CAC and performanc
                 CLAUDE_API_URL,
                 headers={
                     "Content-Type": "application/json",
-                    "x-api-key": CLAUDE_API_KEY,
+                    "x-api-key": ANTHROPIC_API_KEY,
                     "anthropic-version": "2023-06-01"
                 },
                 json={
@@ -570,7 +573,7 @@ Focus on actionable insights for a marketing manager managing CAC and performanc
 async def get_claude_summary(alerts: List[AnomalyAlert], context: Dict[str, Any]) -> str:
     """Get Claude's overall summary of all alerts"""
     
-    if not CLAUDE_API_KEY or not alerts:
+    if not ANTHROPIC_API_KEY or not alerts:
         return None
     
     # Organize alerts by severity and platform
@@ -607,7 +610,7 @@ Keep it executive-friendly and action-oriented. Remember that CAC (cost per clos
                 CLAUDE_API_URL,
                 headers={
                     "Content-Type": "application/json",
-                    "x-api-key": CLAUDE_API_KEY,
+                    "x-api-key": ANTHROPIC_API_KEY,
                     "anthropic-version": "2023-06-01"
                 },
                 json={
