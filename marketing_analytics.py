@@ -1,4 +1,63 @@
-# Add these new models to your existing models section
+# marketing_analytics.py - SIMPLE FUNNEL ANALYSIS + ANOMALY DETECTION
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from typing import List, Dict, Optional, Any, Union
+import os
+import json
+import asyncio
+import httpx
+from datetime import datetime
+
+# BigQuery imports (for spend data)
+try:
+    from google.cloud import bigquery
+    import pandas as pd
+    from google.oauth2 import service_account
+    BIGQUERY_AVAILABLE = True
+except ImportError:
+    BIGQUERY_AVAILABLE = False
+
+# BigQuery setup
+PROJECT_ID = "gtm-p3gj3zzk-nthlo"
+DATASET_ID = "last_14_days_analysis"
+
+if BIGQUERY_AVAILABLE:
+    try:
+        credentials_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+        if credentials_json:
+            credentials_info = json.loads(credentials_json)
+            credentials = service_account.Credentials.from_service_account_info(credentials_info)
+            bigquery_client = bigquery.Client(credentials=credentials, project=PROJECT_ID)
+        else:
+            bigquery_client = bigquery.Client(project=PROJECT_ID)
+    except Exception as e:
+        bigquery_client = None
+else:
+    bigquery_client = None
+
+# Claude API configuration
+CLAUDE_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
+
+# Models
+class FunnelDataPoint(BaseModel):
+    date: str
+    leads: int
+    start_flows: int
+    estimates: int
+    closings: int
+    funded: int
+    rpts: int
+
+class FunnelAnalysisRequest(BaseModel):
+    funnel_data: List[FunnelDataPoint]
+
+class FunnelAnalysisResponse(BaseModel):
+    status: str
+    colorCode: Optional[str] = None
+    formatted_metrics: Optional[Dict[str, Any]] = None
+    day_over_day_metrics: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
 
 class AnomalyAlert(BaseModel):
     campaign_name: str
@@ -23,14 +82,300 @@ class AnomalyCheckResponse(BaseModel):
     claude_summary: Optional[str] = None  # Overall analysis from Claude
     error: Optional[str] = None
 
-# Add Claude integration imports
-import asyncio
-import httpx
-from typing import Union
+# Router
+marketing_router = APIRouter(prefix="/marketing", tags=["marketing"])
 
-# Claude API configuration
-CLAUDE_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
+@marketing_router.get("/")
+async def marketing_root():
+    return {
+        "message": "Marketing Analytics API - Simple Funnel Analysis",
+        "version": "13.0.0",
+        "status": "running"
+    }
+
+def get_spend_data():
+    """Get total spend from BigQuery"""
+    if not bigquery_client:
+        return []
+    
+    try:
+        query = """
+        WITH meta_daily AS (
+          SELECT 
+            m.date,
+            SUM(SAFE_CAST(m.spend AS FLOAT64)) as meta_spend
+          FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm
+          JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data` m 
+            ON mm.adset_name_mapped = m.adset_name
+          GROUP BY m.date
+        ),
+        google_daily AS (
+          SELECT 
+            date,
+            SUM(spend_usd) as google_spend
+          FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data`
+          GROUP BY date
+        )
+        
+        SELECT 
+          COALESCE(m.date, g.date) as date,
+          COALESCE(m.meta_spend, 0) + COALESCE(g.google_spend, 0) as total_spend
+        FROM meta_daily m
+        FULL OUTER JOIN google_daily g ON m.date = g.date
+        ORDER BY date DESC
+        """
+        
+        df = bigquery_client.query(query).to_dataframe()
+        return [{"date": str(row['date']), "total_spend": float(row['total_spend'])} for _, row in df.iterrows()]
+    except:
+        return []
+
+def calculate_changes(funnel_data: List[FunnelDataPoint]):
+    """Calculate both week-over-week and day-over-day changes"""
+    
+    if len(funnel_data) < 8:
+        return {"error": "Need at least 8 days of data for day-over-day comparison"}
+    
+    # Sort by date (most recent first)
+    sorted_data = sorted(funnel_data, key=lambda x: x.date, reverse=True)
+    
+    # Week-over-week: Last 7 days vs previous 7 days
+    if len(sorted_data) >= 14:
+        last_7 = sorted_data[:7]
+        prev_7 = sorted_data[7:14]
+        week_over_week = True
+    else:
+        week_over_week = False
+    
+    # Day-over-day: Most recent day vs same day last week (-7 days)
+    most_recent_day = sorted_data[0]
+    same_day_last_week = sorted_data[7] if len(sorted_data) > 7 else None
+    
+    def sum_metric(days, metric):
+        return sum(getattr(day, metric) for day in days)
+    
+    def get_metric(day, metric):
+        return getattr(day, metric)
+    
+    # Calculate week-over-week totals
+    wow_data = {}
+    if week_over_week:
+        last_totals = {
+            'leads': sum_metric(last_7, 'leads'),
+            'start_flows': sum_metric(last_7, 'start_flows'), 
+            'estimates': sum_metric(last_7, 'estimates'),
+            'closings': sum_metric(last_7, 'closings'),
+            'funded': sum_metric(last_7, 'funded'),
+            'rpts': sum_metric(last_7, 'rpts')
+        }
+        
+        prev_totals = {
+            'leads': sum_metric(prev_7, 'leads'),
+            'start_flows': sum_metric(prev_7, 'start_flows'),
+            'estimates': sum_metric(prev_7, 'estimates'), 
+            'closings': sum_metric(prev_7, 'closings'),
+            'funded': sum_metric(prev_7, 'funded'),
+            'rpts': sum_metric(prev_7, 'rpts')
+        }
+        
+        wow_data = {
+            'last_totals': last_totals,
+            'prev_totals': prev_totals
+        }
+    
+    # Calculate day-over-day totals
+    dod_data = {}
+    if same_day_last_week:
+        recent_day_totals = {
+            'leads': get_metric(most_recent_day, 'leads'),
+            'start_flows': get_metric(most_recent_day, 'start_flows'),
+            'estimates': get_metric(most_recent_day, 'estimates'),
+            'closings': get_metric(most_recent_day, 'closings'),
+            'funded': get_metric(most_recent_day, 'funded'),
+            'rpts': get_metric(most_recent_day, 'rpts')
+        }
+        
+        same_day_totals = {
+            'leads': get_metric(same_day_last_week, 'leads'),
+            'start_flows': get_metric(same_day_last_week, 'start_flows'),
+            'estimates': get_metric(same_day_last_week, 'estimates'),
+            'closings': get_metric(same_day_last_week, 'closings'),
+            'funded': get_metric(same_day_last_week, 'funded'),
+            'rpts': get_metric(same_day_last_week, 'rpts')
+        }
+        
+        dod_data = {
+            'recent_day_totals': recent_day_totals,
+            'same_day_totals': same_day_totals,
+            'recent_date': most_recent_day.date,
+            'comparison_date': same_day_last_week.date
+        }
+    
+    # Get spend data
+    spend_data = get_spend_data()
+    spend_dict = {item['date']: item['total_spend'] for item in spend_data}
+    
+    # Add spend to week-over-week
+    if week_over_week:
+        last_7_dates = [day.date for day in last_7]
+        prev_7_dates = [day.date for day in prev_7]
+        
+        last_spend = sum(spend_dict.get(date, 0) for date in last_7_dates)
+        prev_spend = sum(spend_dict.get(date, 0) for date in prev_7_dates)
+        
+        wow_data.update({
+            'last_spend': last_spend,
+            'prev_spend': prev_spend
+        })
+    
+    # Add spend to day-over-day
+    if same_day_last_week:
+        recent_spend = spend_dict.get(most_recent_day.date, 0)
+        comparison_spend = spend_dict.get(same_day_last_week.date, 0)
+        
+        dod_data.update({
+            'recent_spend': recent_spend,
+            'comparison_spend': comparison_spend
+        })
+    
+    return {
+        'week_over_week': wow_data if week_over_week else {},
+        'day_over_day': dod_data if same_day_last_week else {},
+        'has_week_data': week_over_week,
+        'has_day_data': bool(same_day_last_week)
+    }
+
+def format_metric(current, previous, is_currency=False):
+    """Format metric with change percentage"""
+    if previous == 0:
+        change_pct = 100.0 if current > 0 else 0.0
+    else:
+        change_pct = ((current - previous) / previous) * 100
+    
+    # Format current value
+    if is_currency:
+        if current >= 1000:
+            current_str = f"${current/1000:,.0f}k"
+        else:
+            current_str = f"${current:,.0f}"
+    else:
+        current_str = f"{current:,.0f}"
+    
+    # Format change
+    sign = "+" if change_pct >= 0 else ""
+    return f"{current_str} ({sign}{change_pct:.1f}%)"
+
+def determine_color(changes):
+    """Determine color based on performance"""
+    
+    # Use week-over-week data if available, otherwise day-over-day
+    if changes.get('has_week_data'):
+        last = changes['week_over_week']['last_totals']
+        prev = changes['week_over_week']['prev_totals']
+    elif changes.get('has_day_data'):
+        last = changes['day_over_day']['recent_day_totals']
+        prev = changes['day_over_day']['same_day_totals']
+    else:
+        return "yellow"  # No data for comparison
+    
+    def pct_change(curr, prev):
+        return ((curr - prev) / prev) * 100 if prev > 0 else 0
+    
+    funded_change = pct_change(last['funded'], prev['funded'])
+    revenue_change = pct_change(last['rpts'], prev['rpts'])
+    
+    if funded_change > 10 and revenue_change > 15:
+        return "green"
+    elif funded_change < -10 or revenue_change < -15:
+        return "red"
+    else:
+        return "yellow"
+
+@marketing_router.post("/funnel-analysis", response_model=FunnelAnalysisResponse)
+async def analyze_funnel(request: FunnelAnalysisRequest):
+    """Simple funnel analysis"""
+    
+    try:
+        # Calculate changes
+        changes = calculate_changes(request.funnel_data)
+        
+        if 'error' in changes:
+            return FunnelAnalysisResponse(
+                status="error",
+                error=changes['error']
+            )
+        
+        # Format week-over-week metrics (if available)
+        formatted_metrics = {}
+        if changes.get('has_week_data'):
+            wow = changes['week_over_week']
+            last = wow['last_totals']
+            prev = wow['prev_totals']
+            
+            formatted_metrics = {
+                "spendMetrics": {
+                    "channel": "adSpend",
+                    "period_type": "weekOverWeekPulse",
+                    "totalSpend": format_metric(wow['last_spend'], wow['prev_spend'], True)
+                },
+                "funnelMetrics": {
+                    "channel": "funnelPerformance", 
+                    "period_type": "weekOverWeekPulse",
+                    "totalLeads": format_metric(last['leads'], prev['leads']),
+                    "startFlows": format_metric(last['start_flows'], prev['start_flows']),
+                    "estimates": format_metric(last['estimates'], prev['estimates']),
+                    "closings": format_metric(last['closings'], prev['closings']),
+                    "funded": format_metric(last['funded'], prev['funded']),
+                    "revenue": format_metric(last['rpts'], prev['rpts'], True)
+                }
+            }
+        
+        # Format day-over-day metrics (if available)
+        day_over_day_metrics = {}
+        if changes.get('has_day_data'):
+            dod = changes['day_over_day']
+            recent = dod['recent_day_totals']
+            comparison = dod['same_day_totals']
+            
+            day_over_day_metrics = {
+                "spendMetrics": {
+                    "channel": "adSpend",
+                    "period_type": "dayOverDayPulse",
+                    "totalSpend": format_metric(dod['recent_spend'], dod['comparison_spend'], True)
+                },
+                "funnelMetrics": {
+                    "channel": "funnelPerformance",
+                    "period_type": "dayOverDayPulse", 
+                    "totalLeads": format_metric(recent['leads'], comparison['leads']),
+                    "startFlows": format_metric(recent['start_flows'], comparison['start_flows']),
+                    "estimates": format_metric(recent['estimates'], comparison['estimates']),
+                    "closings": format_metric(recent['closings'], comparison['closings']),
+                    "funded": format_metric(recent['funded'], comparison['funded']),
+                    "revenue": format_metric(recent['rpts'], comparison['rpts'], True)
+                },
+                "comparison_info": {
+                    "recent_date": dod['recent_date'],
+                    "comparison_date": dod['comparison_date']
+                }
+            }
+        
+        # Determine color
+        color_code = determine_color(changes)
+        
+        return FunnelAnalysisResponse(
+            status="success",
+            colorCode=color_code,
+            formatted_metrics=formatted_metrics if formatted_metrics else None,
+            day_over_day_metrics=day_over_day_metrics if day_over_day_metrics else None
+        )
+        
+    except Exception as e:
+        return FunnelAnalysisResponse(
+            status="error",
+            error=str(e)
+        )
+
+# NEW ANOMALY DETECTION CODE BELOW
 
 @marketing_router.get("/check-anomalies", response_model=AnomalyCheckResponse)
 async def check_campaign_anomalies():
@@ -358,6 +703,37 @@ def check_meta_anomalies() -> List[AnomalyAlert]:
         alerts = []
         
         for _, row in df.iterrows():
+            # PRIORITY 1: Check CAC (Cost per Closing) - Most Important
+            if pd.notna(row['recent_cac']) and pd.notna(row['prev_cac']) and row['prev_cac'] > 0:
+                cac_change = ((row['recent_cac'] - row['prev_cac']) / row['prev_cac']) * 100
+                if cac_change >= 25:  # CAC increased by 25%+
+                    severity = "red" if cac_change >= 75 else "orange" if cac_change >= 50 else "yellow"
+                    alerts.append(AnomalyAlert(
+                        campaign_name=row['campaign_name'],
+                        adset_name=row['adset_name'],
+                        platform="meta",
+                        metric="cost_per_closing",
+                        current_value=row['recent_cac'],
+                        previous_value=row['prev_cac'],
+                        change_percent=cac_change,
+                        severity=severity,
+                        message=f"CAC spiked: ${row['recent_cac']:.2f} vs ${row['prev_cac']:.2f} (closings: {row['recent_closings']} vs {row['prev_closings']})"
+                    ))
+            
+            # Check for no closings when there were closings before
+            elif row['recent_closings'] == 0 and row['prev_closings'] > 0 and row['recent_spend'] > 50:
+                alerts.append(AnomalyAlert(
+                    campaign_name=row['campaign_name'],
+                    adset_name=row['adset_name'],
+                    platform="meta",
+                    metric="closings",
+                    current_value=0,
+                    previous_value=row['prev_closings'],
+                    change_percent=-100,
+                    severity="red",
+                    message=f"No closings generated despite ${row['recent_spend']:.2f} spend (had {row['prev_closings']} closings last week)"
+                ))
+            
             # Check for spending issues (campaign not spending)
             if row['recent_spend'] == 0 and row['prev_spend'] > 10:
                 alerts.append(AnomalyAlert(
@@ -372,73 +748,80 @@ def check_meta_anomalies() -> List[AnomalyAlert]:
                     message=f"Adset stopped spending completely (was ${row['prev_spend']:.2f})"
                 ))
             
-            # Check CTR (lower is bad)
-            if pd.notna(row['recent_ctr']) and pd.notna(row['prev_ctr']) and row['prev_ctr'] > 0:
-                ctr_change = ((row['recent_ctr'] - row['prev_ctr']) / row['prev_ctr']) * 100
-                if ctr_change <= -30:  # CTR dropped by 30%+
-                    severity = "red" if ctr_change <= -50 else "orange"
-                    alerts.append(AnomalyAlert(
-                        campaign_name=row['campaign_name'],
-                        adset_name=row['adset_name'],
-                        platform="meta",
-                        metric="ctr",
-                        current_value=row['recent_ctr'],
-                        previous_value=row['prev_ctr'],
-                        change_percent=ctr_change,
-                        severity=severity,
-                        message=f"CTR dropped significantly: {row['recent_ctr']:.2f}% vs {row['prev_ctr']:.2f}%"
-                    ))
+            # LOWER PRIORITY: Other metrics (only if no CAC issues)
+            # Only check these if CAC is not spiking significantly
+            has_major_cac_issue = (pd.notna(row['recent_cac']) and pd.notna(row['prev_cac']) and 
+                                 row['prev_cac'] > 0 and 
+                                 ((row['recent_cac'] - row['prev_cac']) / row['prev_cac']) * 100 >= 50)
             
-            # Check CPC (higher is bad)
-            if pd.notna(row['recent_cpc']) and pd.notna(row['prev_cpc']) and row['prev_cpc'] > 0:
-                cpc_change = ((row['recent_cpc'] - row['prev_cpc']) / row['prev_cpc']) * 100
-                if cpc_change >= 30:  # CPC increased by 30%+
-                    severity = "red" if cpc_change >= 75 else "orange" if cpc_change >= 50 else "yellow"
-                    alerts.append(AnomalyAlert(
-                        campaign_name=row['campaign_name'],
-                        adset_name=row['adset_name'],
-                        platform="meta",
-                        metric="cpc",
-                        current_value=row['recent_cpc'],
-                        previous_value=row['prev_cpc'],
-                        change_percent=cpc_change,
-                        severity=severity,
-                        message=f"CPC increased: ${row['recent_cpc']:.2f} vs ${row['prev_cpc']:.2f}"
-                    ))
-            
-            # Check CPM (higher is bad)
-            if pd.notna(row['recent_cpm']) and pd.notna(row['prev_cpm']) and row['prev_cpm'] > 0:
-                cpm_change = ((row['recent_cpm'] - row['prev_cpm']) / row['prev_cpm']) * 100
-                if cpm_change >= 40:  # CPM spiked by 40%+
-                    severity = "red" if cpm_change >= 100 else "orange" if cpm_change >= 60 else "yellow"
-                    alerts.append(AnomalyAlert(
-                        campaign_name=row['campaign_name'],
-                        adset_name=row['adset_name'],
-                        platform="meta",
-                        metric="cpm",
-                        current_value=row['recent_cpm'],
-                        previous_value=row['prev_cpm'],
-                        change_percent=cpm_change,
-                        severity=severity,
-                        message=f"CPM spiked: ${row['recent_cpm']:.2f} vs ${row['prev_cpm']:.2f}"
-                    ))
-            
-            # Check Cost per Lead (higher is bad)
-            if pd.notna(row['recent_cost_per_lead']) and pd.notna(row['prev_cost_per_lead']) and row['prev_cost_per_lead'] > 0:
-                cpl_change = ((row['recent_cost_per_lead'] - row['prev_cost_per_lead']) / row['prev_cost_per_lead']) * 100
-                if cpl_change >= 50:  # Cost per lead increased by 50%+
-                    severity = "red" if cpl_change >= 100 else "orange" if cpl_change >= 75 else "yellow"
-                    alerts.append(AnomalyAlert(
-                        campaign_name=row['campaign_name'],
-                        adset_name=row['adset_name'],
-                        platform="meta",
-                        metric="cost_per_lead",
-                        current_value=row['recent_cost_per_lead'],
-                        previous_value=row['prev_cost_per_lead'],
-                        change_percent=cpl_change,
-                        severity=severity,
-                        message=f"Cost per lead increased: ${row['recent_cost_per_lead']:.2f} vs ${row['prev_cost_per_lead']:.2f}"
-                    ))
+            if not has_major_cac_issue:
+                # Check CTR (lower is bad)
+                if pd.notna(row['recent_ctr']) and pd.notna(row['prev_ctr']) and row['prev_ctr'] > 0:
+                    ctr_change = ((row['recent_ctr'] - row['prev_ctr']) / row['prev_ctr']) * 100
+                    if ctr_change <= -30:  # CTR dropped by 30%+
+                        severity = "orange" if ctr_change <= -50 else "yellow"
+                        alerts.append(AnomalyAlert(
+                            campaign_name=row['campaign_name'],
+                            adset_name=row['adset_name'],
+                            platform="meta",
+                            metric="ctr",
+                            current_value=row['recent_ctr'],
+                            previous_value=row['prev_ctr'],
+                            change_percent=ctr_change,
+                            severity=severity,
+                            message=f"CTR dropped: {row['recent_ctr']:.2f}% vs {row['prev_ctr']:.2f}%"
+                        ))
+                
+                # Check CPC (higher is bad)
+                if pd.notna(row['recent_cpc']) and pd.notna(row['prev_cpc']) and row['prev_cpc'] > 0:
+                    cpc_change = ((row['recent_cpc'] - row['prev_cpc']) / row['prev_cpc']) * 100
+                    if cpc_change >= 30:  # CPC increased by 30%+
+                        severity = "orange" if cpc_change >= 60 else "yellow"
+                        alerts.append(AnomalyAlert(
+                            campaign_name=row['campaign_name'],
+                            adset_name=row['adset_name'],
+                            platform="meta",
+                            metric="cpc",
+                            current_value=row['recent_cpc'],
+                            previous_value=row['prev_cpc'],
+                            change_percent=cpc_change,
+                            severity=severity,
+                            message=f"CPC increased: ${row['recent_cpc']:.2f} vs ${row['prev_cpc']:.2f}"
+                        ))
+                
+                # Check CPM (higher is bad)
+                if pd.notna(row['recent_cpm']) and pd.notna(row['prev_cpm']) and row['prev_cpm'] > 0:
+                    cpm_change = ((row['recent_cpm'] - row['prev_cpm']) / row['prev_cpm']) * 100
+                    if cpm_change >= 40:  # CPM spiked by 40%+
+                        severity = "orange" if cpm_change >= 80 else "yellow"
+                        alerts.append(AnomalyAlert(
+                            campaign_name=row['campaign_name'],
+                            adset_name=row['adset_name'],
+                            platform="meta",
+                            metric="cpm",
+                            current_value=row['recent_cpm'],
+                            previous_value=row['prev_cpm'],
+                            change_percent=cpm_change,
+                            severity=severity,
+                            message=f"CPM increased: ${row['recent_cpm']:.2f} vs ${row['prev_cpm']:.2f}"
+                        ))
+                
+                # Check Cost per Lead (higher is bad)
+                if pd.notna(row['recent_cost_per_lead']) and pd.notna(row['prev_cost_per_lead']) and row['prev_cost_per_lead'] > 0:
+                    cpl_change = ((row['recent_cost_per_lead'] - row['prev_cost_per_lead']) / row['prev_cost_per_lead']) * 100
+                    if cpl_change >= 40:  # Cost per lead increased by 40%+
+                        severity = "orange" if cpl_change >= 70 else "yellow"
+                        alerts.append(AnomalyAlert(
+                            campaign_name=row['campaign_name'],
+                            adset_name=row['adset_name'],
+                            platform="meta",
+                            metric="cost_per_lead",
+                            current_value=row['recent_cost_per_lead'],
+                            previous_value=row['prev_cost_per_lead'],
+                            change_percent=cpl_change,
+                            severity=severity,
+                            message=f"Cost per lead increased: ${row['recent_cost_per_lead']:.2f} vs ${row['prev_cost_per_lead']:.2f}"
+                        ))
         
         return alerts
         
