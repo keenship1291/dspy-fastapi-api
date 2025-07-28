@@ -54,6 +54,7 @@ class FunnelAnalysisRequest(BaseModel):
 class TrendAnalysisResponse(BaseModel):
     status: str
     trend_summary: str
+    colorCode: Optional[str] = None
     formatted_metrics: Optional[Dict[str, Any]] = None
     trend_insights: Optional[Dict[str, Any]] = None
     week_over_week_changes: Optional[Dict[str, Any]] = None
@@ -477,6 +478,9 @@ async def analyze_funnel_trends(request: FunnelAnalysisRequest):
                 error=week_changes['error']
             )
         
+        # Determine color code based on performance (after week_changes is calculated)
+        color_code = determine_color_code(week_changes)
+        
         # Format metrics in structured format
         formatted_metrics = format_metrics_structured(week_changes)
         
@@ -489,6 +493,7 @@ async def analyze_funnel_trends(request: FunnelAnalysisRequest):
         return TrendAnalysisResponse(
             status="success",
             trend_summary=trend_summary,
+            colorCode=color_code,
             formatted_metrics=formatted_metrics,
             trend_insights=trend_insights,
             week_over_week_changes=week_changes
@@ -576,6 +581,15 @@ async def get_quick_funnel_trends(request: FunnelAnalysisRequest):
             "status": "error",
             "error": str(e)
         }
+
+@marketing_router.post("/test-simple")
+async def test_simple_endpoint(request: dict):
+    """Simple test endpoint to verify routing works"""
+    return {
+        "status": "success",
+        "message": "Marketing router is working",
+        "received_data": str(request)[:200] + "..." if len(str(request)) > 200 else str(request)
+    }
 
 @marketing_router.get("/test-funnel")
 async def test_funnel_analysis():
