@@ -1,4 +1,4 @@
-# marketing_analytics.py - CLAUDE TREND ANALYSIS ACROSS TIMEFRAMES
+# marketing_analytics.py - CLAUDE AUTO-ANALYSIS OF AVAILABLE DATA
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Dict, Optional, Any
@@ -39,15 +39,12 @@ else:
     bigquery_client = None
 
 # Pydantic Models
-class TrendAnalysisRequest(BaseModel):
-    date_range: Dict[str, str]
-    analysis_depth: str = "comprehensive"
-
 class TrendAnalysisResponse(BaseModel):
     status: str
     trend_summary: str
     trend_insights: Optional[Dict[str, Any]] = None
     significant_changes: Optional[List[Dict[str, Any]]] = None
+    data_coverage: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
 
 # Create router
@@ -56,239 +53,318 @@ marketing_router = APIRouter(prefix="/marketing", tags=["marketing"])
 @marketing_router.get("/")
 async def marketing_root():
     return {
-        "message": "Marketing Analytics API - Claude Trend Analysis",
-        "version": "10.0.0",
+        "message": "Marketing Analytics API - Auto-Analysis of Available Data",
+        "version": "11.0.0",
         "status": "running",
         "bigquery_available": BIGQUERY_AVAILABLE,
-        "data_availability": {
-            "metrics": "Last 14 days",
-            "google_ads_history": "Last 30 days"
-        }
+        "note": "Analyzes all available partitioned data automatically"
     }
 
-def get_google_ads_history_query(days_back=30):
-    """Get Google Ads historical data for trend analysis"""
-    end_date = datetime.now().date() - timedelta(days=1)
-    start_date = end_date - timedelta(days=days_back)
+def get_all_available_data():
+    """Pull all available data from BigQuery partitions"""
     
-    return f"""
+    # Google Ads data query - pulls all available data
+    google_ads_query = """
     SELECT 
       date,
-      SUM(spend_usd) as daily_google_spend,
-      SUM(impressions) as daily_google_impressions,
-      SUM(clicks) as daily_google_clicks,
-      SUM(conversions) as daily_google_conversions,
-      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) * 100 as daily_google_ctr,
-      SAFE_DIVIDE(SUM(spend_usd), SUM(clicks)) as daily_google_cpc,
-      COUNT(DISTINCT campaign_name) as active_campaigns
+      campaign_name,
+      SUM(spend_usd) as daily_spend,
+      SUM(impressions) as daily_impressions,
+      SUM(clicks) as daily_clicks,
+      SUM(conversions) as daily_conversions,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) * 100 as daily_ctr,
+      SAFE_DIVIDE(SUM(spend_usd), SUM(clicks)) as daily_cpc
     FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data`
-    WHERE date BETWEEN "{start_date}" AND "{end_date}"
-    GROUP BY date
-    ORDER BY date DESC
+    GROUP BY date, campaign_name
+    ORDER BY date DESC, daily_spend DESC
     """
-
-def get_hex_funnel_trends_query(days_back=14):
-    """Get hex funnel trends for available 14-day period"""
-    end_date = datetime.now().date() - timedelta(days=1)
-    start_date = end_date - timedelta(days=days_back)
     
-    return f"""
+    # Meta data query - pulls all available data
+    meta_data_query = """
+    SELECT 
+      m.date,
+      mm.utm_campaign,
+      SUM(SAFE_CAST(m.spend AS FLOAT64)) as daily_spend,
+      SUM(SAFE_CAST(m.impressions AS INT64)) as daily_impressions,
+      SUM(SAFE_CAST(m.clicks AS INT64)) as daily_clicks,
+      SUM(SAFE_CAST(m.leads AS INT64)) as daily_leads,
+      SAFE_DIVIDE(SUM(SAFE_CAST(m.clicks AS INT64)), SUM(SAFE_CAST(m.impressions AS INT64))) * 100 as daily_ctr,
+      SAFE_DIVIDE(SUM(SAFE_CAST(m.spend AS FLOAT64)), SUM(SAFE_CAST(m.clicks AS INT64))) as daily_cpc
+    FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm
+    JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data` m 
+      ON mm.adset_name_mapped = m.adset_name
+    GROUP BY m.date, mm.utm_campaign
+    ORDER BY m.date DESC, daily_spend DESC
+    """
+    
+    # Hex funnel data query - pulls all available data
+    hex_funnel_query = """
+    SELECT 
+      date,
+      utm_campaign,
+      utm_medium,
+      SUM(leads) as daily_leads,
+      SUM(start_flows) as daily_start_flows,
+      SUM(estimates) as daily_estimates,
+      SUM(closings) as daily_closings,
+      SUM(funded) as daily_funded,
+      SUM(rpts) as daily_rpts,
+      
+      -- Conversion rates
+      SAFE_DIVIDE(SUM(start_flows), SUM(leads)) * 100 as lead_to_start_rate,
+      SAFE_DIVIDE(SUM(estimates), SUM(start_flows)) * 100 as start_to_estimate_rate,
+      SAFE_DIVIDE(SUM(closings), SUM(estimates)) * 100 as estimate_to_closing_rate,
+      SAFE_DIVIDE(SUM(funded), SUM(closings)) * 100 as closing_to_funded_rate,
+      SAFE_DIVIDE(SUM(funded), SUM(leads)) * 100 as overall_funded_rate
+      
+    FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data`
+    GROUP BY date, utm_campaign, utm_medium
+    ORDER BY date DESC, daily_leads DESC
+    """
+    
+    # Daily aggregated view - combines all data
+    daily_summary_query = """
     WITH meta_daily AS (
       SELECT 
         m.date,
-        SUM(SAFE_CAST(m.spend AS FLOAT64)) as daily_meta_spend,
-        SUM(SAFE_CAST(m.impressions AS INT64)) as daily_meta_impressions,
-        SUM(SAFE_CAST(m.clicks AS INT64)) as daily_meta_clicks
+        SUM(SAFE_CAST(m.spend AS FLOAT64)) as meta_spend,
+        SUM(SAFE_CAST(m.impressions AS INT64)) as meta_impressions,
+        SUM(SAFE_CAST(m.clicks AS INT64)) as meta_clicks
       FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data_mapping` mm
       JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data` m 
         ON mm.adset_name_mapped = m.adset_name
       GROUP BY m.date
+    ),
+    google_daily AS (
+      SELECT 
+        date,
+        SUM(spend_usd) as google_spend,
+        SUM(impressions) as google_impressions,
+        SUM(clicks) as google_clicks,
+        SUM(conversions) as google_conversions
+      FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data`
+      GROUP BY date
+    ),
+    hex_daily AS (
+      SELECT 
+        date,
+        SUM(leads) as hex_leads,
+        SUM(start_flows) as hex_start_flows,
+        SUM(estimates) as hex_estimates,
+        SUM(closings) as hex_closings,
+        SUM(funded) as hex_funded,
+        SUM(rpts) as hex_rpts
+      FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data`
+      GROUP BY date
     )
     
     SELECT 
-      h.date,
+      COALESCE(m.date, g.date, h.date) as date,
       
-      -- Spend Levels
-      SUM(COALESCE(m.daily_meta_spend, 0)) as daily_meta_spend,
-      SUM(COALESCE(g.spend_usd, 0)) as daily_google_spend,
-      SUM(COALESCE(m.daily_meta_spend, 0)) + SUM(COALESCE(g.spend_usd, 0)) as daily_total_spend,
+      -- Spend metrics
+      COALESCE(m.meta_spend, 0) as meta_spend,
+      COALESCE(g.google_spend, 0) as google_spend,
+      COALESCE(m.meta_spend, 0) + COALESCE(g.google_spend, 0) as total_spend,
       
-      -- High Funnel Metrics (Platform Data)
-      SUM(COALESCE(m.daily_meta_impressions, 0)) as daily_meta_impressions,
-      SUM(COALESCE(g.impressions, 0)) as daily_google_impressions,
-      SUM(COALESCE(m.daily_meta_clicks, 0)) as daily_meta_clicks,
-      SUM(COALESCE(g.clicks, 0)) as daily_google_clicks,
-      SUM(COALESCE(m.daily_meta_impressions, 0)) + SUM(COALESCE(g.impressions, 0)) as daily_total_impressions,
-      SUM(COALESCE(m.daily_meta_clicks, 0)) + SUM(COALESCE(g.clicks, 0)) as daily_total_clicks,
+      -- High funnel metrics
+      COALESCE(m.meta_impressions, 0) + COALESCE(g.google_impressions, 0) as total_impressions,
+      COALESCE(m.meta_clicks, 0) + COALESCE(g.google_clicks, 0) as total_clicks,
+      SAFE_DIVIDE(COALESCE(m.meta_clicks, 0) + COALESCE(g.google_clicks, 0), 
+                  COALESCE(m.meta_impressions, 0) + COALESCE(g.google_impressions, 0)) * 100 as overall_ctr,
       
-      -- Lower Funnel Metrics (Hex Data)
-      SUM(h.leads) as daily_leads,
-      SUM(h.start_flows) as daily_start_flows,
-      SUM(h.estimates) as daily_estimates,
-      SUM(h.closings) as daily_closings,
-      SUM(h.funded) as daily_funded,
-      SUM(h.rpts) as daily_rpts,
+      -- Lower funnel metrics
+      COALESCE(h.hex_leads, 0) as leads,
+      COALESCE(h.hex_start_flows, 0) as start_flows,
+      COALESCE(h.hex_estimates, 0) as estimates,
+      COALESCE(h.hex_closings, 0) as closings,
+      COALESCE(h.hex_funded, 0) as funded,
+      COALESCE(h.hex_rpts, 0) as rpts,
       
-      -- Calculated Rates
-      SAFE_DIVIDE(SUM(COALESCE(m.daily_meta_clicks, 0)) + SUM(COALESCE(g.clicks, 0)), 
-                  SUM(COALESCE(m.daily_meta_impressions, 0)) + SUM(COALESCE(g.impressions, 0))) * 100 as daily_overall_ctr,
-      SAFE_DIVIDE(SUM(h.start_flows), SUM(h.leads)) * 100 as daily_lead_to_start_rate,
-      SAFE_DIVIDE(SUM(h.estimates), SUM(h.start_flows)) * 100 as daily_start_to_estimate_rate,
-      SAFE_DIVIDE(SUM(h.closings), SUM(h.estimates)) * 100 as daily_estimate_to_closing_rate,
-      SAFE_DIVIDE(SUM(h.funded), SUM(h.closings)) * 100 as daily_closing_to_funded_rate,
-      SAFE_DIVIDE(SUM(h.funded), SUM(h.leads)) * 100 as daily_overall_funded_rate,
+      -- Conversion rates
+      SAFE_DIVIDE(COALESCE(h.hex_start_flows, 0), COALESCE(h.hex_leads, 0)) * 100 as lead_to_start_rate,
+      SAFE_DIVIDE(COALESCE(h.hex_estimates, 0), COALESCE(h.hex_start_flows, 0)) * 100 as start_to_estimate_rate,
+      SAFE_DIVIDE(COALESCE(h.hex_closings, 0), COALESCE(h.hex_estimates, 0)) * 100 as estimate_to_closing_rate,
+      SAFE_DIVIDE(COALESCE(h.hex_funded, 0), COALESCE(h.hex_closings, 0)) * 100 as closing_to_funded_rate,
+      SAFE_DIVIDE(COALESCE(h.hex_funded, 0), COALESCE(h.hex_leads, 0)) * 100 as overall_funded_rate,
       
-      -- Cost Metrics
-      SAFE_DIVIDE(SUM(COALESCE(m.daily_meta_spend, 0)) + SUM(COALESCE(g.spend_usd, 0)), SUM(h.leads)) as daily_cost_per_lead,
-      SAFE_DIVIDE(SUM(COALESCE(m.daily_meta_spend, 0)) + SUM(COALESCE(g.spend_usd, 0)), SUM(h.funded)) as daily_cost_per_funded
+      -- Cost metrics
+      SAFE_DIVIDE(COALESCE(m.meta_spend, 0) + COALESCE(g.google_spend, 0), COALESCE(h.hex_leads, 0)) as cost_per_lead,
+      SAFE_DIVIDE(COALESCE(m.meta_spend, 0) + COALESCE(g.google_spend, 0), COALESCE(h.hex_funded, 0)) as cost_per_funded
       
-    FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data` h
-    LEFT JOIN meta_daily m ON h.date = m.date
-    LEFT JOIN `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data` g ON h.date = g.date
-    WHERE h.date BETWEEN "{start_date}" AND "{end_date}"
-    GROUP BY h.date
-    ORDER BY h.date DESC
+    FROM meta_daily m
+    FULL OUTER JOIN google_daily g ON m.date = g.date
+    FULL OUTER JOIN hex_daily h ON COALESCE(m.date, g.date) = h.date
+    ORDER BY date DESC
     """
-
-def execute_trend_analysis_queries():
-    """Execute queries to get trend data across available timeframes"""
     
     try:
         if not bigquery_client:
             raise Exception("BigQuery client not available")
         
-        # Get Google Ads history (30 days)
-        google_history_query = get_google_ads_history_query(30)
-        google_history_df = bigquery_client.query(google_history_query).to_dataframe()
+        # Execute all queries
+        google_ads_df = bigquery_client.query(google_ads_query).to_dataframe()
+        meta_data_df = bigquery_client.query(meta_data_query).to_dataframe()
+        hex_funnel_df = bigquery_client.query(hex_funnel_query).to_dataframe()
+        daily_summary_df = bigquery_client.query(daily_summary_query).to_dataframe()
         
-        # Get comprehensive funnel trends (14 days)
-        funnel_trends_query = get_hex_funnel_trends_query(14)
-        funnel_trends_df = bigquery_client.query(funnel_trends_query).to_dataframe()
-        
-        # Convert to lists of dicts for easier processing
-        google_history = []
-        if not google_history_df.empty:
-            for _, row in google_history_df.iterrows():
-                day_data = {}
-                for col in google_history_df.columns:
+        # Convert to lists of dicts
+        def df_to_dict_list(df):
+            if df.empty:
+                return []
+            result = []
+            for _, row in df.iterrows():
+                row_data = {}
+                for col in df.columns:
                     value = row[col]
                     if pd.isna(value):
-                        day_data[col] = 0
+                        row_data[col] = 0 if col != 'date' else None
                     elif hasattr(value, 'item'):
-                        day_data[col] = value.item()
+                        row_data[col] = value.item()
                     else:
-                        day_data[col] = str(value) if col == 'date' else value
-                google_history.append(day_data)
-        
-        funnel_trends = []
-        if not funnel_trends_df.empty:
-            for _, row in funnel_trends_df.iterrows():
-                day_data = {}
-                for col in funnel_trends_df.columns:
-                    value = row[col]
-                    if pd.isna(value):
-                        day_data[col] = 0
-                    elif hasattr(value, 'item'):
-                        day_data[col] = value.item()
-                    else:
-                        day_data[col] = str(value) if col == 'date' else value
-                funnel_trends.append(day_data)
+                        row_data[col] = str(value) if col == 'date' else value
+                result.append(row_data)
+            return result
         
         return {
-            "google_ads_history": google_history,
-            "funnel_trends": funnel_trends
+            "google_ads_data": df_to_dict_list(google_ads_df),
+            "meta_data": df_to_dict_list(meta_data_df),
+            "hex_funnel_data": df_to_dict_list(hex_funnel_df),
+            "daily_summary": df_to_dict_list(daily_summary_df),
+            "data_coverage": {
+                "google_ads_days": len(google_ads_df['date'].unique()) if not google_ads_df.empty else 0,
+                "meta_data_days": len(meta_data_df['date'].unique()) if not meta_data_df.empty else 0,
+                "hex_funnel_days": len(hex_funnel_df['date'].unique()) if not hex_funnel_df.empty else 0,
+                "daily_summary_days": len(daily_summary_df) if not daily_summary_df.empty else 0,
+                "date_range": {
+                    "earliest": str(min([
+                        google_ads_df['date'].min() if not google_ads_df.empty else date.max,
+                        meta_data_df['date'].min() if not meta_data_df.empty else date.max,
+                        hex_funnel_df['date'].min() if not hex_funnel_df.empty else date.max
+                    ])),
+                    "latest": str(max([
+                        google_ads_df['date'].max() if not google_ads_df.empty else date.min,
+                        meta_data_df['date'].max() if not meta_data_df.empty else date.min,
+                        hex_funnel_df['date'].max() if not hex_funnel_df.empty else date.min
+                    ]))
+                }
+            }
         }
         
     except Exception as e:
-        print(f"Error executing trend analysis queries: {e}")
+        print(f"Error pulling available data: {e}")
         return {
-            "google_ads_history": [],
-            "funnel_trends": []
+            "google_ads_data": [],
+            "meta_data": [],
+            "hex_funnel_data": [],
+            "daily_summary": [],
+            "data_coverage": {"error": str(e)}
         }
 
-def generate_claude_trend_analysis(trend_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Claude analyzes trends across the available data timeframes"""
+def generate_claude_auto_analysis(all_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Claude analyzes whatever data is available automatically"""
     
-    google_history = trend_data.get("google_ads_history", [])
-    funnel_trends = trend_data.get("funnel_trends", [])
+    daily_summary = all_data.get("daily_summary", [])
+    google_ads = all_data.get("google_ads_data", [])
+    meta_data = all_data.get("meta_data", [])
+    hex_funnel = all_data.get("hex_funnel_data", [])
+    data_coverage = all_data.get("data_coverage", {})
     
-    if not google_history and not funnel_trends:
+    if not daily_summary and not google_ads and not meta_data and not hex_funnel:
         return {
-            "trend_summary": "No trend data available for analysis",
-            "error": "No data returned from queries"
+            "trend_summary": "No marketing data available for analysis",
+            "error": "All data sources returned empty"
         }
     
-    # Build trend analysis prompt for Claude
+    # Build comprehensive analysis prompt
     analysis_prompt = f"""
-    Analyze marketing trends for LeaseEnd across available data timeframes:
+    Auto-analyze all available LeaseEnd marketing data and identify key trends, patterns, and insights:
     
-    GOOGLE ADS HISTORY (Last 30 days available):
-    {json.dumps(google_history[:10], indent=2) if google_history else "No Google Ads history data"}
+    DATA COVERAGE:
+    {json.dumps(data_coverage, indent=2)}
     
-    COMPLETE FUNNEL TRENDS (Last 14 days available):
-    {json.dumps(funnel_trends[:7], indent=2) if funnel_trends else "No funnel trend data"}
+    DAILY PERFORMANCE SUMMARY:
+    {json.dumps(daily_summary[:10], indent=2) if daily_summary else "No daily summary data"}
     
-    Your task: Identify significant TRENDS and CHANGES across these timeframes:
+    GOOGLE ADS DETAIL (Sample):
+    {json.dumps(google_ads[:5], indent=2) if google_ads else "No Google Ads data"}
     
-    1. SPEND LEVEL TRENDS
-       - Google Ads spend patterns over 30 days
-       - Meta + Google combined spend trends over 14 days
-       - Any notable spending shifts or patterns
+    META ADVERTISING DETAIL (Sample):
+    {json.dumps(meta_data[:5], indent=2) if meta_data else "No Meta data"}
     
-    2. HIGH FUNNEL METRIC TRENDS
-       - Impressions and clicks trends (both platforms)
-       - CTR changes over time
-       - CPC trends and efficiency shifts
+    HEX FUNNEL DETAIL (Sample):
+    {json.dumps(hex_funnel[:5], indent=2) if hex_funnel else "No funnel data"}
     
-    3. LOWER FUNNEL METRIC TRENDS  
-       - Lead generation patterns
-       - Start flows, estimates, closings progression
-       - Funded and RPT trends
-       - Conversion rate changes through funnel stages
+    Your task: Analyze ALL available data to identify:
     
-    4. SIGNIFICANT CHANGES
-       - Day-over-day changes > 20%
-       - Week-over-week patterns
+    1. SPEND PATTERNS & TRENDS
+       - Overall spending trends across time
+       - Channel allocation patterns (Meta vs Google)
+       - Budget efficiency and waste identification
+    
+    2. HIGH FUNNEL PERFORMANCE
+       - Impression and click volume trends
+       - CTR performance across channels and time
+       - CPC trends and cost efficiency changes
+    
+    3. CONVERSION FUNNEL ANALYSIS
+       - Lead generation patterns and quality
+       - Funnel stage conversion rates and trends
+       - Drop-off points and optimization opportunities
+    
+    4. CROSS-CHANNEL INSIGHTS
+       - Channel performance comparison
+       - Attribution and measurement considerations
+       - Synergy effects between platforms
+    
+    5. SIGNIFICANT ANOMALIES
+       - Unusual spikes, drops, or patterns
+       - Outlier performance days
        - Trend reversals or inflection points
-       - Outlier days or unusual patterns
     
-    Focus on TREND ANALYSIS - what's changing, improving, declining, or showing patterns.
+    Focus on actionable insights and trend identification from the available data.
     
     Respond in JSON format:
     {{
-        "trend_summary": "2-3 sentence overview of key trends observed",
-        "spend_trends": {{
-            "google_ads_30day_pattern": "increasing|decreasing|stable|volatile",
-            "combined_14day_pattern": "increasing|decreasing|stable|volatile", 
-            "notable_spend_changes": ["specific changes observed"]
+        "trend_summary": "Executive summary of key findings across all available data",
+        "spend_analysis": {{
+            "overall_trend": "increasing|decreasing|stable|volatile",
+            "channel_allocation": "meta_dominant|google_dominant|balanced|shifting",
+            "efficiency_trend": "improving|declining|stable",
+            "spend_insights": ["key spend patterns observed"]
         }},
-        "high_funnel_trends": {{
-            "impression_trend": "increasing|decreasing|stable|volatile",
-            "click_trend": "increasing|decreasing|stable|volatile",
-            "ctr_trend": "improving|declining|stable|volatile",
-            "efficiency_changes": ["specific CTR/CPC changes"]
+        "high_funnel_performance": {{
+            "impression_trends": "summary of impression patterns",
+            "click_trends": "summary of click patterns", 
+            "ctr_analysis": "CTR performance insights",
+            "cpc_efficiency": "Cost efficiency observations"
         }},
-        "lower_funnel_trends": {{
-            "lead_generation_trend": "increasing|decreasing|stable|volatile",
-            "conversion_rate_trends": {{
-                "lead_to_start": "improving|declining|stable",
-                "start_to_estimate": "improving|declining|stable", 
-                "estimate_to_closing": "improving|declining|stable",
-                "closing_to_funded": "improving|declining|stable"
+        "conversion_funnel": {{
+            "lead_generation": "lead volume and quality trends",
+            "funnel_health": {{
+                "lead_to_start": "performance assessment",
+                "start_to_estimate": "performance assessment",
+                "estimate_to_closing": "performance assessment", 
+                "closing_to_funded": "performance assessment"
             }},
-            "funnel_health_changes": ["specific conversion changes"]
+            "bottlenecks": ["identified conversion bottlenecks"],
+            "opportunities": ["funnel optimization opportunities"]
         }},
-        "significant_changes": [
+        "cross_channel_insights": {{
+            "performance_leader": "meta|google|balanced",
+            "attribution_notes": "measurement and attribution observations",
+            "synergy_effects": "cross-channel interaction insights",
+            "reallocation_opportunities": ["budget optimization suggestions"]
+        }},
+        "significant_findings": [
             {{
-                "metric": "metric_name",
-                "change_type": "spike|drop|trend_reversal|outlier",
-                "magnitude": "percentage_or_description",
-                "timeframe": "when_it_occurred",
-                "impact": "business_impact"
+                "finding": "specific_insight_or_anomaly",
+                "impact": "business_impact_assessment",
+                "action_needed": "recommended_response",
+                "priority": "high|medium|low"
             }}
         ],
-        "trend_alerts": ["concerning_patterns_or_opportunities"],
-        "data_quality_notes": "any_data_gaps_or_limitations"
+        "data_quality_assessment": "assessment of data completeness and reliability",
+        "recommended_actions": ["prioritized list of actions based on analysis"]
     }}
     """
     
@@ -309,181 +385,142 @@ def generate_claude_trend_analysis(trend_data: Dict[str, Any]) -> Dict[str, Any]
             if json_start != -1 and json_end != 0:
                 response_clean = response_clean[json_start:json_end]
         
-        trend_analysis = json.loads(response_clean)
+        auto_analysis = json.loads(response_clean)
         
-        # Add metadata
-        trend_analysis['analysis_metadata'] = {
-            'google_ads_days_analyzed': len(google_history),
-            'funnel_days_analyzed': len(funnel_trends),
-            'analysis_timestamp': datetime.now().isoformat()
+        # Add analysis metadata
+        auto_analysis['analysis_metadata'] = {
+            'data_sources_analyzed': len([k for k, v in all_data.items() if v and k != 'data_coverage']),
+            'total_data_points': sum(len(v) if isinstance(v, list) else 0 for v in all_data.values()),
+            'analysis_timestamp': datetime.now().isoformat(),
+            'data_coverage': data_coverage
         }
         
-        return trend_analysis
+        return auto_analysis
         
     except json.JSONDecodeError as e:
         return {
-            "trend_summary": "Trend analysis completed with parsing limitations - key patterns identified",
-            "spend_trends": {
-                "google_ads_30day_pattern": "data_processing_error",
-                "notable_spend_changes": ["Analysis parsing failed - manual review needed"]
+            "trend_summary": f"Auto-analysis completed with parsing limitations. Data coverage: {data_coverage.get('daily_summary_days', 0)} days analyzed.",
+            "spend_analysis": {
+                "overall_trend": "analysis_error",
+                "spend_insights": ["JSON parsing failed - manual review needed"]
             },
-            "high_funnel_trends": {
-                "impression_trend": "unknown",
-                "click_trend": "unknown", 
-                "ctr_trend": "unknown",
-                "efficiency_changes": ["Unable to analyze due to parsing error"]
-            },
-            "lower_funnel_trends": {
-                "lead_generation_trend": "unknown",
-                "conversion_rate_trends": {
-                    "lead_to_start": "unknown",
-                    "start_to_estimate": "unknown",
-                    "estimate_to_closing": "unknown", 
-                    "closing_to_funded": "unknown"
-                },
-                "funnel_health_changes": ["Parsing error prevented analysis"]
-            },
-            "significant_changes": [
+            "significant_findings": [
                 {
-                    "metric": "analysis_system",
-                    "change_type": "parsing_error",
-                    "magnitude": "100%",
-                    "timeframe": "current_analysis",
-                    "impact": "Manual review required"
+                    "finding": "Analysis parsing error occurred",
+                    "impact": "Strategic insights not fully accessible", 
+                    "action_needed": "Review analysis system and retry",
+                    "priority": "high"
                 }
             ],
-            "trend_alerts": [f"Analysis parsing error: {str(e)}"],
-            "data_quality_notes": "JSON parsing failed - review analysis system",
+            "data_quality_assessment": f"Data available but parsing failed: {str(e)}",
             "error": str(e)
         }
     except Exception as e:
         return {
-            "trend_summary": "Trend analysis failed due to technical error",
+            "trend_summary": "Auto-analysis failed due to technical error",
             "error": str(e)
         }
 
-@marketing_router.post("/trend-analysis", response_model=TrendAnalysisResponse)
-async def analyze_marketing_trends(request: TrendAnalysisRequest):
-    """Execute trend analysis across Google Ads history and funnel metrics"""
+@marketing_router.get("/auto-analysis", response_model=TrendAnalysisResponse)
+async def auto_analyze_available_data():
+    """Automatically analyze all available marketing data"""
     
     try:
         if not BIGQUERY_AVAILABLE or not bigquery_client:
             return TrendAnalysisResponse(
                 status="error",
-                trend_summary="BigQuery not available for trend analysis",
+                trend_summary="BigQuery not available for auto-analysis",
                 error="BigQuery client not initialized"
             )
         
-        # Execute trend analysis queries
-        trend_data = execute_trend_analysis_queries()
+        # Pull all available data
+        all_data = get_all_available_data()
         
-        # Generate Claude's trend analysis
-        trend_insights = generate_claude_trend_analysis(trend_data)
+        # Generate Claude's auto-analysis
+        trend_insights = generate_claude_auto_analysis(all_data)
         
         # Extract components for response
-        trend_summary = trend_insights.get('trend_summary', 'Trend analysis completed')
-        significant_changes = trend_insights.get('significant_changes', [])
+        trend_summary = trend_insights.get('trend_summary', 'Auto-analysis completed')
+        significant_changes = trend_insights.get('significant_findings', [])
+        data_coverage = all_data.get('data_coverage', {})
         
         return TrendAnalysisResponse(
             status="success",
             trend_summary=trend_summary,
             trend_insights=trend_insights,
-            significant_changes=significant_changes
+            significant_changes=significant_changes,
+            data_coverage=data_coverage
         )
         
     except Exception as e:
         return TrendAnalysisResponse(
             status="error",
-            trend_summary="Trend analysis failed - see error details",
+            trend_summary="Auto-analysis failed - see error details",
             error=str(e)
         )
 
-@marketing_router.post("/quick-trends")
-async def get_quick_trend_insights(request: TrendAnalysisRequest):
-    """Get quick trend insights focusing on major changes"""
+@marketing_router.get("/data-status")
+async def check_data_availability():
+    """Check what data is available for analysis"""
     
     try:
-        # Get recent trend data
-        trend_data = execute_trend_analysis_queries()
-        
-        funnel_trends = trend_data.get("funnel_trends", [])
-        
-        if not funnel_trends:
+        if not BIGQUERY_AVAILABLE or not bigquery_client:
             return {
                 "status": "error",
-                "trends": ["No recent data available for trend analysis"],
-                "top_change": "Data unavailable",
-                "alert_level": "high"
+                "message": "BigQuery not available",
+                "data_available": False
             }
         
-        # Quick analysis of recent vs previous periods
-        recent_days = funnel_trends[:3]  # Last 3 days
-        previous_days = funnel_trends[3:6] if len(funnel_trends) >= 6 else []
+        # Quick data availability check
+        availability_check = """
+        SELECT 
+          'google_ads' as source,
+          COUNT(*) as record_count,
+          MIN(date) as earliest_date,
+          MAX(date) as latest_date
+        FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.google_data`
         
-        def avg_metric(days, metric):
-            if not days:
-                return 0
-            return sum(day.get(metric, 0) for day in days) / len(days)
+        UNION ALL
         
-        recent_leads = avg_metric(recent_days, 'daily_leads')
-        previous_leads = avg_metric(previous_days, 'daily_leads')
-        recent_spend = avg_metric(recent_days, 'daily_total_spend')
-        previous_spend = avg_metric(previous_days, 'daily_total_spend')
+        SELECT 
+          'meta_data' as source,
+          COUNT(*) as record_count,
+          MIN(date) as earliest_date,
+          MAX(date) as latest_date
+        FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.meta_data`
         
-        # Quick Claude analysis
-        quick_prompt = f"""
-        Quick trend analysis for LeaseEnd:
+        UNION ALL
         
-        Recent 3 days avg: {recent_leads:.0f} leads, ${recent_spend:.0f} spend
-        Previous 3 days avg: {previous_leads:.0f} leads, ${previous_spend:.0f} spend
-        
-        Identify the biggest trend change and alert level.
-        
-        Respond in JSON: {{"trends": ["...", "...", "..."], "top_change": "...", "alert_level": "high|medium|low"}}
+        SELECT 
+          'hex_data' as source,
+          COUNT(*) as record_count,
+          MIN(date) as earliest_date,
+          MAX(date) as latest_date
+        FROM `gtm-p3gj3zzk-nthlo.last_14_days_analysis.hex_data`
         """
         
-        response = dspy.settings.lm.basic_request(quick_prompt)
-        response_clean = response.strip()
+        df = bigquery_client.query(availability_check).to_dataframe()
         
-        if not response_clean.startswith('{'):
-            json_start = response_clean.find('{')
-            json_end = response_clean.rfind('}') + 1
-            if json_start != -1 and json_end != 0:
-                response_clean = response_clean[json_start:json_end]
-        
-        quick_analysis = json.loads(response_clean)
+        availability = {}
+        for _, row in df.iterrows():
+            availability[row['source']] = {
+                'record_count': int(row['record_count']),
+                'earliest_date': str(row['earliest_date']),
+                'latest_date': str(row['latest_date'])
+            }
         
         return {
             "status": "success",
-            "trends": quick_analysis.get('trends', []),
-            "top_change": quick_analysis.get('top_change', 'No major changes detected'),
-            "alert_level": quick_analysis.get('alert_level', 'low'),
-            "timestamp": datetime.now().isoformat()
+            "message": "Data availability checked",
+            "data_available": True,
+            "sources": availability,
+            "ready_for_analysis": all(info['record_count'] > 0 for info in availability.values())
         }
         
     except Exception as e:
         return {
             "status": "error",
-            "trends": [f"Quick trend analysis failed: {str(e)}"],
-            "top_change": "Analysis error",
-            "alert_level": "high",
-            "timestamp": datetime.now().isoformat()
-        }
-
-@marketing_router.get("/test-trends")
-async def test_trend_analysis():
-    """Test endpoint for trend analysis"""
-    
-    test_request = TrendAnalysisRequest(
-        date_range={"since": "2025-01-14", "until": "2025-01-28"},
-        analysis_depth="comprehensive"
-    )
-    
-    try:
-        return await analyze_marketing_trends(test_request)
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Test failed: {str(e)}",
+            "message": f"Data availability check failed: {str(e)}",
+            "data_available": False,
             "error": str(e)
         }
