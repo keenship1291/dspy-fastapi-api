@@ -72,6 +72,30 @@ class CampaignAnomaly(BaseModel):
     performance_status: str
     campaign_changes: Optional[str] = None
 
+class AnomalyQueryData(BaseModel):
+    platform: str
+    campaign_name: str
+    adset_name: Optional[str] = None
+    utm_campaign: Optional[str] = None
+    recent_spend: float
+    baseline_spend: float
+    recent_cpc: Optional[float] = None
+    baseline_cpc: Optional[float] = None
+    recent_closings: Optional[int] = None
+    baseline_closings: Optional[int] = None
+    recent_cac: Optional[float] = None
+    baseline_cac: Optional[float] = None
+    cpc_change_pct: Optional[float] = None
+    cac_change_pct: Optional[float] = None
+    closings_change_pct: Optional[float] = None
+    has_anomaly: Optional[int] = None
+    performance_status: Optional[str] = None
+
+class AnomalyAnalysisRequest(BaseModel):
+    query_results: List[AnomalyQueryData]
+    analysis_date: Optional[str] = None
+    baseline_date: Optional[str] = None
+
 class AnomalyAnalysisResponse(BaseModel):
     status: str
     analysis_date: Optional[str] = None
@@ -95,7 +119,7 @@ marketing_router = APIRouter(prefix="/marketing", tags=["marketing"])
 async def marketing_root():
     return {
         "message": "Marketing Analytics API - Funnel Analysis + Anomaly Detection",
-        "version": "14.0.0",
+        "version": "15.0.0",
         "status": "running"
     }
 
@@ -604,6 +628,57 @@ def get_google_anomalies(recent_date: str, baseline_date: str) -> List[CampaignA
         print(f"Error getting google anomalies: {e}")
         return []
 
+def process_query_results_to_anomalies(query_results: List[AnomalyQueryData]) -> List[CampaignAnomaly]:
+    """Convert query results to CampaignAnomaly objects"""
+    anomalies = []
+    
+    for row in query_results:
+        # Only process if it has anomaly flag or problematic status
+        if (row.has_anomaly == 1 or 
+            row.performance_status in ['BROKEN', 'DECLINED', 'INEFFICIENT']):
+            
+            # Determine severity
+            severity = "high" if row.performance_status == 'BROKEN' else "medium"
+            
+            # Build issue list
+            issues = []
+            if row.cpc_change_pct and row.cpc_change_pct >= 30:
+                issues.append(f"CPC {'spiked' if row.cpc_change_pct >= 100 else 'increased'} {row.cpc_change_pct:.1f}%")
+            if row.cac_change_pct and row.cac_change_pct >= 25:
+                issues.append(f"CAC {'spiked' if row.cac_change_pct >= 50 else 'increased'} {row.cac_change_pct:.1f}%")
+            if row.closings_change_pct and row.closings_change_pct <= -25:
+                issues.append(f"Closings dropped {abs(row.closings_change_pct):.1f}%")
+            if row.recent_closings == 0 and row.baseline_closings and row.baseline_closings > 0:
+                issues.append("Zero closings generated")
+            if row.recent_spend == 0 and row.baseline_spend > 10:
+                issues.append("Campaign stopped spending")
+            
+            # If no specific issues identified, add generic one
+            if not issues and row.performance_status:
+                issues.append(f"Performance status: {row.performance_status}")
+            
+            anomaly = CampaignAnomaly(
+                platform=row.platform,
+                campaign_name=row.campaign_name,
+                adset_name=row.adset_name,
+                utm_campaign=row.utm_campaign or '',
+                metric_issues=issues,
+                severity=severity,
+                recent_spend=row.recent_spend,
+                baseline_spend=row.baseline_spend,
+                recent_cac=row.recent_cac,
+                baseline_cac=row.baseline_cac,
+                recent_closings=row.recent_closings,
+                baseline_closings=row.baseline_closings,
+                cpc_change_pct=row.cpc_change_pct,
+                cac_change_pct=row.cac_change_pct,
+                closings_change_pct=row.closings_change_pct,
+                performance_status=row.performance_status or 'UNKNOWN'
+            )
+            anomalies.append(anomaly)
+    
+    return anomalies
+
 def create_simple_analysis(anomalies: List[CampaignAnomaly], recent_date: str, baseline_date: str) -> Dict[str, Any]:
     """Create a simple analysis without Claude/DSPy for now"""
     
@@ -726,9 +801,47 @@ async def analyze_funnel(request: FunnelAnalysisRequest):
             error=str(e)
         )
 
+@marketing_router.post("/anomaly-analysis", response_model=AnomalyAnalysisResponse)
+async def analyze_campaign_anomalies(request: AnomalyAnalysisRequest):
+    """Analyze campaign anomalies from query results"""
+    
+    try:
+        # Process query results into anomaly objects
+        all_anomalies = process_query_results_to_anomalies(request.query_results)
+        
+        # Determine dates
+        analysis_date = request.analysis_date or datetime.now().strftime('%Y-%m-%d')
+        baseline_date = request.baseline_date or (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+        
+        if not all_anomalies:
+            return AnomalyAnalysisResponse(
+                status="success",
+                analysis_date=analysis_date,
+                anomaly_count=0,
+                analysis_period=f"{analysis_date} vs {baseline_date}",
+                executive_summary="No significant anomalies detected in campaign performance",
+                critical_issues=[],
+                immediate_actions=["Continue monitoring campaign performance"],
+                raw_anomalies=[]
+            )
+        
+        # Create analysis
+        analysis = create_simple_analysis(all_anomalies, analysis_date, baseline_date)
+        
+        return AnomalyAnalysisResponse(
+            status="success",
+            **analysis
+        )
+        
+    except Exception as e:
+        return AnomalyAnalysisResponse(
+            status="error",
+            error=str(e)
+        )
+
 @marketing_router.get("/anomaly-analysis", response_model=AnomalyAnalysisResponse)
-async def analyze_campaign_anomalies():
-    """Detect and analyze marketing campaign anomalies"""
+async def analyze_campaign_anomalies_get():
+    """Detect and analyze marketing campaign anomalies (BigQuery version)"""
     
     try:
         if not bigquery_client:
