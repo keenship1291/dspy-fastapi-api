@@ -348,7 +348,7 @@ class ClaudeAnalyzer:
         
         try:
             response = self.client.messages.create(
-                model="claude-3-sonnet-20240229",
+                model="claude-3-5-sonnet-20241022",
                 max_tokens=200,
                 messages=[{"role": "user", "content": prompt}]
             )
@@ -801,10 +801,17 @@ async def campaign_alerts_analysis(request: ComprehensiveAnalysisRequest):
         if request.dod_campaign_data:
             total_campaigns = len(request.dod_campaign_data)
             
-            # Process each campaign
+            # Process each campaign and deduplicate alerts
+            seen_alerts = set()
             for campaign in request.dod_campaign_data:
                 campaign_alerts = detector.detect_anomalies(campaign)
-                all_alerts.extend(campaign_alerts)
+                
+                # Deduplicate based on campaign, adset, and metric
+                for alert in campaign_alerts:
+                    alert_key = (alert.platform, alert.campaign_name, alert.adset_name, alert.metric)
+                    if alert_key not in seen_alerts:
+                        seen_alerts.add(alert_key)
+                        all_alerts.append(alert)
         
         # Create anomaly summary
         anomaly_summary = {
