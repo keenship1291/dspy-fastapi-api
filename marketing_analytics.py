@@ -1,10 +1,11 @@
-# marketing_analytics.py - SIMPLE FUNNEL ANALYSIS
+# marketing_analytics.py - COMPREHENSIVE FUNNEL ANALYSIS + ANOMALY DETECTION
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Any
 import os
 import json
 from datetime import datetime
+from enum import Enum
 
 # BigQuery imports (for spend data)
 try:
@@ -14,6 +15,13 @@ try:
     BIGQUERY_AVAILABLE = True
 except ImportError:
     BIGQUERY_AVAILABLE = False
+
+# Claude import for AI insights
+try:
+    import anthropic
+    CLAUDE_AVAILABLE = True
+except ImportError:
+    CLAUDE_AVAILABLE = False
 
 # BigQuery setup
 PROJECT_ID = "gtm-p3gj3zzk-nthlo"
@@ -33,7 +41,20 @@ if BIGQUERY_AVAILABLE:
 else:
     bigquery_client = None
 
-# Models
+# Load API key from environment variable (set in Railway dashboard)
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+if not ANTHROPIC_API_KEY:
+    raise ValueError("ANTHROPIC_API_KEY environment variable not set")
+
+# Initialize Claude client
+claude_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if CLAUDE_AVAILABLE else None
+
+# MODELS
+class SeverityLevel(str, Enum):
+    YELLOW = "yellow"
+    ORANGE = "orange" 
+    RED = "red"
+
 class FunnelDataPoint(BaseModel):
     date: str
     leads: int
@@ -43,15 +64,426 @@ class FunnelDataPoint(BaseModel):
     funded: int
     rpts: int
 
-class FunnelAnalysisRequest(BaseModel):
-    funnel_data: List[FunnelDataPoint]
+class CampaignData(BaseModel):
+    platform: str
+    campaign_name: str
+    adset_name: Optional[str] = None
+    campaign_id: Optional[str] = None
+    utm_campaign: Optional[str] = None
+    analysis_date: str
+    comparison_date: str
+    
+    # Core metrics
+    recent_spend: Optional[float] = None
+    baseline_spend: Optional[float] = None
+    spend_change_pct: Optional[float] = None
+    
+    recent_impressions: Optional[int] = None
+    baseline_impressions: Optional[int] = None
+    impressions_change_pct: Optional[float] = None
+    
+    recent_ctr: Optional[float] = None
+    baseline_ctr: Optional[float] = None
+    ctr_change_pct: Optional[float] = None
+    
+    recent_cpc: Optional[float] = None
+    baseline_cpc: Optional[float] = None
+    cpc_change_pct: Optional[float] = None
+    
+    recent_cpm: Optional[float] = None
+    baseline_cpm: Optional[float] = None
+    cpm_change_pct: Optional[float] = None
+    
+    recent_cost_per_lead: Optional[float] = None
+    baseline_cost_per_lead: Optional[float] = None
+    cost_per_lead_change_pct: Optional[float] = None
+    
+    has_anomaly: Optional[str] = None
+    performance_status: Optional[str] = None
 
-class FunnelAnalysisResponse(BaseModel):
+class AnomalyAlert(BaseModel):
+    severity: SeverityLevel
+    platform: str
+    campaign_name: str
+    adset_name: Optional[str] = None
+    metric: str
+    current_value: Optional[float] = None
+    previous_value: Optional[float] = None
+    change_pct: Optional[float] = None
+    message: str
+    slack_color: str
+
+class ComprehensiveAnalysisRequest(BaseModel):
+    funnel_data: Optional[List[FunnelDataPoint]] = None
+    dod_campaign_data: Optional[List[CampaignData]] = None
+
+class ComprehensiveAnalysisResponse(BaseModel):
     status: str
-    colorCode: Optional[str] = None
-    formatted_metrics: Optional[Dict[str, Any]] = None
-    day_over_day_metrics: Optional[Dict[str, Any]] = None
+    
+    # Funnel Analysis Results
+    funnel_analysis: Optional[Dict[str, Any]] = None
+    
+    # Anomaly Detection Results
+    anomaly_alerts: List[AnomalyAlert] = []
+    anomaly_summary: Dict[str, int] = {}
+    
+    # Claude Insights
+    claude_insights: Optional[str] = None
+    
+    # Meta info
+    total_campaigns_analyzed: int = 0
+    analysis_timestamp: str
+    
+    # For n8n Slack integration
+    slack_message: Optional[Dict[str, Any]] = None
+    
     error: Optional[str] = None
+
+# ANOMALY DETECTION CLASS
+class AnomalyDetector:
+    """Core anomaly detection logic with platform-specific thresholds"""
+    
+    # Meta thresholds (Ad Set level)
+    META_THRESHOLDS = {
+        'ctr_drop': 30,      # CTR drops of 30%+ 
+        'cpc_spike': 30,     # CPC increases of 30%+
+        'cpm_spike': 40,     # CPM spikes of 40%+
+        'cost_per_lead_spike': 50  # Cost per lead increases of 50%+
+    }
+    
+    # Google thresholds (Campaign level) 
+    GOOGLE_THRESHOLDS = {
+        'ctr_drop': 25,      # CTR drops of 25%+
+        'cpc_spike': 35,     # CPC increases of 35%+
+        'cpm_spike': 45,     # CPM spikes of 45%+
+        'cost_per_lead_spike': 60  # Cost per conversion increases of 60%+
+    }
+    
+    @staticmethod
+    def get_severity(change_pct: float, threshold: float) -> SeverityLevel:
+        """Determine severity based on percentage change"""
+        abs_change = abs(change_pct)
+        if abs_change >= threshold * 2.5:  # 75%+ of threshold = Red
+            return SeverityLevel.RED
+        elif abs_change >= threshold * 1.67:  # 50-75% of threshold = Orange  
+            return SeverityLevel.ORANGE
+        else:  # 30-50% = Yellow
+            return SeverityLevel.YELLOW
+    
+    @staticmethod
+    def get_slack_color(severity: SeverityLevel) -> str:
+        """Get hex color for Slack attachments"""
+        colors = {
+            SeverityLevel.YELLOW: "#FFEB3B",
+            SeverityLevel.ORANGE: "#FF9800", 
+            SeverityLevel.RED: "#F44336"
+        }
+        return colors[severity]
+    
+    def detect_anomalies(self, campaign: CampaignData) -> List[AnomalyAlert]:
+        """Detect anomalies for a single campaign"""
+        alerts = []
+        platform = campaign.platform.lower()
+        
+        # Get platform-specific thresholds
+        thresholds = self.META_THRESHOLDS if platform == 'meta' else self.GOOGLE_THRESHOLDS
+        
+        # Check for spending stop (both platforms)
+        if self._is_spending_stopped(campaign):
+            alerts.append(self._create_spending_alert(campaign))
+        
+        # Check CTR drop
+        if self._check_metric_drop(campaign.ctr_change_pct, thresholds['ctr_drop']):
+            alerts.append(self._create_alert(
+                campaign, 'CTR', campaign.recent_ctr, campaign.baseline_ctr, 
+                campaign.ctr_change_pct, thresholds['ctr_drop'],
+                "Click-through rate has dropped significantly"
+            ))
+        
+        # Check CPC spike  
+        if self._check_metric_spike(campaign.cpc_change_pct, thresholds['cpc_spike']):
+            alerts.append(self._create_alert(
+                campaign, 'CPC', campaign.recent_cpc, campaign.baseline_cpc,
+                campaign.cpc_change_pct, thresholds['cpc_spike'], 
+                "Cost per click has increased significantly"
+            ))
+        
+        # Check CPM spike
+        if self._check_metric_spike(campaign.cpm_change_pct, thresholds['cpm_spike']):
+            alerts.append(self._create_alert(
+                campaign, 'CPM', campaign.recent_cpm, campaign.baseline_cpm,
+                campaign.cpm_change_pct, thresholds['cpm_spike'],
+                "Cost per thousand impressions has spiked"
+            ))
+        
+        # Check Cost per Lead spike
+        if self._check_metric_spike(campaign.cost_per_lead_change_pct, thresholds['cost_per_lead_spike']):
+            alerts.append(self._create_alert(
+                campaign, 'Cost per Lead', campaign.recent_cost_per_lead, campaign.baseline_cost_per_lead,
+                campaign.cost_per_lead_change_pct, thresholds['cost_per_lead_spike'],
+                "Cost per lead has increased significantly"
+            ))
+        
+        return alerts
+    
+    def _is_spending_stopped(self, campaign: CampaignData) -> bool:
+        """Check if campaign stopped spending"""
+        return (campaign.recent_spend == 0 and 
+                campaign.baseline_spend is not None and 
+                campaign.baseline_spend > 10)
+    
+    def _check_metric_drop(self, change_pct: Optional[float], threshold: float) -> bool:
+        """Check if metric dropped below threshold"""
+        return change_pct is not None and change_pct <= -threshold
+    
+    def _check_metric_spike(self, change_pct: Optional[float], threshold: float) -> bool:
+        """Check if metric spiked above threshold""" 
+        return change_pct is not None and change_pct >= threshold
+    
+    def _create_spending_alert(self, campaign: CampaignData) -> AnomalyAlert:
+        """Create alert for stopped spending"""
+        return AnomalyAlert(
+            severity=SeverityLevel.RED,
+            platform=campaign.platform,
+            campaign_name=campaign.campaign_name,
+            adset_name=campaign.adset_name,
+            metric="Spend",
+            current_value=campaign.recent_spend,
+            previous_value=campaign.baseline_spend,
+            change_pct=-100.0,
+            message=f"⚠️ Campaign has stopped spending (was ${campaign.baseline_spend:.2f})",
+            slack_color=self.get_slack_color(SeverityLevel.RED)
+        )
+    
+    def _create_alert(self, campaign: CampaignData, metric: str, current: Optional[float], 
+                     previous: Optional[float], change_pct: float, threshold: float, 
+                     description: str) -> AnomalyAlert:
+        """Create a standard metric alert"""
+        severity = self.get_severity(change_pct, threshold)
+        
+        # Format values based on metric type
+        if metric in ['CPC', 'CPM', 'Cost per Lead']:
+            current_str = f"${current:.2f}" if current else "N/A"
+            previous_str = f"${previous:.2f}" if previous else "N/A"
+        else:
+            current_str = f"{current:.2f}%" if current else "N/A"
+            previous_str = f"{previous:.2f}%" if previous else "N/A"
+        
+        message = f"📊 {description} - {metric}: {current_str} (was {previous_str}, {change_pct:+.1f}%)"
+        
+        return AnomalyAlert(
+            severity=severity,
+            platform=campaign.platform,
+            campaign_name=campaign.campaign_name,
+            adset_name=campaign.adset_name,
+            metric=metric,
+            current_value=current,
+            previous_value=previous,
+            change_pct=change_pct,
+            message=message,
+            slack_color=self.get_slack_color(severity)
+        )
+
+# CLAUDE ANALYZER CLASS
+class ClaudeAnalyzer:
+    """Use Claude for advanced anomaly analysis and insights"""
+    
+    def __init__(self, client):
+        self.client = client
+    
+    def analyze_patterns(self, alerts: List[AnomalyAlert], campaign_data: List[CampaignData], funnel_summary: Optional[Dict] = None) -> str:
+        """Get Claude's analysis of anomaly patterns and funnel performance"""
+        
+        if not self.client:
+            return "Claude analysis unavailable - API key not configured"
+        
+        # Prepare data summary for Claude
+        alert_summary = {
+            'total_alerts': len(alerts),
+            'by_platform': {},
+            'by_severity': {},
+            'by_metric': {}
+        }
+        
+        for alert in alerts:
+            alert_summary['by_platform'][alert.platform] = alert_summary['by_platform'].get(alert.platform, 0) + 1
+            alert_summary['by_severity'][alert.severity] = alert_summary['by_severity'].get(alert.severity, 0) + 1
+            alert_summary['by_metric'][alert.metric] = alert_summary['by_metric'].get(alert.metric, 0) + 1
+        
+        # Build prompt
+        prompt_parts = [
+            "Analyze this marketing performance data and provide a brief executive summary.",
+            f"\nCampaign Anomaly Summary:",
+            f"- Total alerts: {alert_summary['total_alerts']}",
+            f"- By platform: {alert_summary['by_platform']}",
+            f"- By severity: {alert_summary['by_severity']}",
+            f"- By metric: {alert_summary['by_metric']}"
+        ]
+        
+        if alerts:
+            top_alerts = sorted(alerts, key=lambda x: (x.severity == 'red', abs(x.change_pct or 0)), reverse=True)[:3]
+            prompt_parts.append(f"\nTop 3 most critical alerts:")
+            for alert in top_alerts:
+                campaign_info = f"{alert.platform} - {alert.campaign_name}"
+                if alert.adset_name:
+                    campaign_info += f" ({alert.adset_name})"
+                prompt_parts.append(f"- {campaign_info}: {alert.metric} {alert.change_pct:+.1f}% ({alert.severity})")
+        
+        if funnel_summary:
+            prompt_parts.append(f"\nFunnel Performance:")
+            prompt_parts.append(f"- Overall status: {funnel_summary.get('colorCode', 'unknown')}")
+            if funnel_summary.get('key_metrics'):
+                prompt_parts.append(f"- Key changes: {funnel_summary['key_metrics']}")
+        
+        prompt_parts.append("""
+        Provide a 2-3 sentence executive summary focusing on:
+        1. Overall health assessment
+        2. Most critical issues to address immediately
+        3. Any patterns or recommendations
+        
+        Keep it concise and actionable for a marketing team.
+        """)
+        
+        prompt = "\n".join(prompt_parts)
+        
+        try:
+            response = self.client.messages.create(
+                model="claude-3-sonnet-20240229",
+                max_tokens=200,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.content[0].text
+        except Exception as e:
+            return f"Unable to generate analysis: {str(e)}"
+
+# SLACK MESSAGE BUILDER
+class SlackMessageBuilder:
+    """Build Slack-ready messages for n8n"""
+    
+    @staticmethod
+    def build_comprehensive_message(alerts: List[AnomalyAlert], funnel_summary: Optional[Dict], claude_insights: Optional[str], total_campaigns: int) -> Dict[str, Any]:
+        """Build a comprehensive Slack message"""
+        
+        # Determine overall status
+        if alerts:
+            red_count = len([a for a in alerts if a.severity == SeverityLevel.RED])
+            orange_count = len([a for a in alerts if a.severity == SeverityLevel.ORANGE])
+            yellow_count = len([a for a in alerts if a.severity == SeverityLevel.YELLOW])
+            
+            if red_count > 0:
+                emoji = "🚨"
+                color = "#F44336"
+                status = "Critical Issues Detected"
+            elif orange_count > 0:
+                emoji = "⚠️"
+                color = "#FF9800"
+                status = "Moderate Issues Detected"
+            else:
+                emoji = "📊"
+                color = "#FFEB3B"
+                status = "Minor Issues Detected"
+            
+            summary_text = f"{red_count} critical, {orange_count} moderate, {yellow_count} minor"
+        else:
+            emoji = "✅"
+            color = "#4CAF50"
+            status = "All Systems Healthy"
+            summary_text = "No anomalies detected"
+        
+        # Build alert details
+        alert_fields = []
+        if alerts:
+            # Group by severity
+            red_alerts = [a for a in alerts if a.severity == SeverityLevel.RED]
+            orange_alerts = [a for a in alerts if a.severity == SeverityLevel.ORANGE]
+            
+            # Show critical alerts
+            if red_alerts:
+                critical_text = []
+                for alert in red_alerts[:3]:  # Top 3
+                    campaign_info = f"{alert.platform} - {alert.campaign_name}"
+                    if alert.adset_name:
+                        campaign_info += f" ({alert.adset_name})"
+                    critical_text.append(f"• {campaign_info}: {alert.message}")
+                
+                alert_fields.append({
+                    "title": f"🚨 Critical Issues ({len(red_alerts)})",
+                    "value": "\n".join(critical_text),
+                    "short": False
+                })
+            
+            # Show moderate alerts if not too many
+            if orange_alerts and len(orange_alerts) <= 3:
+                moderate_text = []
+                for alert in orange_alerts:
+                    campaign_info = f"{alert.platform} - {alert.campaign_name}"
+                    if alert.adset_name:
+                        campaign_info += f" ({alert.adset_name})"
+                    moderate_text.append(f"• {campaign_info}: {alert.message}")
+                
+                alert_fields.append({
+                    "title": f"⚠️ Moderate Issues ({len(orange_alerts)})",
+                    "value": "\n".join(moderate_text),
+                    "short": False
+                })
+        
+        # Main message structure
+        message = {
+            "text": f"{emoji} Marketing Performance Report - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            "attachments": [
+                {
+                    "color": color,
+                    "fields": [
+                        {
+                            "title": "Campaign Analysis",
+                            "value": f"Analyzed {total_campaigns} campaigns\n{summary_text}",
+                            "short": True
+                        }
+                    ] + alert_fields
+                }
+            ]
+        }
+        
+        # Add funnel summary if available
+        if funnel_summary and funnel_summary.get('colorCode'):
+            funnel_color = {
+                'green': '#4CAF50',
+                'yellow': '#FFEB3B', 
+                'red': '#F44336'
+            }.get(funnel_summary['colorCode'], '#36C5F0')
+            
+            funnel_fields = []
+            if funnel_summary.get('key_metrics'):
+                funnel_fields.append({
+                    "title": "📈 Funnel Performance",
+                    "value": funnel_summary['key_metrics'],
+                    "short": False
+                })
+            
+            if funnel_fields:
+                message["attachments"].append({
+                    "color": funnel_color,
+                    "fields": funnel_fields
+                })
+        
+        # Add Claude insights
+        if claude_insights:
+            message["attachments"].append({
+                "color": "#36C5F0",  # Slack blue
+                "fields": [
+                    {
+                        "title": "🤖 AI Analysis",
+                        "value": claude_insights,
+                        "short": False
+                    }
+                ]
+            })
+        
+        return message
+
+# Initialize services
+detector = AnomalyDetector()
+claude_analyzer = ClaudeAnalyzer(claude_client)
 
 # Router
 marketing_router = APIRouter(prefix="/marketing", tags=["marketing"])
@@ -59,11 +491,13 @@ marketing_router = APIRouter(prefix="/marketing", tags=["marketing"])
 @marketing_router.get("/")
 async def marketing_root():
     return {
-        "message": "Marketing Analytics API - Simple Funnel Analysis",
-        "version": "13.0.0",
-        "status": "running"
+        "message": "Marketing Analytics API - Comprehensive Analysis",
+        "version": "15.0.0",
+        "status": "running",
+        "features": ["funnel_analysis", "anomaly_detection", "claude_insights", "slack_integration"]
     }
 
+# UTILITY FUNCTIONS (keeping your original ones)
 def get_spend_data():
     """Get total spend from BigQuery"""
     if not bigquery_client:
@@ -262,86 +696,169 @@ def determine_color(changes):
     else:
         return "yellow"
 
-@marketing_router.post("/funnel-analysis", response_model=FunnelAnalysisResponse)
-async def analyze_funnel(request: FunnelAnalysisRequest):
-    """Simple funnel analysis"""
+# MAIN COMPREHENSIVE ENDPOINT
+@marketing_router.post("/campaign-alerts", response_model=ComprehensiveAnalysisResponse)
+async def campaign_alerts_analysis(request: ComprehensiveAnalysisRequest):
+    """
+    Campaign alerts endpoint that does everything:
+    1. Funnel analysis (if funnel_data provided)
+    2. Anomaly detection (if dod_campaign_data provided) 
+    3. Claude insights
+    4. Slack-ready message for n8n
+    """
     
     try:
-        # Calculate changes
-        changes = calculate_changes(request.funnel_data)
+        analysis_timestamp = datetime.now().isoformat()
         
-        if 'error' in changes:
-            return FunnelAnalysisResponse(
-                status="error",
-                error=changes['error']
+        # 1. FUNNEL ANALYSIS
+        funnel_analysis = None
+        funnel_summary = None
+        
+        if request.funnel_data:
+            try:
+                changes = calculate_changes(request.funnel_data)
+                
+                if 'error' not in changes:
+                    # Format week-over-week metrics (if available)
+                    formatted_metrics = {}
+                    if changes.get('has_week_data'):
+                        wow = changes['week_over_week']
+                        last = wow['last_totals']
+                        prev = wow['prev_totals']
+                        
+                        formatted_metrics = {
+                            "spendMetrics": {
+                                "channel": "adSpend",
+                                "period_type": "weekOverWeekPulse",
+                                "totalSpend": format_metric(wow['last_spend'], wow['prev_spend'], True)
+                            },
+                            "funnelMetrics": {
+                                "channel": "funnelPerformance", 
+                                "period_type": "weekOverWeekPulse",
+                                "totalLeads": format_metric(last['leads'], prev['leads']),
+                                "startFlows": format_metric(last['start_flows'], prev['start_flows']),
+                                "estimates": format_metric(last['estimates'], prev['estimates']),
+                                "closings": format_metric(last['closings'], prev['closings']),
+                                "funded": format_metric(last['funded'], prev['funded']),
+                                "revenue": format_metric(last['rpts'], prev['rpts'], True)
+                            }
+                        }
+                    
+                    # Format day-over-day metrics (if available)
+                    day_over_day_metrics = {}
+                    if changes.get('has_day_data'):
+                        dod = changes['day_over_day']
+                        recent = dod['recent_day_totals']
+                        comparison = dod['same_day_totals']
+                        
+                        day_over_day_metrics = {
+                            "spendMetrics": {
+                                "channel": "adSpend",
+                                "period_type": "dayOverDayPulse",
+                                "totalSpend": format_metric(dod['recent_spend'], dod['comparison_spend'], True)
+                            },
+                            "funnelMetrics": {
+                                "channel": "funnelPerformance",
+                                "period_type": "dayOverDayPulse", 
+                                "totalLeads": format_metric(recent['leads'], comparison['leads']),
+                                "startFlows": format_metric(recent['start_flows'], comparison['start_flows']),
+                                "estimates": format_metric(recent['estimates'], comparison['estimates']),
+                                "closings": format_metric(recent['closings'], comparison['closings']),
+                                "funded": format_metric(recent['funded'], comparison['funded']),
+                                "revenue": format_metric(recent['rpts'], comparison['rpts'], True)
+                            },
+                            "comparison_info": {
+                                "recent_date": dod['recent_date'],
+                                "comparison_date": dod['comparison_date']
+                            }
+                        }
+                    
+                    # Determine color
+                    color_code = determine_color(changes)
+                    
+                    funnel_analysis = {
+                        "colorCode": color_code,
+                        "formatted_metrics": formatted_metrics if formatted_metrics else None,
+                        "day_over_day_metrics": day_over_day_metrics if day_over_day_metrics else None
+                    }
+                    
+                    # Create summary for Claude
+                    funnel_summary = {
+                        "colorCode": color_code,
+                        "key_metrics": f"Funnel status: {color_code}"
+                    }
+                    
+                    if day_over_day_metrics:
+                        funnel_summary["key_metrics"] += f" | Recent: {dod['recent_date']} vs {dod['comparison_date']}"
+                
+            except Exception as e:
+                funnel_analysis = {"error": str(e)}
+        
+        # 2. ANOMALY DETECTION
+        all_alerts = []
+        total_campaigns = 0
+        
+        if request.dod_campaign_data:
+            total_campaigns = len(request.dod_campaign_data)
+            
+            # Process each campaign
+            for campaign in request.dod_campaign_data:
+                campaign_alerts = detector.detect_anomalies(campaign)
+                all_alerts.extend(campaign_alerts)
+        
+        # Create anomaly summary
+        anomaly_summary = {
+            "yellow": len([a for a in all_alerts if a.severity == SeverityLevel.YELLOW]),
+            "orange": len([a for a in all_alerts if a.severity == SeverityLevel.ORANGE]),
+            "red": len([a for a in all_alerts if a.severity == SeverityLevel.RED])
+        }
+        
+        # 3. CLAUDE INSIGHTS
+        claude_insights = None
+        if claude_client and (all_alerts or funnel_summary):
+            claude_insights = claude_analyzer.analyze_patterns(
+                all_alerts, 
+                request.dod_campaign_data or [], 
+                funnel_summary
             )
         
-        # Format week-over-week metrics (if available)
-        formatted_metrics = {}
-        if changes.get('has_week_data'):
-            wow = changes['week_over_week']
-            last = wow['last_totals']
-            prev = wow['prev_totals']
-            
-            formatted_metrics = {
-                "spendMetrics": {
-                    "channel": "adSpend",
-                    "period_type": "weekOverWeekPulse",
-                    "totalSpend": format_metric(wow['last_spend'], wow['prev_spend'], True)
-                },
-                "funnelMetrics": {
-                    "channel": "funnelPerformance", 
-                    "period_type": "weekOverWeekPulse",
-                    "totalLeads": format_metric(last['leads'], prev['leads']),
-                    "startFlows": format_metric(last['start_flows'], prev['start_flows']),
-                    "estimates": format_metric(last['estimates'], prev['estimates']),
-                    "closings": format_metric(last['closings'], prev['closings']),
-                    "funded": format_metric(last['funded'], prev['funded']),
-                    "revenue": format_metric(last['rpts'], prev['rpts'], True)
-                }
-            }
+        # 4. BUILD SLACK MESSAGE FOR N8N
+        slack_message = SlackMessageBuilder.build_comprehensive_message(
+            all_alerts, 
+            funnel_summary, 
+            claude_insights, 
+            total_campaigns
+        )
         
-        # Format day-over-day metrics (if available)
-        day_over_day_metrics = {}
-        if changes.get('has_day_data'):
-            dod = changes['day_over_day']
-            recent = dod['recent_day_totals']
-            comparison = dod['same_day_totals']
-            
-            day_over_day_metrics = {
-                "spendMetrics": {
-                    "channel": "adSpend",
-                    "period_type": "dayOverDayPulse",
-                    "totalSpend": format_metric(dod['recent_spend'], dod['comparison_spend'], True)
-                },
-                "funnelMetrics": {
-                    "channel": "funnelPerformance",
-                    "period_type": "dayOverDayPulse", 
-                    "totalLeads": format_metric(recent['leads'], comparison['leads']),
-                    "startFlows": format_metric(recent['start_flows'], comparison['start_flows']),
-                    "estimates": format_metric(recent['estimates'], comparison['estimates']),
-                    "closings": format_metric(recent['closings'], comparison['closings']),
-                    "funded": format_metric(recent['funded'], comparison['funded']),
-                    "revenue": format_metric(recent['rpts'], comparison['rpts'], True)
-                },
-                "comparison_info": {
-                    "recent_date": dod['recent_date'],
-                    "comparison_date": dod['comparison_date']
-                }
-            }
-        
-        # Determine color
-        color_code = determine_color(changes)
-        
-        return FunnelAnalysisResponse(
+        return ComprehensiveAnalysisResponse(
             status="success",
-            colorCode=color_code,
-            formatted_metrics=formatted_metrics if formatted_metrics else None,
-            day_over_day_metrics=day_over_day_metrics if day_over_day_metrics else None
+            funnel_analysis=funnel_analysis,
+            anomaly_alerts=all_alerts,
+            anomaly_summary=anomaly_summary,
+            claude_insights=claude_insights,
+            total_campaigns_analyzed=total_campaigns,
+            analysis_timestamp=analysis_timestamp,
+            slack_message=slack_message
         )
         
     except Exception as e:
-        return FunnelAnalysisResponse(
+        return ComprehensiveAnalysisResponse(
             status="error",
-            error=str(e)
+            error=str(e),
+            analysis_timestamp=datetime.now().isoformat(),
+            total_campaigns_analyzed=0,
+            anomaly_summary={"yellow": 0, "orange": 0, "red": 0}
         )
+
+@marketing_router.get("/health")
+async def health_check():
+    """Health check endpoint with service status"""
+    return {
+        "status": "healthy", 
+        "timestamp": datetime.now().isoformat(),
+        "services": {
+            "bigquery": bigquery_client is not None,
+            "claude": claude_client is not None,
+            "anthropic_key_configured": ANTHROPIC_API_KEY is not None
+        }
+    }
