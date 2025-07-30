@@ -232,6 +232,16 @@ class CustomThresholds(BaseModel):
     google_ad_roas: Optional[float] = None
     google_ad_conversions: Optional[float] = None
 
+class FunnelAnalysisRequest(BaseModel):
+    funnel_data: List[FunnelDataPoint]
+
+class FunnelAnalysisResponse(BaseModel):
+    status: str
+    colorCode: Optional[str] = None
+    formatted_metrics: Optional[Dict[str, Any]] = None
+    day_over_day_metrics: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
 class ComprehensiveAnalysisRequest(BaseModel):
     funnel_data: Optional[List[FunnelDataPoint]] = None
     dod_campaign_data: Optional[List[CampaignData]] = None
@@ -809,7 +819,92 @@ def determine_color(changes):
     else:
         return "yellow"
 
-# MAIN COMPREHENSIVE ENDPOINT
+# MAIN ENDPOINTS
+
+@marketing_router.post("/funnel-analysis", response_model=FunnelAnalysisResponse)
+async def analyze_funnel(request: FunnelAnalysisRequest):
+    """Simple funnel analysis - original endpoint"""
+    
+    try:
+        # Calculate changes
+        changes = calculate_changes(request.funnel_data)
+        
+        if 'error' in changes:
+            return FunnelAnalysisResponse(
+                status="error",
+                error=changes['error']
+            )
+        
+        # Format week-over-week metrics (if available)
+        formatted_metrics = {}
+        if changes.get('has_week_data'):
+            wow = changes['week_over_week']
+            last = wow['last_totals']
+            prev = wow['prev_totals']
+            
+            formatted_metrics = {
+                "spendMetrics": {
+                    "channel": "adSpend",
+                    "period_type": "weekOverWeekPulse",
+                    "totalSpend": format_metric(wow['last_spend'], wow['prev_spend'], True)
+                },
+                "funnelMetrics": {
+                    "channel": "funnelPerformance", 
+                    "period_type": "weekOverWeekPulse",
+                    "totalLeads": format_metric(last['leads'], prev['leads']),
+                    "startFlows": format_metric(last['start_flows'], prev['start_flows']),
+                    "estimates": format_metric(last['estimates'], prev['estimates']),
+                    "closings": format_metric(last['closings'], prev['closings']),
+                    "funded": format_metric(last['funded'], prev['funded']),
+                    "revenue": format_metric(last['rpts'], prev['rpts'], True)
+                }
+            }
+        
+        # Format day-over-day metrics (if available)
+        day_over_day_metrics = {}
+        if changes.get('has_day_data'):
+            dod = changes['day_over_day']
+            recent = dod['recent_day_totals']
+            comparison = dod['same_day_totals']
+            
+            day_over_day_metrics = {
+                "spendMetrics": {
+                    "channel": "adSpend",
+                    "period_type": "dayOverDayPulse",
+                    "totalSpend": format_metric(dod['recent_spend'], dod['comparison_spend'], True)
+                },
+                "funnelMetrics": {
+                    "channel": "funnelPerformance",
+                    "period_type": "dayOverDayPulse", 
+                    "totalLeads": format_metric(recent['leads'], comparison['leads']),
+                    "startFlows": format_metric(recent['start_flows'], comparison['start_flows']),
+                    "estimates": format_metric(recent['estimates'], comparison['estimates']),
+                    "closings": format_metric(recent['closings'], comparison['closings']),
+                    "funded": format_metric(recent['funded'], comparison['funded']),
+                    "revenue": format_metric(recent['rpts'], comparison['rpts'], True)
+                },
+                "comparison_info": {
+                    "recent_date": dod['recent_date'],
+                    "comparison_date": dod['comparison_date']
+                }
+            }
+        
+        # Determine color
+        color_code = determine_color(changes)
+        
+        return FunnelAnalysisResponse(
+            status="success",
+            colorCode=color_code,
+            formatted_metrics=formatted_metrics if formatted_metrics else None,
+            day_over_day_metrics=day_over_day_metrics if day_over_day_metrics else None
+        )
+        
+    except Exception as e:
+        return FunnelAnalysisResponse(
+            status="error",
+            error=str(e)
+        )
+
 @marketing_router.post("/campaign-alerts", response_model=ComprehensiveAnalysisResponse)
 async def campaign_alerts_analysis(request: ComprehensiveAnalysisRequest):
     """
