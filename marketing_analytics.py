@@ -107,6 +107,10 @@ class CampaignData(BaseModel):
     baseline_leads: Optional[float] = None
     leads_change_pct: Optional[float] = None
     
+    recent_start_flows: Optional[float] = None
+    baseline_start_flows: Optional[float] = None
+    start_flows_change_pct: Optional[float] = None
+    
     recent_estimates: Optional[float] = None
     baseline_estimates: Optional[float] = None
     estimates_change_pct: Optional[float] = None
@@ -189,6 +193,7 @@ class CustomThresholds(BaseModel):
     meta_ctr: Optional[float] = None
     meta_cpc: Optional[float] = None
     meta_leads: Optional[float] = None
+    meta_start_flows: Optional[float] = None
     meta_estimates: Optional[float] = None
     meta_closings: Optional[float] = None
     meta_funded: Optional[float] = None
@@ -210,6 +215,7 @@ class CustomThresholds(BaseModel):
     google_ctr: Optional[float] = None
     google_cpc: Optional[float] = None
     google_leads: Optional[float] = None
+    google_start_flows: Optional[float] = None
     google_estimates: Optional[float] = None
     google_closings: Optional[float] = None
     google_funded: Optional[float] = None
@@ -268,39 +274,57 @@ class AnomalyDetector:
         platform = campaign.platform.lower()
         prefix = "meta" if platform == "meta" else "google"
         
-        # Define metrics with their "bad" direction (True = negative change is bad, False = positive change is bad)
+        # Define metrics with their funnel priority (1 = highest priority/furthest down funnel)
+        # Lower numbers = higher priority (closer to revenue)
         metrics_to_check = [
-            ("spend_change_pct", f"{prefix}_spend", "Spend", campaign.recent_spend, campaign.baseline_spend, "either"),  # Either direction can be concerning
-            ("impressions_change_pct", f"{prefix}_impressions", "Impressions", campaign.recent_impressions, campaign.baseline_impressions, "negative"),  # Drop is bad
-            ("cpm_change_pct", f"{prefix}_cpm", "CPM", campaign.recent_cpm, campaign.baseline_cpm, "positive"),  # Increase is bad
-            ("clicks_change_pct", f"{prefix}_clicks", "Clicks", campaign.recent_clicks, campaign.baseline_clicks, "negative"),  # Drop is bad
-            ("ctr_change_pct", f"{prefix}_ctr", "CTR", campaign.recent_ctr, campaign.baseline_ctr, "negative"),  # Drop is bad
-            ("cpc_change_pct", f"{prefix}_cpc", "CPC", campaign.recent_cpc, campaign.baseline_cpc, "positive"),  # Increase is bad
-            ("leads_change_pct", f"{prefix}_leads", "Leads", campaign.recent_leads, campaign.baseline_leads, "negative"),  # Drop is bad
-            ("estimates_change_pct", f"{prefix}_estimates", "Estimates", campaign.recent_estimates, campaign.baseline_estimates, "negative"),  # Drop is bad
-            ("closings_change_pct", f"{prefix}_closings", "Closings", campaign.recent_closings, campaign.baseline_closings, "negative"),  # Drop is bad
-            ("funded_change_pct", f"{prefix}_funded", "Funded", campaign.recent_funded, campaign.baseline_funded, "negative"),  # Drop is bad
-            ("revenue_change_pct", f"{prefix}_revenue", "Revenue", campaign.recent_revenue, campaign.baseline_revenue, "negative"),  # Drop is bad
-            ("cost_per_lead_change_pct", f"{prefix}_cost_per_lead", "Cost per Lead", campaign.recent_cost_per_lead, campaign.baseline_cost_per_lead, "positive"),  # Increase is bad
-            ("cost_per_estimate_change_pct", f"{prefix}_cost_per_estimate", "Cost per Estimate", campaign.recent_cost_per_estimate, campaign.baseline_cost_per_estimate, "positive"),  # Increase is bad
-            ("cost_per_closing_change_pct", f"{prefix}_cost_per_closing", "Cost per Closing", campaign.recent_cost_per_closing, campaign.baseline_cost_per_closing, "positive"),  # Increase is bad
-            ("cost_per_funded_change_pct", f"{prefix}_cost_per_funded", "Cost per Funded", campaign.recent_cost_per_funded, campaign.baseline_cost_per_funded, "positive"),  # Increase is bad
-            ("estimate_cvr_change_pct", f"{prefix}_estimate_cvr", "Estimate CVR", campaign.recent_estimate_cvr, campaign.baseline_estimate_cvr, "negative"),  # Drop is bad
-            ("closings_cvr_change_pct", f"{prefix}_closings_cvr", "Closings CVR", campaign.recent_closings_cvr, campaign.baseline_closings_cvr, "negative"),  # Drop is bad
-            ("funded_cvr_change_pct", f"{prefix}_funded_cvr", "Funded CVR", campaign.recent_funded_cvr, campaign.baseline_funded_cvr, "negative"),  # Drop is bad
-            ("roas_change_pct", f"{prefix}_roas", "ROAS", campaign.recent_roas, campaign.baseline_roas, "negative"),  # Drop is bad
+            # Revenue metrics (highest priority)
+            (1, "revenue_change_pct", f"{prefix}_revenue", "Revenue", campaign.recent_revenue, campaign.baseline_revenue, "negative"),
+            (1, "roas_change_pct", f"{prefix}_roas", "ROAS", campaign.recent_roas, campaign.baseline_roas, "negative"),
+            
+            # Funded metrics
+            (2, "funded_change_pct", f"{prefix}_funded", "Funded", campaign.recent_funded, campaign.baseline_funded, "negative"),
+            (2, "cost_per_funded_change_pct", f"{prefix}_cost_per_funded", "Cost per Funded", campaign.recent_cost_per_funded, campaign.baseline_cost_per_funded, "positive"),
+            (2, "funded_cvr_change_pct", f"{prefix}_funded_cvr", "Funded CVR", campaign.recent_funded_cvr, campaign.baseline_funded_cvr, "negative"),
+            
+            # Closings metrics
+            (3, "closings_change_pct", f"{prefix}_closings", "Closings", campaign.recent_closings, campaign.baseline_closings, "negative"),
+            (3, "cost_per_closing_change_pct", f"{prefix}_cost_per_closing", "Cost per Closing", campaign.recent_cost_per_closing, campaign.baseline_cost_per_closing, "positive"),
+            (3, "closings_cvr_change_pct", f"{prefix}_closings_cvr", "Closings CVR", campaign.recent_closings_cvr, campaign.baseline_closings_cvr, "negative"),
+            
+            # Estimates metrics
+            (4, "estimates_change_pct", f"{prefix}_estimates", "Estimates", campaign.recent_estimates, campaign.baseline_estimates, "negative"),
+            (4, "cost_per_estimate_change_pct", f"{prefix}_cost_per_estimate", "Cost per Estimate", campaign.recent_cost_per_estimate, campaign.baseline_cost_per_estimate, "positive"),
+            (4, "estimate_cvr_change_pct", f"{prefix}_estimate_cvr", "Estimate CVR", campaign.recent_estimate_cvr, campaign.baseline_estimate_cvr, "negative"),
+            
+            # Leads metrics
+            (5, "leads_change_pct", f"{prefix}_leads", "Leads", campaign.recent_leads, campaign.baseline_leads, "negative"),
+            (5, "cost_per_lead_change_pct", f"{prefix}_cost_per_lead", "Cost per Lead", campaign.recent_cost_per_lead, campaign.baseline_cost_per_lead, "positive"),
+            
+            # Click metrics
+            (7, "clicks_change_pct", f"{prefix}_clicks", "Clicks", campaign.recent_clicks, campaign.baseline_clicks, "negative"),
+            (7, "ctr_change_pct", f"{prefix}_ctr", "CTR", campaign.recent_ctr, campaign.baseline_ctr, "negative"),
+            (7, "cpc_change_pct", f"{prefix}_cpc", "CPC", campaign.recent_cpc, campaign.baseline_cpc, "positive"),
+            
+            # Impression metrics (lowest priority)
+            (8, "impressions_change_pct", f"{prefix}_impressions", "Impressions", campaign.recent_impressions, campaign.baseline_impressions, "negative"),
+            (8, "cpm_change_pct", f"{prefix}_cpm", "CPM", campaign.recent_cpm, campaign.baseline_cpm, "positive"),
+            
+            # Spend (special case)
+            (9, "spend_change_pct", f"{prefix}_spend", "Spend", campaign.recent_spend, campaign.baseline_spend, "either"),
         ]
         
         # Add Google-specific metrics
         if platform == "google":
             metrics_to_check.extend([
-                ("cpa_change_pct", "google_cpa", "CPA", campaign.recent_cpa, campaign.baseline_cpa, "positive"),  # Increase is bad
-                ("ad_roas_change_pct", "google_ad_roas", "Ad ROAS", campaign.recent_ad_roas, campaign.baseline_ad_roas, "negative"),  # Drop is bad
-                ("ad_conversions_change_pct", "google_ad_conversions", "Ad Conversions", campaign.recent_ad_conversions, campaign.baseline_ad_conversions, "negative"),  # Drop is bad
+                (7, "cpa_change_pct", "google_cpa", "CPA", campaign.recent_cpa, campaign.baseline_cpa, "positive"),
+                (1, "ad_roas_change_pct", "google_ad_roas", "Ad ROAS", campaign.recent_ad_roas, campaign.baseline_ad_roas, "negative"),
+                (6, "ad_conversions_change_pct", "google_ad_conversions", "Ad Conversions", campaign.recent_ad_conversions, campaign.baseline_ad_conversions, "negative"),
             ])
         
-        # Check each metric against its threshold
-        for change_field, threshold_field, metric_name, recent_value, baseline_value, bad_direction in metrics_to_check:
+        # Check each metric against its threshold and collect potential alerts
+        potential_alerts = []
+        
+        for priority, change_field, threshold_field, metric_name, recent_value, baseline_value, bad_direction in metrics_to_check:
             # Get the change percentage from campaign data
             change_pct = getattr(campaign, change_field, None)
             
@@ -325,9 +349,10 @@ class AnomalyDetector:
                 should_alert = abs(change_pct) >= threshold
             
             if should_alert:
-                alerts.append(self._create_simple_alert(
+                alert = self._create_simple_alert(
                     campaign, metric_name, recent_value, baseline_value, change_pct, threshold
-                ))
+                )
+                potential_alerts.append((priority, alert))
         
         # Special case: Check for spending stop (recent_spend = 0 when baseline > 0)
         if (campaign.recent_spend == 0 and 
@@ -336,7 +361,7 @@ class AnomalyDetector:
             
             spend_threshold = getattr(custom_thresholds, f"{prefix}_spend", None)
             if spend_threshold is not None:  # Only alert if threshold is set
-                alerts.append(AnomalyAlert(
+                spend_stop_alert = AnomalyAlert(
                     severity=SeverityLevel.RED,
                     platform=campaign.platform,
                     campaign_name=campaign.campaign_name,
@@ -347,7 +372,14 @@ class AnomalyDetector:
                     change_pct=-100.0,
                     message=f"⚠️ Campaign has stopped spending (was ${campaign.baseline_spend:.2f})",
                     slack_color="#F44336"
-                ))
+                )
+                potential_alerts.append((0, spend_stop_alert))  # Highest priority
+        
+        # If we have potential alerts, return only the highest priority one (lowest number)
+        if potential_alerts:
+            # Sort by priority (ascending) and return only the first one
+            potential_alerts.sort(key=lambda x: x[0])
+            alerts.append(potential_alerts[0][1])  # Take the alert from the highest priority tuple
         
         return alerts
     
