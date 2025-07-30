@@ -127,9 +127,9 @@ class CampaignData(BaseModel):
     baseline_cost_per_estimate: Optional[float] = None
     cost_per_estimate_change_pct: Optional[float] = None
     
-    recent_cac: Optional[float] = None
-    baseline_cac: Optional[float] = None
-    cac_change_pct: Optional[float] = None
+    recent_cost_per_closing: Optional[float] = None
+    baseline_cost_per_closing: Optional[float] = None
+    cost_per_closing_change_pct: Optional[float] = None
     
     recent_cost_per_funded: Optional[float] = None
     baseline_cost_per_funded: Optional[float] = None
@@ -193,7 +193,7 @@ class CustomThresholds(BaseModel):
     meta_closings: Optional[float] = None
     meta_funded: Optional[float] = None
     meta_revenue: Optional[float] = None
-    meta_cac: Optional[float] = None
+    meta_cost_per_closing: Optional[float] = None
     meta_cost_per_lead: Optional[float] = None
     meta_cost_per_estimate: Optional[float] = None
     meta_cost_per_funded: Optional[float] = None
@@ -214,7 +214,7 @@ class CustomThresholds(BaseModel):
     google_closings: Optional[float] = None
     google_funded: Optional[float] = None
     google_revenue: Optional[float] = None
-    google_cac: Optional[float] = None
+    google_cost_per_closing: Optional[float] = None
     google_cost_per_lead: Optional[float] = None
     google_cost_per_estimate: Optional[float] = None
     google_cost_per_funded: Optional[float] = None
@@ -283,7 +283,7 @@ class AnomalyDetector:
             ("revenue_change_pct", f"{prefix}_revenue", "Revenue", campaign.recent_revenue, campaign.baseline_revenue, "negative"),  # Drop is bad
             ("cost_per_lead_change_pct", f"{prefix}_cost_per_lead", "Cost per Lead", campaign.recent_cost_per_lead, campaign.baseline_cost_per_lead, "positive"),  # Increase is bad
             ("cost_per_estimate_change_pct", f"{prefix}_cost_per_estimate", "Cost per Estimate", campaign.recent_cost_per_estimate, campaign.baseline_cost_per_estimate, "positive"),  # Increase is bad
-            ("cac_change_pct", f"{prefix}_cac", "CAC", campaign.recent_cac, campaign.baseline_cac, "positive"),  # Increase is bad
+            ("cost_per_closing_change_pct", f"{prefix}_cost_per_closing", "Cost per Closing", campaign.recent_cost_per_closing, campaign.baseline_cost_per_closing, "positive"),  # Increase is bad
             ("cost_per_funded_change_pct", f"{prefix}_cost_per_funded", "Cost per Funded", campaign.recent_cost_per_funded, campaign.baseline_cost_per_funded, "positive"),  # Increase is bad
             ("estimate_cvr_change_pct", f"{prefix}_estimate_cvr", "Estimate CVR", campaign.recent_estimate_cvr, campaign.baseline_estimate_cvr, "negative"),  # Drop is bad
             ("closings_cvr_change_pct", f"{prefix}_closings_cvr", "Closings CVR", campaign.recent_closings_cvr, campaign.baseline_closings_cvr, "negative"),  # Drop is bad
@@ -359,7 +359,7 @@ class AnomalyDetector:
         severity = SeverityLevel.RED if abs(change_pct) >= threshold else SeverityLevel.YELLOW
         
         # Format values based on metric type
-        if metric in ['CPC', 'CPM', 'Cost per Lead', 'Cost per Estimate', 'CAC', 'Cost per Funded', 'CPA']:
+        if metric in ['CPC', 'CPM', 'Cost per Lead', 'Cost per Estimate', 'Cost per Closing', 'Cost per Funded', 'CPA']:
             current_str = f"${current:.2f}" if current is not None else "N/A"
             previous_str = f"${previous:.2f}" if previous is not None else "N/A"
         elif metric in ['CTR', 'Estimate CVR', 'Closings CVR', 'Funded CVR', 'ROAS', 'Ad ROAS']:
