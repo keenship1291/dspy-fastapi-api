@@ -173,15 +173,7 @@ class CampaignData(BaseModel):
 
 class AnomalyAlert(BaseModel):
     severity: SeverityLevel
-    platform: str
-    campaign_name: str
-    adset_name: Optional[str] = None
-    metric: str
-    current_value: Optional[float] = None
-    previous_value: Optional[float] = None
-    change_pct: Optional[float] = None
     message: str
-    slack_color: str
 
 class CustomThresholds(BaseModel):
     # Meta thresholds (Ad Set level) - NULL means no alerting
@@ -238,10 +230,7 @@ class ComprehensiveAnalysisRequest(BaseModel):
     custom_thresholds: Optional[CustomThresholds] = None
 
 class ComprehensiveAnalysisResponse(BaseModel):
-    status: str
-    
-    # Funnel Analysis Results
-    funnel_analysis: Optional[Dict[str, Any]] = None
+    anomaly_alerts: List[str] = []nel_analysis: Optional[Dict[str, Any]] = None
     
     # Anomaly Detection Results
     anomaly_alerts: List[AnomalyAlert] = []
@@ -361,34 +350,33 @@ class AnomalyDetector:
             
             spend_threshold = getattr(custom_thresholds, f"{prefix}_spend", None)
             if spend_threshold is not None:  # Only alert if threshold is set
-                spend_stop_alert = AnomalyAlert(
-                    severity=SeverityLevel.RED,
-                    platform=campaign.platform,
-                    campaign_name=campaign.campaign_name,
-                    adset_name=campaign.adset_name,
-                    metric="Spend",
-                    current_value=campaign.recent_spend,
-                    previous_value=campaign.baseline_spend,
-                    change_pct=-100.0,
-                    message=f"⚠️ Campaign has stopped spending (was ${campaign.baseline_spend:.2f})",
-                    slack_color="#F44336"
-                )
-                potential_alerts.append((0, spend_stop_alert))  # Highest priority
+                # Build campaign info
+                campaign_info = f"{campaign.platform.title()} - {campaign.campaign_name}"
+                if campaign.adset_name:
+                    campaign_info += f" ({campaign.adset_name})"
+                
+                spend_stop_message = f"🔴 {campaign_info}: Campaign has stopped spending (was ${campaign.baseline_spend:.2f})"
+                potential_alerts.append((0, spend_stop_message))  # Highest priority
         
         # If we have potential alerts, return only the highest priority one (lowest number)
         if potential_alerts:
             # Sort by priority (ascending) and return only the first one
             potential_alerts.sort(key=lambda x: x[0])
-            alerts.append(potential_alerts[0][1])  # Take the alert from the highest priority tuple
+            alerts.append(potential_alerts[0][1])  # Take the message from the highest priority tuple
         
         return alerts
     
     def _create_simple_alert(self, campaign: CampaignData, metric: str, current: Optional[float], 
-                           previous: Optional[float], change_pct: float, threshold: float) -> AnomalyAlert:
-        """Create a simple alert without complex severity calculation"""
+                           previous: Optional[float], change_pct: float, threshold: float) -> str:
+        """Create a simple alert message with colored circle"""
         
-        # Simple severity: just red for now since user controls thresholds
-        severity = SeverityLevel.RED if abs(change_pct) >= threshold else SeverityLevel.YELLOW
+        # Determine severity and circle color
+        if abs(change_pct) >= threshold * 2:  # Very severe
+            circle = "🔴"  # Red circle
+        elif abs(change_pct) >= threshold * 1.5:  # Moderate
+            circle = "🟠"  # Orange circle  
+        else:  # Minor
+            circle = "🟡"  # Yellow circle
         
         # Format values based on metric type
         if metric in ['CPC', 'CPM', 'Cost per Lead', 'Cost per Estimate', 'Cost per Closing', 'Cost per Funded', 'CPA']:
@@ -404,20 +392,15 @@ class AnomalyDetector:
             current_str = f"{current:,.0f}" if current is not None else "N/A"
             previous_str = f"{previous:,.0f}" if previous is not None else "N/A"
         
-        message = f"📊 {metric} changed significantly - {metric}: {current_str} (was {previous_str}, {change_pct:+.1f}%)"
+        # Build campaign info
+        campaign_info = f"{campaign.platform.title()} - {campaign.campaign_name}"
+        if campaign.adset_name:
+            campaign_info += f" ({campaign.adset_name})"
         
-        return AnomalyAlert(
-            severity=severity,
-            platform=campaign.platform,
-            campaign_name=campaign.campaign_name,
-            adset_name=campaign.adset_name,
-            metric=metric,
-            current_value=current,
-            previous_value=previous,
-            change_pct=change_pct,
-            message=message,
-            slack_color="#F44336" if severity == SeverityLevel.RED else "#FFEB3B"
-        )
+        # Create final message
+        message = f"{circle} {campaign_info}: {metric} changed {change_pct:+.1f}% - {metric}: {current_str} (was {previous_str})"
+        
+        return message
 
 # CLAUDE ANALYZER CLASS
 class ClaudeAnalyzer:
@@ -936,60 +919,18 @@ async def campaign_alerts_analysis(request: ComprehensiveAnalysisRequest):
         if request.dod_campaign_data:
             total_campaigns = len(request.dod_campaign_data)
             
-            # Process each campaign and deduplicate alerts
-            seen_alerts = set()
+            # Process each campaign and get alerts (already deduplicated by priority)
             for campaign in request.dod_campaign_data:
                 campaign_alerts = detector.detect_anomalies(campaign, request.custom_thresholds)
-                
-                # Deduplicate based on campaign, adset, and metric
-                for alert in campaign_alerts:
-                    alert_key = (alert.platform, alert.campaign_name, alert.adset_name, alert.metric)
-                    if alert_key not in seen_alerts:
-                        seen_alerts.add(alert_key)
-                        all_alerts.append(alert)
-        
-        # Create anomaly summary
-        anomaly_summary = {
-            "yellow": len([a for a in all_alerts if a.severity == SeverityLevel.YELLOW]),
-            "orange": len([a for a in all_alerts if a.severity == SeverityLevel.ORANGE]),
-            "red": len([a for a in all_alerts if a.severity == SeverityLevel.RED])
-        }
-        
-        # 3. CLAUDE INSIGHTS
-        claude_insights = None
-        if claude_client and (all_alerts or funnel_summary):
-            claude_insights = claude_analyzer.analyze_patterns(
-                all_alerts, 
-                request.dod_campaign_data or [], 
-                funnel_summary
-            )
-        
-        # 4. BUILD SLACK MESSAGE FOR N8N
-        slack_message = SlackMessageBuilder.build_comprehensive_message(
-            all_alerts, 
-            funnel_summary, 
-            claude_insights, 
-            total_campaigns
-        )
+                all_alerts.extend(campaign_alerts)
         
         return ComprehensiveAnalysisResponse(
-            status="success",
-            funnel_analysis=funnel_analysis,
-            anomaly_alerts=all_alerts,
-            anomaly_summary=anomaly_summary,
-            claude_insights=claude_insights,
-            total_campaigns_analyzed=total_campaigns,
-            analysis_timestamp=analysis_timestamp,
-            slack_message=slack_message
+            anomaly_alerts=all_alerts
         )
         
     except Exception as e:
         return ComprehensiveAnalysisResponse(
-            status="error",
-            error=str(e),
-            analysis_timestamp=datetime.now().isoformat(),
-            total_campaigns_analyzed=0,
-            anomaly_summary={"yellow": 0, "orange": 0, "red": 0}
+            anomaly_alerts=[f"🔴 Error: {str(e)}"]
         )
 
 @marketing_router.get("/health")
