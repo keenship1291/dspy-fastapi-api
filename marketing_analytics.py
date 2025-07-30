@@ -1,18 +1,4 @@
-class CustomThresholds(BaseModel):
-    # Meta thresholds (Ad Set level) - NULL means no alerting
-    meta_spend_drop: Optional[float] = None  # % drop that triggers alert
-    meta_impressions_drop: Optional[float] = None
-    meta_cpm_spike: Optional[float] = None
-    meta_clicks_drop: Optional[float] = None
-    meta_ctr_drop: Optional[float] = None
-    meta_cpc_spike: Optional[float] = None
-    meta_leads_drop: Optional[float] = None
-    meta_estimates_drop: Optional[float] = None
-    meta_closings_drop: Optional[float] = None
-    meta_funded_drop: Optional[float] = None
-    meta_revenue_drop: Optional[float] = None
-    meta_cost_per_lead_spike: Optional[float] = None
-    meta# marketing_analytics.py - COMPREHENSIVE FUNNEL ANALYSIS + ANOMALY DETECTION
+# marketing_analytics.py - COMPREHENSIVE FUNNEL ANALYSIS + ANOMALY DETECTION
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Any
@@ -87,7 +73,7 @@ class CampaignData(BaseModel):
     analysis_date: str
     comparison_date: str
     
-    # Core metrics
+    # Core metrics with change percentages
     recent_spend: Optional[float] = None
     baseline_spend: Optional[float] = None
     spend_change_pct: Optional[float] = None
@@ -95,6 +81,10 @@ class CampaignData(BaseModel):
     recent_impressions: Optional[int] = None
     baseline_impressions: Optional[int] = None
     impressions_change_pct: Optional[float] = None
+    
+    recent_clicks: Optional[int] = None
+    baseline_clicks: Optional[int] = None
+    clicks_change_pct: Optional[float] = None
     
     recent_ctr: Optional[float] = None
     baseline_ctr: Optional[float] = None
@@ -111,6 +101,68 @@ class CampaignData(BaseModel):
     recent_cost_per_lead: Optional[float] = None
     baseline_cost_per_lead: Optional[float] = None
     cost_per_lead_change_pct: Optional[float] = None
+    
+    # Additional metrics for comprehensive analysis
+    recent_leads: Optional[int] = None
+    baseline_leads: Optional[int] = None
+    leads_change_pct: Optional[float] = None
+    
+    recent_estimates: Optional[int] = None
+    baseline_estimates: Optional[int] = None
+    estimates_change_pct: Optional[float] = None
+    
+    recent_closings: Optional[int] = None
+    baseline_closings: Optional[int] = None
+    closings_change_pct: Optional[float] = None
+    
+    recent_funded: Optional[int] = None
+    baseline_funded: Optional[int] = None
+    funded_change_pct: Optional[float] = None
+    
+    recent_revenue: Optional[float] = None
+    baseline_revenue: Optional[float] = None
+    revenue_change_pct: Optional[float] = None
+    
+    recent_cost_per_estimate: Optional[float] = None
+    baseline_cost_per_estimate: Optional[float] = None
+    cost_per_estimate_change_pct: Optional[float] = None
+    
+    recent_cac: Optional[float] = None
+    baseline_cac: Optional[float] = None
+    cac_change_pct: Optional[float] = None
+    
+    recent_cost_per_funded: Optional[float] = None
+    baseline_cost_per_funded: Optional[float] = None
+    cost_per_funded_change_pct: Optional[float] = None
+    
+    recent_estimate_cvr: Optional[float] = None
+    baseline_estimate_cvr: Optional[float] = None
+    estimate_cvr_change_pct: Optional[float] = None
+    
+    recent_closings_cvr: Optional[float] = None
+    baseline_closings_cvr: Optional[float] = None
+    closings_cvr_change_pct: Optional[float] = None
+    
+    recent_funded_cvr: Optional[float] = None
+    baseline_funded_cvr: Optional[float] = None
+    funded_cvr_change_pct: Optional[float] = None
+    
+    recent_roas: Optional[float] = None
+    baseline_roas: Optional[float] = None
+    roas_change_pct: Optional[float] = None
+    
+    # Google-specific metrics
+    recent_cpa: Optional[float] = None
+    baseline_cpa: Optional[float] = None
+    cpa_change_pct: Optional[float] = None
+    
+    recent_ad_roas: Optional[float] = None
+    baseline_ad_roas: Optional[float] = None
+    ad_roas_change_pct: Optional[float] = None
+    
+    recent_ad_conversions: Optional[int] = None
+    baseline_ad_conversions: Optional[int] = None
+    ad_conversions_change_pct: Optional[float] = None
     
     has_anomaly: Optional[str] = None
     performance_status: Optional[str] = None
@@ -177,23 +229,6 @@ class CustomThresholds(BaseModel):
 class ComprehensiveAnalysisRequest(BaseModel):
     funnel_data: Optional[List[FunnelDataPoint]] = None
     dod_campaign_data: Optional[List[CampaignData]] = None
-    custom_thresholds: Optional[CustomThresholds] = None_spike: float = 30
-    meta_cpm_spike: float = 40
-    meta_cost_per_lead_spike: float = 50
-    
-    # Google thresholds (Campaign level)
-    google_ctr_drop: float = 25
-    google_cpc_spike: float = 35
-    google_cpm_spike: float = 45
-    google_cost_per_lead_spike: float = 60
-    
-    # Severity multipliers (for Yellow/Orange/Red calculation)
-    severity_orange_multiplier: float = 1.67  # 50-75% of threshold
-    severity_red_multiplier: float = 2.5     # 75%+ of threshold
-
-class ComprehensiveAnalysisRequest(BaseModel):
-    funnel_data: Optional[List[FunnelDataPoint]] = None
-    dod_campaign_data: Optional[List[CampaignData]] = None
     custom_thresholds: Optional[CustomThresholds] = None
 
 class ComprehensiveAnalysisResponse(BaseModel):
@@ -242,26 +277,26 @@ class AnomalyDetector:
             ("ctr_change_pct", f"{prefix}_ctr", "CTR", campaign.recent_ctr, campaign.baseline_ctr, "negative"),  # Drop is bad
             ("cpc_change_pct", f"{prefix}_cpc", "CPC", campaign.recent_cpc, campaign.baseline_cpc, "positive"),  # Increase is bad
             ("leads_change_pct", f"{prefix}_leads", "Leads", campaign.recent_leads, campaign.baseline_leads, "negative"),  # Drop is bad
-            ("estimates_change_pct", f"{prefix}_estimates", "Estimates", getattr(campaign, 'recent_estimates', None), getattr(campaign, 'baseline_estimates', None), "negative"),  # Drop is bad
-            ("closings_change_pct", f"{prefix}_closings", "Closings", getattr(campaign, 'recent_closings', None), getattr(campaign, 'baseline_closings', None), "negative"),  # Drop is bad
-            ("funded_change_pct", f"{prefix}_funded", "Funded", getattr(campaign, 'recent_funded', None), getattr(campaign, 'baseline_funded', None), "negative"),  # Drop is bad
-            ("revenue_change_pct", f"{prefix}_revenue", "Revenue", getattr(campaign, 'recent_revenue', None), getattr(campaign, 'baseline_revenue', None), "negative"),  # Drop is bad
+            ("estimates_change_pct", f"{prefix}_estimates", "Estimates", campaign.recent_estimates, campaign.baseline_estimates, "negative"),  # Drop is bad
+            ("closings_change_pct", f"{prefix}_closings", "Closings", campaign.recent_closings, campaign.baseline_closings, "negative"),  # Drop is bad
+            ("funded_change_pct", f"{prefix}_funded", "Funded", campaign.recent_funded, campaign.baseline_funded, "negative"),  # Drop is bad
+            ("revenue_change_pct", f"{prefix}_revenue", "Revenue", campaign.recent_revenue, campaign.baseline_revenue, "negative"),  # Drop is bad
             ("cost_per_lead_change_pct", f"{prefix}_cost_per_lead", "Cost per Lead", campaign.recent_cost_per_lead, campaign.baseline_cost_per_lead, "positive"),  # Increase is bad
-            ("cost_per_estimate_change_pct", f"{prefix}_cost_per_estimate", "Cost per Estimate", getattr(campaign, 'recent_cost_per_estimate', None), getattr(campaign, 'baseline_cost_per_estimate', None), "positive"),  # Increase is bad
-            ("cac_change_pct", f"{prefix}_cac", "CAC", getattr(campaign, 'recent_cac', None), getattr(campaign, 'baseline_cac', None), "positive"),  # Increase is bad
-            ("cost_per_funded_change_pct", f"{prefix}_cost_per_funded", "Cost per Funded", getattr(campaign, 'recent_cost_per_funded', None), getattr(campaign, 'baseline_cost_per_funded', None), "positive"),  # Increase is bad
-            ("estimate_cvr_change_pct", f"{prefix}_estimate_cvr", "Estimate CVR", getattr(campaign, 'recent_estimate_cvr', None), getattr(campaign, 'baseline_estimate_cvr', None), "negative"),  # Drop is bad
-            ("closings_cvr_change_pct", f"{prefix}_closings_cvr", "Closings CVR", getattr(campaign, 'recent_closings_cvr', None), getattr(campaign, 'baseline_closings_cvr', None), "negative"),  # Drop is bad
-            ("funded_cvr_change_pct", f"{prefix}_funded_cvr", "Funded CVR", getattr(campaign, 'recent_funded_cvr', None), getattr(campaign, 'baseline_funded_cvr', None), "negative"),  # Drop is bad
-            ("roas_change_pct", f"{prefix}_roas", "ROAS", getattr(campaign, 'recent_roas', None), getattr(campaign, 'baseline_roas', None), "negative"),  # Drop is bad
+            ("cost_per_estimate_change_pct", f"{prefix}_cost_per_estimate", "Cost per Estimate", campaign.recent_cost_per_estimate, campaign.baseline_cost_per_estimate, "positive"),  # Increase is bad
+            ("cac_change_pct", f"{prefix}_cac", "CAC", campaign.recent_cac, campaign.baseline_cac, "positive"),  # Increase is bad
+            ("cost_per_funded_change_pct", f"{prefix}_cost_per_funded", "Cost per Funded", campaign.recent_cost_per_funded, campaign.baseline_cost_per_funded, "positive"),  # Increase is bad
+            ("estimate_cvr_change_pct", f"{prefix}_estimate_cvr", "Estimate CVR", campaign.recent_estimate_cvr, campaign.baseline_estimate_cvr, "negative"),  # Drop is bad
+            ("closings_cvr_change_pct", f"{prefix}_closings_cvr", "Closings CVR", campaign.recent_closings_cvr, campaign.baseline_closings_cvr, "negative"),  # Drop is bad
+            ("funded_cvr_change_pct", f"{prefix}_funded_cvr", "Funded CVR", campaign.recent_funded_cvr, campaign.baseline_funded_cvr, "negative"),  # Drop is bad
+            ("roas_change_pct", f"{prefix}_roas", "ROAS", campaign.recent_roas, campaign.baseline_roas, "negative"),  # Drop is bad
         ]
         
         # Add Google-specific metrics
         if platform == "google":
             metrics_to_check.extend([
-                ("cpa_change_pct", "google_cpa", "CPA", getattr(campaign, 'recent_cpa', None), getattr(campaign, 'baseline_cpa', None), "positive"),  # Increase is bad
-                ("ad_roas_change_pct", "google_ad_roas", "Ad ROAS", getattr(campaign, 'recent_ad_roas', None), getattr(campaign, 'baseline_ad_roas', None), "negative"),  # Drop is bad
-                ("ad_conversions_change_pct", "google_ad_conversions", "Ad Conversions", getattr(campaign, 'recent_ad_conversions', None), getattr(campaign, 'baseline_ad_conversions', None), "negative"),  # Drop is bad
+                ("cpa_change_pct", "google_cpa", "CPA", campaign.recent_cpa, campaign.baseline_cpa, "positive"),  # Increase is bad
+                ("ad_roas_change_pct", "google_ad_roas", "Ad ROAS", campaign.recent_ad_roas, campaign.baseline_ad_roas, "negative"),  # Drop is bad
+                ("ad_conversions_change_pct", "google_ad_conversions", "Ad Conversions", campaign.recent_ad_conversions, campaign.baseline_ad_conversions, "negative"),  # Drop is bad
             ])
         
         # Check each metric against its threshold
@@ -560,12 +595,12 @@ marketing_router = APIRouter(prefix="/marketing", tags=["marketing"])
 async def marketing_root():
     return {
         "message": "Marketing Analytics API - Comprehensive Analysis",
-        "version": "15.0.0",
+        "version": "16.0.0",
         "status": "running",
-        "features": ["funnel_analysis", "anomaly_detection", "claude_insights", "slack_integration"]
+        "features": ["funnel_analysis", "anomaly_detection", "custom_thresholds", "claude_insights", "slack_integration"]
     }
 
-# UTILITY FUNCTIONS (keeping your original ones)
+# UTILITY FUNCTIONS
 def get_spend_data():
     """Get total spend from BigQuery"""
     if not bigquery_client:
