@@ -29,6 +29,7 @@ DATASET_ID = "last_14_days_analysis"
 
 if BIGQUERY_AVAILABLE:
     try:
+        analysis_timestamp = datetime.now().isoformat()
         credentials_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
         if credentials_json:
             credentials_info = json.loads(credentials_json)
@@ -908,6 +909,22 @@ async def campaign_alerts_analysis(request: ComprehensiveAnalysisRequest):
                     
                     if day_over_day_metrics:
                         funnel_summary["key_metrics"] += f" | Recent: {dod['recent_date']} vs {dod['comparison_date']}"
+                
+            except Exception as e:
+                funnel_analysis = {"error": str(e)}
+        
+        # 1. FUNNEL ANALYSIS (keeping original structure but not using it)
+        funnel_analysis = None
+        funnel_summary = None
+        
+        if request.funnel_data:
+            try:
+                changes = calculate_changes(request.funnel_data)
+                
+                if 'error' not in changes:
+                    color_code = determine_color(changes)
+                    funnel_analysis = {"colorCode": color_code}
+                    funnel_summary = {"colorCode": color_code, "key_metrics": f"Funnel status: {color_code}"}
                 
             except Exception as e:
                 funnel_analysis = {"error": str(e)}
