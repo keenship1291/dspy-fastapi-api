@@ -78,12 +78,12 @@ class CampaignData(BaseModel):
     baseline_spend: Optional[float] = None
     spend_change_pct: Optional[float] = None
     
-    recent_impressions: Optional[int] = None
-    baseline_impressions: Optional[int] = None
+    recent_impressions: Optional[float] = None
+    baseline_impressions: Optional[float] = None
     impressions_change_pct: Optional[float] = None
     
-    recent_clicks: Optional[int] = None
-    baseline_clicks: Optional[int] = None
+    recent_clicks: Optional[float] = None
+    baseline_clicks: Optional[float] = None
     clicks_change_pct: Optional[float] = None
     
     recent_ctr: Optional[float] = None
@@ -103,20 +103,20 @@ class CampaignData(BaseModel):
     cost_per_lead_change_pct: Optional[float] = None
     
     # Additional metrics for comprehensive analysis
-    recent_leads: Optional[int] = None
-    baseline_leads: Optional[int] = None
+    recent_leads: Optional[float] = None
+    baseline_leads: Optional[float] = None
     leads_change_pct: Optional[float] = None
     
-    recent_estimates: Optional[int] = None
-    baseline_estimates: Optional[int] = None
+    recent_estimates: Optional[float] = None
+    baseline_estimates: Optional[float] = None
     estimates_change_pct: Optional[float] = None
     
-    recent_closings: Optional[int] = None
-    baseline_closings: Optional[int] = None
+    recent_closings: Optional[float] = None
+    baseline_closings: Optional[float] = None
     closings_change_pct: Optional[float] = None
     
-    recent_funded: Optional[int] = None
-    baseline_funded: Optional[int] = None
+    recent_funded: Optional[float] = None
+    baseline_funded: Optional[float] = None
     funded_change_pct: Optional[float] = None
     
     recent_revenue: Optional[float] = None
@@ -160,8 +160,8 @@ class CampaignData(BaseModel):
     baseline_ad_roas: Optional[float] = None
     ad_roas_change_pct: Optional[float] = None
     
-    recent_ad_conversions: Optional[int] = None
-    baseline_ad_conversions: Optional[int] = None
+    recent_ad_conversions: Optional[float] = None
+    baseline_ad_conversions: Optional[float] = None
     ad_conversions_change_pct: Optional[float] = None
     
     has_anomaly: Optional[str] = None
