@@ -29,7 +29,6 @@ DATASET_ID = "last_14_days_analysis"
 
 if BIGQUERY_AVAILABLE:
     try:
-        analysis_timestamp = datetime.now().isoformat()
         credentials_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
         if credentials_json:
             credentials_info = json.loads(credentials_json)
@@ -174,7 +173,15 @@ class CampaignData(BaseModel):
 
 class AnomalyAlert(BaseModel):
     severity: SeverityLevel
+    platform: str
+    campaign_name: str
+    adset_name: Optional[str] = None
+    metric: str
+    current_value: Optional[float] = None
+    previous_value: Optional[float] = None
+    change_pct: Optional[float] = None
     message: str
+    slack_color: str
 
 class CustomThresholds(BaseModel):
     # Meta thresholds (Ad Set level) - NULL means no alerting
@@ -231,29 +238,13 @@ class ComprehensiveAnalysisRequest(BaseModel):
     custom_thresholds: Optional[CustomThresholds] = None
 
 class ComprehensiveAnalysisResponse(BaseModel):
-    anomaly_alerts: List[str] = []nel_analysis: Optional[Dict[str, Any]] = None
-    
-    # Anomaly Detection Results
-    anomaly_alerts: List[AnomalyAlert] = []
-    anomaly_summary: Dict[str, int] = {}
-    
-    # Claude Insights
-    claude_insights: Optional[str] = None
-    
-    # Meta info
-    total_campaigns_analyzed: int = 0
-    analysis_timestamp: str
-    
-    # For n8n Slack integration
-    slack_message: Optional[Dict[str, Any]] = None
-    
-    error: Optional[str] = None
+    anomaly_alerts: List[str] = []
 
 # ANOMALY DETECTION CLASS
 class AnomalyDetector:
     """Simplified anomaly detection - only alerts when user sets thresholds"""
     
-    def detect_anomalies(self, campaign: CampaignData, custom_thresholds: Optional[CustomThresholds] = None) -> List[AnomalyAlert]:
+    def detect_anomalies(self, campaign: CampaignData, custom_thresholds: Optional[CustomThresholds] = None) -> List[str]:
         """Detect anomalies based on user-defined thresholds only"""
         alerts = []
         
@@ -286,9 +277,12 @@ class AnomalyDetector:
             (4, "cost_per_estimate_change_pct", f"{prefix}_cost_per_estimate", "Cost per Estimate", campaign.recent_cost_per_estimate, campaign.baseline_cost_per_estimate, "positive"),
             (4, "estimate_cvr_change_pct", f"{prefix}_estimate_cvr", "Estimate CVR", campaign.recent_estimate_cvr, campaign.baseline_estimate_cvr, "negative"),
             
+            # Start Flows metrics (between leads and estimates)
+            (5, "start_flows_change_pct", f"{prefix}_start_flows", "Start Flows", campaign.recent_start_flows, campaign.baseline_start_flows, "negative"),
+            
             # Leads metrics
-            (5, "leads_change_pct", f"{prefix}_leads", "Leads", campaign.recent_leads, campaign.baseline_leads, "negative"),
-            (5, "cost_per_lead_change_pct", f"{prefix}_cost_per_lead", "Cost per Lead", campaign.recent_cost_per_lead, campaign.baseline_cost_per_lead, "positive"),
+            (6, "leads_change_pct", f"{prefix}_leads", "Leads", campaign.recent_leads, campaign.baseline_leads, "negative"),
+            (6, "cost_per_lead_change_pct", f"{prefix}_cost_per_lead", "Cost per Lead", campaign.recent_cost_per_lead, campaign.baseline_cost_per_lead, "positive"),
             
             # Click metrics
             (7, "clicks_change_pct", f"{prefix}_clicks", "Clicks", campaign.recent_clicks, campaign.baseline_clicks, "negative"),
@@ -828,90 +822,6 @@ async def campaign_alerts_analysis(request: ComprehensiveAnalysisRequest):
     
     try:
         analysis_timestamp = datetime.now().isoformat()
-        
-        # 1. FUNNEL ANALYSIS
-        funnel_analysis = None
-        funnel_summary = None
-        
-        if request.funnel_data:
-            try:
-                changes = calculate_changes(request.funnel_data)
-                
-                if 'error' not in changes:
-                    # Format week-over-week metrics (if available)
-                    formatted_metrics = {}
-                    if changes.get('has_week_data'):
-                        wow = changes['week_over_week']
-                        last = wow['last_totals']
-                        prev = wow['prev_totals']
-                        
-                        formatted_metrics = {
-                            "spendMetrics": {
-                                "channel": "adSpend",
-                                "period_type": "weekOverWeekPulse",
-                                "totalSpend": format_metric(wow['last_spend'], wow['prev_spend'], True)
-                            },
-                            "funnelMetrics": {
-                                "channel": "funnelPerformance", 
-                                "period_type": "weekOverWeekPulse",
-                                "totalLeads": format_metric(last['leads'], prev['leads']),
-                                "startFlows": format_metric(last['start_flows'], prev['start_flows']),
-                                "estimates": format_metric(last['estimates'], prev['estimates']),
-                                "closings": format_metric(last['closings'], prev['closings']),
-                                "funded": format_metric(last['funded'], prev['funded']),
-                                "revenue": format_metric(last['rpts'], prev['rpts'], True)
-                            }
-                        }
-                    
-                    # Format day-over-day metrics (if available)
-                    day_over_day_metrics = {}
-                    if changes.get('has_day_data'):
-                        dod = changes['day_over_day']
-                        recent = dod['recent_day_totals']
-                        comparison = dod['same_day_totals']
-                        
-                        day_over_day_metrics = {
-                            "spendMetrics": {
-                                "channel": "adSpend",
-                                "period_type": "dayOverDayPulse",
-                                "totalSpend": format_metric(dod['recent_spend'], dod['comparison_spend'], True)
-                            },
-                            "funnelMetrics": {
-                                "channel": "funnelPerformance",
-                                "period_type": "dayOverDayPulse", 
-                                "totalLeads": format_metric(recent['leads'], comparison['leads']),
-                                "startFlows": format_metric(recent['start_flows'], comparison['start_flows']),
-                                "estimates": format_metric(recent['estimates'], comparison['estimates']),
-                                "closings": format_metric(recent['closings'], comparison['closings']),
-                                "funded": format_metric(recent['funded'], comparison['funded']),
-                                "revenue": format_metric(recent['rpts'], comparison['rpts'], True)
-                            },
-                            "comparison_info": {
-                                "recent_date": dod['recent_date'],
-                                "comparison_date": dod['comparison_date']
-                            }
-                        }
-                    
-                    # Determine color
-                    color_code = determine_color(changes)
-                    
-                    funnel_analysis = {
-                        "colorCode": color_code,
-                        "formatted_metrics": formatted_metrics if formatted_metrics else None,
-                        "day_over_day_metrics": day_over_day_metrics if day_over_day_metrics else None
-                    }
-                    
-                    # Create summary for Claude
-                    funnel_summary = {
-                        "colorCode": color_code,
-                        "key_metrics": f"Funnel status: {color_code}"
-                    }
-                    
-                    if day_over_day_metrics:
-                        funnel_summary["key_metrics"] += f" | Recent: {dod['recent_date']} vs {dod['comparison_date']}"
-                
-            except Exception as e:
-                funnel_analysis = {"error": str(e)}
         
         # 1. FUNNEL ANALYSIS (keeping original structure but not using it)
         funnel_analysis = None
