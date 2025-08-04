@@ -234,10 +234,6 @@ class CustomThresholds(BaseModel):
 
 class FunnelAnalysisRequest(BaseModel):
     funnel_data: List[FunnelDataPoint]
-    day_spend_total: Optional[float] = None      # Recent day total spend
-    day_spend_previous: Optional[float] = None   # Previous day total spend  
-    week_spend_total: Optional[float] = None     # Recent week total spend
-    week_spend_previous: Optional[float] = None  # Previous week total spend
 
 class FunnelAnalysisResponse(BaseModel):
     status: str
@@ -248,10 +244,6 @@ class FunnelAnalysisResponse(BaseModel):
 
 class ComprehensiveAnalysisRequest(BaseModel):
     funnel_data: Optional[List[FunnelDataPoint]] = None
-    day_spend_total: Optional[float] = None      # Recent day total spend
-    day_spend_previous: Optional[float] = None   # Previous day total spend  
-    week_spend_total: Optional[float] = None     # Recent week total spend
-    week_spend_previous: Optional[float] = None  # Previous week total spend
     dod_campaign_data: Optional[List[CampaignData]] = None
     custom_thresholds: Optional[CustomThresholds] = None
 
@@ -666,7 +658,7 @@ def get_spend_data():
     except:
         return []
 
-def calculate_changes(funnel_data: List[FunnelDataPoint], day_spend_total: Optional[float] = None, day_spend_previous: Optional[float] = None, week_spend_total: Optional[float] = None, week_spend_previous: Optional[float] = None):
+def calculate_changes(funnel_data: List[FunnelDataPoint]):
     """Calculate both week-over-week and day-over-day changes"""
     
     if len(funnel_data) < 8:
@@ -718,28 +710,6 @@ def calculate_changes(funnel_data: List[FunnelDataPoint], day_spend_total: Optio
             'last_totals': last_totals,
             'prev_totals': prev_totals
         }
-        
-        # Add external spend data if provided
-        if week_spend_total is not None and week_spend_previous is not None:
-            wow_data.update({
-                'last_spend': week_spend_total,
-                'prev_spend': week_spend_previous
-            })
-        else:
-            # Fallback to BigQuery if no external spend provided
-            spend_data = get_spend_data()
-            spend_dict = {item['date']: item['total_spend'] for item in spend_data}
-            
-            last_7_dates = [day.date for day in last_7]
-            prev_7_dates = [day.date for day in prev_7]
-            
-            last_spend = sum(spend_dict.get(date, 0) for date in last_7_dates)
-            prev_spend = sum(spend_dict.get(date, 0) for date in prev_7_dates)
-            
-            wow_data.update({
-                'last_spend': last_spend,
-                'prev_spend': prev_spend
-            })
     
     # Calculate day-over-day totals
     dod_data = {}
@@ -768,25 +738,33 @@ def calculate_changes(funnel_data: List[FunnelDataPoint], day_spend_total: Optio
             'recent_date': most_recent_day.date,
             'comparison_date': same_day_last_week.date
         }
+    
+    # Get spend data
+    spend_data = get_spend_data()
+    spend_dict = {item['date']: item['total_spend'] for item in spend_data}
+    
+    # Add spend to week-over-week
+    if week_over_week:
+        last_7_dates = [day.date for day in last_7]
+        prev_7_dates = [day.date for day in prev_7]
         
-        # Add external spend data if provided
-        if day_spend_total is not None and day_spend_previous is not None:
-            dod_data.update({
-                'recent_spend': day_spend_total,
-                'comparison_spend': day_spend_previous
-            })
-        else:
-            # Fallback to BigQuery if no external spend provided
-            spend_data = get_spend_data()
-            spend_dict = {item['date']: item['total_spend'] for item in spend_data}
-            
-            recent_spend = spend_dict.get(most_recent_day.date, 0)
-            comparison_spend = spend_dict.get(same_day_last_week.date, 0)
-            
-            dod_data.update({
-                'recent_spend': recent_spend,
-                'comparison_spend': comparison_spend
-            })
+        last_spend = sum(spend_dict.get(date, 0) for date in last_7_dates)
+        prev_spend = sum(spend_dict.get(date, 0) for date in prev_7_dates)
+        
+        wow_data.update({
+            'last_spend': last_spend,
+            'prev_spend': prev_spend
+        })
+    
+    # Add spend to day-over-day
+    if same_day_last_week:
+        recent_spend = spend_dict.get(most_recent_day.date, 0)
+        comparison_spend = spend_dict.get(same_day_last_week.date, 0)
+        
+        dod_data.update({
+            'recent_spend': recent_spend,
+            'comparison_spend': comparison_spend
+        })
     
     return {
         'week_over_week': wow_data if week_over_week else {},
@@ -849,13 +827,7 @@ async def analyze_funnel(request: FunnelAnalysisRequest):
     
     try:
         # Calculate changes
-        changes = calculate_changes(
-            request.funnel_data, 
-            request.day_spend_total, 
-            request.day_spend_previous, 
-            request.week_spend_total, 
-            request.week_spend_previous
-        )
+        changes = calculate_changes(request.funnel_data)
         
         if 'error' in changes:
             return FunnelAnalysisResponse(
@@ -874,7 +846,7 @@ async def analyze_funnel(request: FunnelAnalysisRequest):
                 "spendMetrics": {
                     "channel": "adSpend",
                     "period_type": "weekOverWeekPulse",
-                    "totalSpend": format_metric(wow.get('last_spend', 0), wow.get('prev_spend', 0), True)
+                    "totalSpend": format_metric(wow['last_spend'], wow['prev_spend'], True)
                 },
                 "funnelMetrics": {
                     "channel": "funnelPerformance", 
@@ -899,7 +871,7 @@ async def analyze_funnel(request: FunnelAnalysisRequest):
                 "spendMetrics": {
                     "channel": "adSpend",
                     "period_type": "dayOverDayPulse",
-                    "totalSpend": format_metric(dod.get('recent_spend', 0), dod.get('comparison_spend', 0), True)
+                    "totalSpend": format_metric(dod['recent_spend'], dod['comparison_spend'], True)
                 },
                 "funnelMetrics": {
                     "channel": "funnelPerformance",
@@ -952,13 +924,7 @@ async def campaign_alerts_analysis(request: ComprehensiveAnalysisRequest):
         
         if request.funnel_data:
             try:
-                changes = calculate_changes(
-                    request.funnel_data, 
-                    request.day_spend_total, 
-                    request.day_spend_previous, 
-                    request.week_spend_total, 
-                    request.week_spend_previous
-                )
+                changes = calculate_changes(request.funnel_data)
                 
                 if 'error' not in changes:
                     color_code = determine_color(changes)
