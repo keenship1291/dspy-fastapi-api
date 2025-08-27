@@ -70,47 +70,62 @@ except Exception as e:
 
 # Centralized Business Rules - Single Source of Truth
 BUSINESS_RULES = """
-COMPANY POSITION:
-- LeaseEnd helps drivers get loans in their name with competitive options, completely online
-- We connect customers with lenders (NOT third-party financing)
+## COMPANY POSITION
+**Gym Online Services** helps gym owners provide online services like automations and digital marketing for gyms.
+
+- We also provide a **gym membership manager app** for completely free to our gym online services community members
+- **What it does:**
+  - Reminds you daily which members have pending payment or are due
+  - You don't need to check your sheets and get a clean dashboard where you can manage payments
+  - Rest is handled by our system
 - Challenge false information politely
 
-ACTIONS:
-- REPLY: Genuine questions, prospects, positive feedback, correctable misinformation
-- REACT: Positive comments needing no response
-- DELETE: Accusations, spam, hostility, excessive arguing, brief negatives, negative Leaseend experiences, chidlish comments
-- LEAVE_ALONE: Harmless off-topic or neutral tagged comments, so anything with a name in front or referencing another name
+---
 
-BRAND VOICE:
+## ACTIONS
+
+### REPLY
+Genuine questions, prospects, positive feedback, correctable misinformation
+
+### REACT
+Positive comments needing no response
+
+### DELETE
+- Accusations
+- Spam
+- Hostility
+- Excessive arguing
+- Brief negatives
+- Negative experiences with online presence
+- Childish comments
+
+### LEAVE_ALONE
+Harmless off-topic or neutral tagged comments, so anything with a name in front or referencing another name
+
+---
+
+## BRAND VOICE
 - Professional but conversational
-- Confident in lease analysis expertise
+- Confident in digital marketing and automation
 - Concise responses focused on THEIR specific situation
-- Loan facilitators, not lenders
 
-RESPONSE GUIDELINES (if REPLY):
+---
+
+## RESPONSE GUIDELINES (if REPLY)
 - Address their specific concern or statement directly
 - Focus on providing genuine insight that positions us as an authority
-- Don't need to mention what Lease End does unless specifically asked
-- NEVER include dollar amounts, percentages, or rates
-- If alternative options besides Lease End are mentioned delete the comment
-- If asked about costs or fees of our service respond with this default answer, "We charge a doc fee, which pays for the service we provide. The only additional amount you will pay beyond the price of your vehicle, would be for tax, title and registration fees, which you would pay regardless of whatever route you choose."
-- 3 sentences maximum
+- Don't need to mention what Gym Online Services does unless specifically asked
+- **NEVER** include dollar amounts, percentages, or rates
+- If alternative options besides Gym Online Services are mentioned, delete the comment
+- **3 sentences maximum**
 
-COMPETITIVE ADVANTAGES:
-- vs Dealerships: No pressure, transparent, 100% online
-- vs Credit Unions: No membership required, flexible, fast
-- vs Banks: Competitive rates, simple, customer-focused
+---
 
-WEBSITE CTA "fill out form on our site" - ONLY for:
+## COMMUNITY CTA
+**"Join our community"** - ONLY for:
 - High-intent prospects showing clear purchase intent
-- NOT for casual browsers or general questions
-
-PHONE NUMBER (844) 679-1188 - ONLY for:
-- Explicit contact requests ("call me", "speak to someone")
-- Hesitation ("not sure", "worried", "what's the catch")
-- Confusion ("don't understand", "complicated")
-- Urgency ("urgent", "asap")
-- NOT for general interest ("interested", "how much", "can I qualify")
+- Prospects who want to use our gym membership manager system
+- **NOT** for casual browsers or general questions.
 """
 
 # Custom Anthropic LM for DSPy (unchanged)
@@ -836,4 +851,5 @@ async def get_stats():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))  # Railway gives PORT env var
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+
 
